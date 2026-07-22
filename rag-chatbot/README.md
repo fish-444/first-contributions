@@ -105,6 +105,22 @@ uvicorn main:app --reload
 
 서버를 끄려면 터미널에서 `Ctrl + C` 를 누르세요.
 
+## 이미지 분석만 따로 쓰기 (챗봇 없이)
+
+챗봇/서버 없이 이미지 한 장만 분석하려면 `analyze.py` CLI를 쓰세요.
+**SAM-2로 영역을 분리**하고 **YOLO-World로 객체를 구분**한 결과만 출력합니다.
+
+```bash
+export REPLICATE_API_TOKEN="r8_본인토큰"
+python analyze.py 사진.jpg                       # 기본 클래스로 분석
+python analyze.py 사진.jpg --classes "person, dog, car"   # 찾을 클래스 지정
+python analyze.py 사진.jpg --outdir masks        # 분리된 마스크 이미지를 masks/ 에 저장
+```
+
+출력 예시:
+- `[YOLO-World] 구분된 객체` — 클래스 / 신뢰도 / 박스 좌표 표
+- `[SAM-2] 분리된 영역(마스크)` — 마스크 개수 + 이미지 URL(옵션으로 파일 저장)
+
 ## 자주 묻는 문제
 
 | 증상 | 해결 방법 |
@@ -128,7 +144,8 @@ uvicorn main:app --reload
 ```
 rag-chatbot/
 ├── main.py              # FastAPI 백엔드 (문서/이미지 업로드, 검색, 답변 생성)
-├── image_analysis.py    # YOLO-World(탐지) + SAM-2(분할) Replicate 호출 모듈
+├── image_analysis.py    # YOLO-World(구분) + SAM-2(분리) Replicate 호출 모듈
+├── analyze.py           # 이미지 분석 전용 CLI (챗봇 없이 분리+구분만)
 ├── static/index.html    # 웹 UI (문서/이미지 업로드 + 채팅 화면)
 ├── requirements.txt     # 필요한 파이썬 패키지 목록
 ├── chroma_db/           # 벡터DB 저장 폴더 (실행하면 자동 생성)
