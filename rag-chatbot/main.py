@@ -13,11 +13,13 @@ from pathlib import Path
 
 import anthropic
 import chromadb
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pypdf import PdfReader
+
+import image_analysis
 
 # ---------------------------------------------------------------------------
 # 설정
@@ -109,6 +111,54 @@ async def upload_document(file: UploadFile):
         ],
     )
     return {"filename": file.filename, "doc_id": doc_id, "chunks": len(chunks)}
+
+
+@app.post("/upload-image")
+async def upload_image(file: UploadFile, class_names: str = Form(default="")):
+    """이미지를 받아 YOLO-World(탐지) + SAM-2(분할)로 분석한다.
+
+    분석 결과 설명은 벡터DB에도 저장되어, 이후 챗봇 질문에서 문서와 함께 검색된다.
+    class_names: 탐지할 클래스를 쉼표로 구분(비우면 기본 클래스 사용).
+    """
+    if not os.environ.get("REPLICATE_API_TOKEN"):
+        raise HTTPException(
+            status_code=500,
+            detail="REPLICATE_API_TOKEN 환경변수가 설정되어 있지 않습니다. "
+            "https://replicate.com/account/api-tokens 에서 토큰을 발급받아 등록하세요.",
+        )
+
+    data = await file.read()
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"지원하지 않는 이미지 형식입니다: {suffix} (지원: jpg, png, webp, gif, bmp)",
+        )
+
+    try:
+        result = image_analysis.analyze_image(
+            data, file.filename, class_names=class_names.strip() or None
+        )
+    except Exception as e:  # Replicate 호출/네트워크 오류 등
+        raise HTTPException(status_code=502, detail=f"이미지 분석 실패: {e}")
+
+    # 분석 설명을 벡터DB에 저장 → 챗봇이 이미지 내용도 검색해 답변할 수 있게 함
+    img_id = str(uuid.uuid4())[:8]
+    collection.add(
+        ids=[f"img-{img_id}"],
+        documents=[result["description"]],
+        metadatas=[
+            {"source": file.filename, "doc_id": img_id, "type": "image"}
+        ],
+    )
+
+    return {
+        "filename": result["filename"],
+        "doc_id": img_id,
+        "description": result["description"],
+        "detections": result["detections"],
+        "segmentation": result["segmentation"],
+    }
 
 
 @app.get("/documents")

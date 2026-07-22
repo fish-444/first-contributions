@@ -1,12 +1,17 @@
-# 📄 문서 기반 RAG 챗봇 MVP
+# 📄🖼️ 문서 + 이미지 RAG 챗봇 MVP
 
 문서(.txt / .md / .pdf)를 업로드하면 내용을 청크로 나눠 벡터DB(Chroma)에 저장하고,
 질문하면 관련 내용을 검색해서 Claude API로 답변을 생성하는 챗봇입니다.
+이미지는 **YOLO-World(객체 탐지)** 와 **SAM-2(영역 분할)** 로 분석하며,
+분석 결과 설명이 벡터DB에 함께 저장되어 문서와 이미지를 통합 검색할 수 있습니다.
 
 ```
 문서 업로드 → 청크 분할 → 임베딩 → Chroma 저장
-질문 입력  → 관련 청크 검색 → Claude API → 답변
+이미지 업로드 → YOLO-World 탐지 + SAM-2 분할 → 설명 생성 → Chroma 저장
+질문 입력   → 관련 내용 검색 → Claude API → 답변
 ```
+
+이미지 분석은 로컬 GPU/모델 설치 없이 **Replicate API 호출**로 처리합니다.
 
 코딩을 몰라도 아래 순서대로 터미널에 한 줄씩 입력하면 실행됩니다.
 
@@ -19,6 +24,9 @@
   (Windows 설치 시 **"Add Python to PATH"** 체크박스를 꼭 선택하세요.)
 - **Anthropic API 키** — https://platform.claude.com 에 가입 → API Keys 메뉴에서 키 발급.
   `sk-ant-...` 로 시작하는 문자열입니다.
+- **Replicate API 토큰** (이미지 분석용) — https://replicate.com 에 가입 →
+  https://replicate.com/account/api-tokens 에서 토큰 발급. `r8_...` 로 시작합니다.
+  (문서 챗봇만 쓸 거라면 없어도 됩니다. 이미지 분석 시에만 필요.)
 
 ## 2. 프로젝트 폴더로 이동
 
@@ -62,11 +70,13 @@ pip install -r requirements.txt
 **macOS / Linux:**
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-여기에-본인-키"
+export REPLICATE_API_TOKEN="r8_여기에-본인-토큰"   # 이미지 분석 쓸 때만
 ```
 
 **Windows (PowerShell):**
 ```powershell
 $env:ANTHROPIC_API_KEY = "sk-ant-여기에-본인-키"
+$env:REPLICATE_API_TOKEN = "r8_여기에-본인-토큰"   # 이미지 분석 쓸 때만
 ```
 
 > 터미널을 새로 열면 사라지므로, 실행 전마다 다시 입력해야 합니다.
@@ -83,10 +93,15 @@ uvicorn main:app --reload
 
 브라우저에서 **http://127.0.0.1:8000** 을 엽니다.
 
-1. **업로드**: 파일 선택 → "업로드" 버튼. (.txt, .md, .pdf 지원)
+1. **문서 업로드**: 파일 선택 → "업로드" 버튼. (.txt, .md, .pdf 지원)
    - 첫 업로드 때는 임베딩 모델(~80MB)을 자동 다운로드하므로 조금 오래 걸립니다.
-2. **질문**: 입력창에 질문을 쓰고 "질문" 버튼 (또는 Enter).
-3. 답변 아래에 참고한 문서 이름(출처)이 함께 표시됩니다.
+2. **이미지 분석**: 이미지 선택 → (선택) 탐지할 클래스 입력 → "분석" 버튼.
+   - YOLO-World가 객체를 탐지하고 SAM-2가 영역을 분할합니다. 결과(탐지 표 + 마스크 이미지)가
+     화면에 표시되고, 설명은 벡터DB에 저장되어 이후 질문에서 검색됩니다.
+   - Replicate 클라우드에서 실행되므로 수십 초 걸릴 수 있습니다.
+3. **질문**: 입력창에 질문을 쓰고 "질문" 버튼 (또는 Enter).
+   - 문서 내용과 이미지 분석 결과를 함께 검색해 답변합니다.
+4. 답변 아래에 참고한 출처(문서/이미지 이름)가 함께 표시됩니다.
 
 서버를 끄려면 터미널에서 `Ctrl + C` 를 누르세요.
 
@@ -101,8 +116,10 @@ uvicorn main:app --reload
 
 ## 다음 단계 (로드맵)
 
-- [ ] 이미지 업로드 + SAM(Replicate API) 연동 → 객체 분리 + 설명 생성
-- [ ] 이미지 설명을 벡터DB에 함께 저장해서 문서+이미지 통합 검색
+- [x] 이미지 업로드 + SAM-2(Replicate API) 연동 → 객체 영역 분할
+- [x] YOLO-World(Replicate API) 연동 → 객체 탐지 (오픈 어휘)
+- [x] 이미지 설명을 벡터DB에 함께 저장해서 문서+이미지 통합 검색
+- [ ] 탐지된 객체 영역을 Claude Vision으로 상세 캡션 생성
 - [ ] 대화 기록(멀티턴) 지원
 - [ ] 한국어 특화 임베딩 모델로 교체
 
@@ -110,9 +127,10 @@ uvicorn main:app --reload
 
 ```
 rag-chatbot/
-├── main.py            # FastAPI 백엔드 (업로드/검색/답변 생성)
-├── static/index.html  # 웹 UI (채팅 화면)
-├── requirements.txt   # 필요한 파이썬 패키지 목록
-├── chroma_db/         # 벡터DB 저장 폴더 (실행하면 자동 생성)
-└── README.md          # 이 문서
+├── main.py              # FastAPI 백엔드 (문서/이미지 업로드, 검색, 답변 생성)
+├── image_analysis.py    # YOLO-World(탐지) + SAM-2(분할) Replicate 호출 모듈
+├── static/index.html    # 웹 UI (문서/이미지 업로드 + 채팅 화면)
+├── requirements.txt     # 필요한 파이썬 패키지 목록
+├── chroma_db/           # 벡터DB 저장 폴더 (실행하면 자동 생성)
+└── README.md            # 이 문서
 ```
