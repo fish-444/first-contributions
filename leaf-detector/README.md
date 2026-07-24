@@ -111,7 +111,59 @@ http://127.0.0.1:8000
 
 ---
 
-## 🎯 내가 학습시킨 YOLO weight 파일 사용하기
+## 🟣 로보플로우(Roboflow) 모델 연결하기 — 추천 ✅
+
+로보플로우에서 이미 학습시킨 모델(예: `find-leaf-mcfh8` 버전 1)이 있다면,
+파일을 내려받지 않고 **로보플로우 서버에 바로 연결**해서 쓸 수 있습니다.
+
+### ① API 키 찾기 (딱 한 번만)
+
+API 키는 "이 모델을 쓸 권한이 있는 사람"임을 확인하는 비밀번호 같은 값입니다.
+
+1. https://app.roboflow.com 에 로그인합니다.
+2. 왼쪽 아래 **⚙️ Settings(설정)** 클릭 → 내 워크스페이스 선택.
+3. **API Keys** 메뉴를 열면 **Private API Key** 가 보입니다. (예: `aB3xY...` 같은 긴 글자)
+4. 그 값을 복사해 둡니다. **이 키는 남에게 보여주면 안 됩니다.**
+
+> 💡 다른 위치: 모델 페이지에서 **Deploy** 탭에 들어가도 코드 예시 안에 `api_key="..."` 형태로 키가 보입니다.
+
+### ② 모델 이름/버전 확인
+
+우리 앱은 기본값으로 `find-leaf-mcfh8/1` (프로젝트 `find-leaf-mcfh8` 의 버전 `1`)을 사용합니다.
+로보플로우 프로젝트 페이지에서 **Versions** 를 보면 버전 번호를 확인할 수 있어요.
+다르면 아래 `ROBOFLOW_MODEL_ID` 값을 바꾸면 됩니다.
+
+### ③ 실행하기
+
+3단계 대신 아래처럼 **API 키를 넣어서** 서버를 켭니다.
+(`여기에_복사한_키` 부분을 ①에서 복사한 실제 키로 바꾸세요.)
+
+- **Mac / Linux:**
+  ```bash
+  ROBOFLOW_API_KEY="여기에_복사한_키" python3 -m uvicorn main:app --reload
+  ```
+- **Windows (PowerShell):**
+  ```powershell
+  $env:ROBOFLOW_API_KEY="여기에_복사한_키"; python -m uvicorn main:app --reload
+  ```
+
+모델 이름/버전이 다르다면 이렇게 같이 지정하세요:
+```bash
+ROBOFLOW_API_KEY="여기에_복사한_키" ROBOFLOW_MODEL_ID="프로젝트이름/버전번호" python3 -m uvicorn main:app --reload
+```
+
+이제 4단계처럼 `http://127.0.0.1:8000` 에 접속해서 사진을 올리면
+**로보플로우의 잎 탐지 모델**이 잎을 찾아 박스를 그려줍니다! 🌿
+
+> 화면 아래 터미널에 `[로보플로우 방식] 모델: find-leaf-mcfh8/1` 이라고 뜨면 연결 성공입니다.
+> 만약 `[로컬 방식]` 이라고 뜬다면 API 키가 안 들어간 것이니 ③을 다시 확인하세요.
+
+> 🔒 이 방식은 `ultralytics` 라이브러리 없이도 동작합니다. 로보플로우만 쓸 거라면
+> `requirements.txt` 의 `ultralytics` 줄은 설치하지 않아도 됩니다.
+
+---
+
+## 🎯 내가 학습시킨 YOLO weight 파일 사용하기 (로컬 방식)
 
 기본 모델(`yolov8n.pt`)은 잎 전용이 아니라 사람·자동차 같은 **일반 사물**을 탐지합니다.
 **직접 학습시킨 잎 탐지용 weight 파일(예: `best.pt`)** 이 있다면 아래처럼 바꿔 주세요.
@@ -147,10 +199,10 @@ MODEL_PATH = os.environ.get("MODEL_PATH", "/Users/내이름/Desktop/best.pt")
 
 ## ⚙️ 자주 하는 조정
 
-- **탐지 민감도**: 잎이 잘 안 잡히면 `main.py`의 `CONFIDENCE` 값을 `0.25`에서 `0.1`처럼 낮춰 보세요.
-  (낮을수록 더 많이 잡지만 오탐도 늘어납니다.) 명령어로도 지정할 수 있어요:
+- **탐지 민감도**: 잎이 잘 안 잡히면 `main.py`의 `CONFIDENCE` 값을 `25`에서 `10`처럼 낮춰 보세요.
+  (0~100 사이 값이며, 낮을수록 더 많이 잡지만 오탐도 늘어납니다.) 명령어로도 지정할 수 있어요:
   ```bash
-  CONFIDENCE=0.1 python3 -m uvicorn main:app --reload
+  CONFIDENCE=10 ROBOFLOW_API_KEY="여기에_복사한_키" python3 -m uvicorn main:app --reload
   ```
 
 ---
