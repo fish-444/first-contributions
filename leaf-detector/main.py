@@ -36,7 +36,7 @@ ROBOFLOW_API_KEY = os.environ.get("npP6TPQd5KvbAAXiTLsl", "")
 
 # 사용할 로보플로우 모델. 형식은 "프로젝트이름/버전번호" 입니다.
 # 예) find-leaf-mcfh8/1  (프로젝트 find-leaf-mcfh8 의 버전 1)
-ROBOFLOW_MODEL_ID = os.environ.get("s-workspace-br86f/find-leaf-mcfh8-1-yolov8n-t2", "find-leaf-mcfh8/1")
+ROBOFLOW_MODEL_ID = os.environ.get("s-workspace-br86f", "find-leaf-mcfh8/1")
 
 # 로보플로우 탐지 서버 주소 (보통 바꿀 필요 없음)
 ROBOFLOW_API_URL = os.environ.get("ROBOFLOW_API_URL", "https://detect.roboflow.com")
