@@ -79,13 +79,14 @@
 
     <!-- 1) 로보플로우 설정 -->
     <div class="card">
-      <label class="fld" for="apiKey">① 로보플로우 API 키 (처음 한 번만 입력)</label>
+      <label class="fld" for="apiKey">① 로보플로우 <b>개인(Private) API 키</b> (처음 한 번만 입력)</label>
       <div class="row">
-        <input type="password" id="apiKey" placeholder="여기에 API 키를 붙여넣으세요" autocomplete="off" />
+        <input type="password" id="apiKey" placeholder="여기에 Private API Key 를 붙여넣으세요" autocomplete="off" />
         <button class="btn-save" id="saveKey">저장</button>
       </div>
       <div class="hint">
-        키는 이 브라우저에만 저장되고 밖으로 나가지 않아요.
+        ⚠️ 반드시 <b>Private API Key</b> 를 넣으세요 (Publishable 키는 이 기능에서 작동하지 않아요).
+        키는 이 브라우저에만 저장되고 파일에는 안 담겨요.<br>
         키 찾는 곳: <a href="https://app.roboflow.com/settings/api" target="_blank" rel="noopener">app.roboflow.com/settings/api</a>
       </div>
       <details>
@@ -211,7 +212,7 @@
 
       try {
         const base64 = imageToBase64();
-        const url = "https://detect.roboflow.com/" + model + "?api_key=" + encodeURIComponent(key);
+        const url = "https://serverless.roboflow.com/" + model + "?api_key=" + encodeURIComponent(key);
         const resp = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
