@@ -96,11 +96,17 @@
     <div class="row" style="margin-top:12px">
       <div style="flex:0 0 auto; min-width:auto">
         <label class="field" for="model">모델</label>
-        <select id="model" style="width:auto">
-          <option value="gemini-2.5-flash" selected>gemini-2.5-flash (빠름·무료)</option>
-          <option value="gemini-2.5-pro">gemini-2.5-pro (정확·느림)</option>
+        <select id="model" style="width:auto; min-width:260px">
+          <option value="">키를 저장하면 자동으로 채워집니다…</option>
         </select>
       </div>
+      <div style="flex:0 0 auto; min-width:auto">
+        <button class="secondary" id="refresh-models">🔄 모델 목록</button>
+      </div>
+    </div>
+    <div class="hint">
+      키를 저장하면 그 계정에서 <b>실제로 사용 가능한 모델</b>을 자동으로 불러옵니다.
+      잎 분석에는 <b>flash</b>(빠름) 또는 <b>pro</b>(정확·느림) 계열을 권장합니다.
     </div>
   </div>
 
@@ -157,20 +163,76 @@ const KOR    = { [GROWING]: "성장중인 잎", [MATURE]: "성숙한 잎" };
 let currentImage = null;   // <img> 원본
 let lastResults = [];      // 마지막 분석 결과 (박스/마스크/라벨)
 
-// --- API 키 로컬 저장 ---
+// --- API 키 로컬 저장 + 모델 목록 자동 로드 ---
 const savedKey = localStorage.getItem("gemini_api_key");
-if (savedKey) $("apikey").value = savedKey;
-const savedModel = localStorage.getItem("gemini_model");
-if (savedModel) $("model").value = savedModel;
+if (savedKey) {
+  $("apikey").value = savedKey;
+  loadModels(savedKey, localStorage.getItem("gemini_model"));
+}
 
-$("save-key").addEventListener("click", () => {
-  localStorage.setItem("gemini_api_key", $("apikey").value.trim());
-  localStorage.setItem("gemini_model", $("model").value);
-  setStatus("API 키를 이 브라우저에 저장했습니다.", "ok");
+$("save-key").addEventListener("click", async () => {
+  const key = $("apikey").value.trim();
+  localStorage.setItem("gemini_api_key", key);
+  setStatus("API 키를 저장했습니다. 사용 가능한 모델을 불러오는 중…", "ok");
+  await loadModels(key, localStorage.getItem("gemini_model"));
 });
+$("refresh-models").addEventListener("click", () =>
+  loadModels($("apikey").value.trim(), $("model").value)
+);
 $("model").addEventListener("change", () =>
   localStorage.setItem("gemini_model", $("model").value)
 );
+
+// 이 계정에서 실제로 쓸 수 있는 모델을 API로 조회해 드롭다운을 채운다.
+// (모델명이 바뀌거나 특정 모델이 중단돼도 계속 동작하도록)
+async function loadModels(key, preferred) {
+  if (!key) { setStatus("먼저 API 키를 입력하세요.", "error"); return; }
+  const sel = $("model");
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(key)}`
+    );
+    if (!res.ok) {
+      let d = ""; try { d = (await res.json())?.error?.message || ""; } catch {}
+      setStatus("모델 목록을 불러오지 못했습니다: " + (d || res.status), "error");
+      return;
+    }
+    const data = await res.json();
+    // generateContent 를 지원하는 gemini 비전 모델만 추림 (임베딩/이미지생성/음성 제외)
+    const models = (data.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map((m) => m.name.replace(/^models\//, ""))
+      .filter((n) => /gemini/i.test(n))
+      .filter((n) => !/embedding|imagen|veo|tts|image-generation|aqa/i.test(n));
+
+    if (!models.length) {
+      setStatus("사용 가능한 모델을 찾지 못했습니다. 키 권한을 확인하세요.", "error");
+      return;
+    }
+    models.sort();
+
+    sel.innerHTML = "";
+    for (const n of models) {
+      const opt = document.createElement("option");
+      opt.value = n;
+      const tag = n.includes("flash") ? " (빠름)" : n.includes("pro") ? " (정확)" : "";
+      opt.textContent = n + tag;
+      sel.appendChild(opt);
+    }
+    // 기본 선택: 저장값 > flash-latest > 아무 flash > pro > 첫 번째
+    const pick =
+      (preferred && models.includes(preferred) && preferred) ||
+      models.find((n) => n.includes("flash-latest")) ||
+      models.find((n) => n.includes("flash")) ||
+      models.find((n) => n.includes("pro")) ||
+      models[0];
+    sel.value = pick;
+    localStorage.setItem("gemini_model", pick);
+    setStatus(`모델 ${models.length}개를 불러왔습니다. 선택: ${pick}`, "ok");
+  } catch (e) {
+    setStatus("모델 목록 요청 실패: " + e.message, "error");
+  }
+}
 
 function setStatus(msg, kind) {
   const el = $("status");
@@ -240,6 +302,8 @@ $("show-box").addEventListener("change", render);
 async function analyze() {
   const key = $("apikey").value.trim();
   if (!key) { setStatus("먼저 Gemini API 키를 입력하세요.", "error"); return; }
+  const model = $("model").value;
+  if (!model) { setStatus("모델이 선택되지 않았습니다. '🔄 모델 목록'을 눌러 불러오세요.", "error"); return; }
   if (!currentImage) { setStatus("먼저 이미지를 올리세요.", "error"); return; }
 
   const btn = $("analyze");
@@ -248,7 +312,7 @@ async function analyze() {
 
   try {
     const base64 = canvasToBase64(currentImage);
-    const results = await callGemini(key, $("model").value, base64);
+    const results = await callGemini(key, model, base64);
     lastResults = await decodeMasks(results);
     render();
     updateCounts();
