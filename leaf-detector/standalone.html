@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>잎 탐지 (설치 필요 없음) 🌿</title>
+  <style>
+    :root {
+      --green: #2e7d32; --green-dark: #1b5e20; --bg: #f4f7f4;
+      --card: #fff; --border: #d7e0d7; --text: #1f2a1f; --muted: #5c6b5c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text); line-height: 1.6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic",
+        "Apple SD Gothic Neo", sans-serif;
+    }
+    .wrap { max-width: 780px; margin: 0 auto; padding: 24px 16px 64px; }
+    header { text-align: center; margin-bottom: 20px; }
+    header h1 { font-size: 1.7rem; margin: 0 0 6px; color: var(--green-dark); }
+    header p { margin: 0; color: var(--muted); }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+      padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.04);
+    }
+    label.fld { display: block; font-weight: 600; margin-bottom: 6px; font-size: .95rem; }
+    input[type="text"], input[type="password"] {
+      width: 100%; padding: 11px 12px; font-size: 1rem; border: 1px solid var(--border);
+      border-radius: 9px; background: #fbfdfb;
+    }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .row > * { flex: 1; }
+    .hint { color: var(--muted); font-size: .85rem; margin-top: 6px; }
+    .hint a { color: var(--green-dark); }
+    details { margin-top: 12px; }
+    summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+
+    .drop {
+      border: 2px dashed var(--border); border-radius: 12px; padding: 30px 16px;
+      text-align: center; cursor: pointer; transition: .15s;
+    }
+    .drop:hover, .drop.drag { background: #eef4ee; border-color: var(--green); }
+    .drop .icon { font-size: 2.3rem; }
+    .drop p { margin: 8px 0 0; color: var(--muted); }
+    input[type="file"] { display: none; }
+
+    button {
+      width: 100%; margin-top: 14px; padding: 14px; font-size: 1.05rem; font-weight: 600;
+      color: #fff; background: var(--green); border: none; border-radius: 10px; cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: var(--green-dark); }
+    button:disabled { background: #9db69d; cursor: not-allowed; }
+    .btn-save { margin-top: 0; flex: 0 0 auto; width: auto; padding: 11px 18px; font-size: .95rem; }
+
+    .status { text-align: center; color: var(--muted); margin-top: 12px; min-height: 1.4em; }
+    .status.error { color: #c62828; }
+    .status.ok { color: var(--green-dark); }
+
+    .result-summary {
+      background: #eef4ee; border-radius: 10px; padding: 12px 16px; margin-bottom: 12px;
+      font-weight: 600; color: var(--green-dark);
+    }
+    ul.det-list { margin: 0 0 12px; padding-left: 20px; }
+    canvas { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); display: block; }
+    .hidden { display: none; }
+    .spinner {
+      width: 20px; height: 20px; border: 3px solid #fff; border-top-color: transparent;
+      border-radius: 50%; display: inline-block; vertical-align: middle; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🌿 잎 탐지 (설치 필요 없음)</h1>
+      <p>이 파일을 더블클릭해서 열었어요. 사진을 올리면 로보플로우가 잎을 찾아 박스로 표시합니다.</p>
+    </header>
+
+    <!-- 1) 로보플로우 설정 -->
+    <div class="card">
+      <label class="fld" for="apiKey">① 로보플로우 API 키 (처음 한 번만 입력)</label>
+      <div class="row">
+        <input type="password" id="apiKey" placeholder="여기에 API 키를 붙여넣으세요" autocomplete="off" />
+        <button class="btn-save" id="saveKey">저장</button>
+      </div>
+      <div class="hint">
+        키는 이 브라우저에만 저장되고 밖으로 나가지 않아요.
+        키 찾는 곳: <a href="https://app.roboflow.com/settings/api" target="_blank" rel="noopener">app.roboflow.com/settings/api</a>
+      </div>
+      <details>
+        <summary>모델 이름/버전 바꾸기 (기본: find-leaf-mcfh8/1)</summary>
+        <div style="margin-top:8px">
+          <input type="text" id="modelId" placeholder="find-leaf-mcfh8/1" />
+          <div class="hint">형식: 프로젝트이름/버전번호</div>
+        </div>
+      </details>
+    </div>
+
+    <!-- 2) 사진 업로드 -->
+    <div class="card">
+      <label class="drop" id="drop">
+        <div class="icon">📷</div>
+        <p><strong>여기를 눌러 사진을 선택</strong>하거나 이미지를 끌어다 놓으세요.</p>
+        <input type="file" id="fileInput" accept="image/*" />
+      </label>
+      <button id="detectBtn" disabled>탐지하기</button>
+      <div class="status" id="status"></div>
+    </div>
+
+    <!-- 3) 결과 -->
+    <div class="card hidden" id="resultCard">
+      <div class="result-summary" id="summary"></div>
+      <ul class="det-list hidden" id="detList"></ul>
+      <canvas id="canvas"></canvas>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const apiKeyEl = $("apiKey"), modelIdEl = $("modelId"), saveKeyBtn = $("saveKey");
+    const drop = $("drop"), fileInput = $("fileInput"), detectBtn = $("detectBtn");
+    const statusEl = $("status"), resultCard = $("resultCard"), summary = $("summary");
+    const detList = $("detList"), canvas = $("canvas"), ctx = canvas.getContext("2d");
+
+    const DEFAULT_MODEL = "find-leaf-mcfh8/1";
+    let selectedImage = null; // HTMLImageElement
+
+    // 저장된 설정 불러오기
+    apiKeyEl.value = localStorage.getItem("rf_api_key") || "";
+    modelIdEl.value = localStorage.getItem("rf_model_id") || DEFAULT_MODEL;
+
+    function setStatus(msg, kind = "") { statusEl.textContent = msg; statusEl.className = "status " + kind; }
+
+    saveKeyBtn.addEventListener("click", () => {
+      localStorage.setItem("rf_api_key", apiKeyEl.value.trim());
+      localStorage.setItem("rf_model_id", (modelIdEl.value.trim() || DEFAULT_MODEL));
+      setStatus("설정을 저장했어요. 이제 사진을 올려보세요.", "ok");
+    });
+
+    // 사진 선택
+    function chooseFile(file) {
+      if (!file) return;
+      if (!file.type.startsWith("image/")) { setStatus("이미지 파일만 올릴 수 있어요.", "error"); return; }
+      const img = new Image();
+      img.onload = () => {
+        selectedImage = img;
+        detectBtn.disabled = false;
+        setStatus("선택됨: " + file.name);
+        // 미리보기(박스 없이)
+        drawImage();
+        resultCard.classList.remove("hidden");
+        summary.textContent = "‘탐지하기’ 버튼을 눌러 주세요.";
+        detList.classList.add("hidden");
+      };
+      img.onerror = () => setStatus("이미지를 열 수 없어요.", "error");
+      img.src = URL.createObjectURL(file);
+    }
+    fileInput.addEventListener("change", (e) => chooseFile(e.target.files[0]));
+    ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("drag"); }));
+    ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("drag"); }));
+    drop.addEventListener("drop", (e) => chooseFile(e.dataTransfer.files[0]));
+
+    function drawImage() {
+      canvas.width = selectedImage.naturalWidth;
+      canvas.height = selectedImage.naturalHeight;
+      ctx.drawImage(selectedImage, 0, 0);
+    }
+
+    function drawBoxes(predictions) {
+      drawImage();
+      const lw = Math.max(2, Math.round(canvas.width / 300));
+      ctx.lineWidth = lw;
+      ctx.strokeStyle = "#e61e1e";
+      ctx.fillStyle = "#e61e1e";
+      const fontSize = Math.max(14, Math.round(canvas.width / 40));
+      ctx.font = "bold " + fontSize + "px sans-serif";
+      predictions.forEach((p) => {
+        const left = p.x - p.width / 2, top = p.y - p.height / 2;
+        ctx.strokeRect(left, top, p.width, p.height);
+        const label = (p.class || "object") + " " + Math.round((p.confidence || 0) * 100) + "%";
+        const tw = ctx.measureText(label).width;
+        const ty = Math.max(top, fontSize + 2);
+        ctx.fillStyle = "#e61e1e";
+        ctx.fillRect(left, ty - fontSize - 2, tw + 8, fontSize + 4);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, left + 4, ty - 4);
+      });
+    }
+
+    // 이미지를 base64(접두어 없이)로 변환
+    function imageToBase64() {
+      const c = document.createElement("canvas");
+      c.width = selectedImage.naturalWidth; c.height = selectedImage.naturalHeight;
+      c.getContext("2d").drawImage(selectedImage, 0, 0);
+      return c.toDataURL("image/jpeg", 0.9).split(",")[1];
+    }
+
+    // 탐지 실행 (브라우저 -> 로보플로우 직접 호출)
+    detectBtn.addEventListener("click", async () => {
+      const key = (apiKeyEl.value || "").trim();
+      const model = (modelIdEl.value || "").trim() || DEFAULT_MODEL;
+      if (!key) { setStatus("먼저 ① 에 로보플로우 API 키를 입력하고 ‘저장’을 눌러 주세요.", "error"); return; }
+      if (!selectedImage) { setStatus("사진을 먼저 선택해 주세요.", "error"); return; }
+
+      detectBtn.disabled = true;
+      setStatus("");
+      resultCard.classList.remove("hidden");
+      detList.classList.add("hidden");
+      summary.innerHTML = '<span class="spinner"></span> 탐지 중입니다...';
+
+      try {
+        const base64 = imageToBase64();
+        const url = "https://detect.roboflow.com/" + model + "?api_key=" + encodeURIComponent(key);
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: base64,
+        });
+        if (resp.status === 401 || resp.status === 403) throw new Error("API 키가 올바르지 않아요. ①을 다시 확인하세요.");
+        if (resp.status === 404) throw new Error("모델을 찾지 못했어요. 모델 이름/버전을 확인하세요: " + model);
+        if (!resp.ok) throw new Error("로보플로우 오류 (" + resp.status + "). 잠시 후 다시 시도해 주세요.");
+
+        const data = await resp.json();
+        const preds = data.predictions || [];
+        drawBoxes(preds);
+        summary.textContent = "총 " + preds.length + "개를 찾았어요.";
+        if (preds.length > 0) {
+          detList.innerHTML = preds.map((p) =>
+            "<li>" + (p.class || "object") + " — 신뢰도 " + ((p.confidence || 0) * 100).toFixed(1) + "%</li>"
+          ).join("");
+          detList.classList.remove("hidden");
+        }
+      } catch (e) {
+        summary.textContent = "";
+        const msg = (e && e.message && e.message.includes("Failed to fetch"))
+          ? "인터넷 연결 또는 로보플로우 접속에 실패했어요. 연결을 확인해 주세요."
+          : (e.message || "알 수 없는 오류");
+        setStatus(msg, "error");
+      } finally {
+        detectBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
