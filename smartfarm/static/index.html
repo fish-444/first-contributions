@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>스마트팜 3D 대시보드 🌿</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: #0e1512; color: #e8f0ea;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+  .panel { position: fixed; background: rgba(18,26,22,.9); border: 1px solid rgba(120,180,140,.25);
+    border-radius: 12px; padding: 14px 16px; backdrop-filter: blur(6px); z-index: 10; font-size: 13px; line-height: 1.5; }
+
+  #top { top: 14px; left: 14px; max-width: 300px; }
+  #top h1 { font-size: 16px; color: #7ddb9a; margin-bottom: 4px; }
+  #top .engine { font-size: 11.5px; color: #9fb4a6; }
+  #top .badge { display:inline-block; padding:1px 7px; border-radius:6px; background:#24382c; color:#7ddb9a; font-weight:700; }
+
+  #upload { top: 14px; right: 14px; width: 250px; }
+  #upload h2 { font-size: 13px; color: #7ddb9a; margin-bottom: 9px; }
+  #upload label { font-size: 12px; color: #cfe0d4; display:block; margin-bottom:4px; }
+  select, input[type=file] { width: 100%; margin-bottom: 10px; font-size: 12.5px; padding: 8px;
+    background: #14201a; color:#e8f0ea; border: 1px solid rgba(120,180,140,.3); border-radius: 8px; }
+  .btn { width: 100%; padding: 11px; border:none; border-radius: 9px; background:#2e7d32; color:#fff;
+    font-size: 14px; font-weight: 700; cursor: pointer; }
+  .btn:hover:not(:disabled){ background:#256428; } .btn:disabled{ background:#4b6b4e; cursor:not-allowed; }
+  #uStatus { margin-top: 9px; font-size: 12px; color:#9fb4a6; min-height:1.3em; text-align:center; }
+
+  #legend { bottom: 14px; left: 14px; font-size: 12px; }
+  #legend .dot{ display:inline-block; width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+  #views { bottom: 14px; left: 50%; transform: translateX(-50%); display:flex; gap:7px; padding:7px; }
+  #views button { background:#1c2a22;color:#d7e8dc;border:1px solid rgba(120,180,140,.3);border-radius:8px;
+    padding:8px 13px;font-size:12.5px;font-weight:600;cursor:pointer; }
+  #views button:hover{ background:#263a2e;border-color:#7ddb9a; }
+  #hint { bottom: 14px; right: 14px; font-size: 11.5px; color:#9fb4a6; }
+
+  /* 모달 */
+  #modalWrap { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 50;
+    display:none; align-items:center; justify-content:center; }
+  #modal { width: 380px; max-width: 92vw; background:#16211b; border:1px solid rgba(120,180,140,.3);
+    border-radius:16px; padding:20px; }
+  #modal h3 { font-size:18px; color:#7ddb9a; display:flex; justify-content:space-between; align-items:center; }
+  #modal .close { cursor:pointer; color:#9fb4a6; font-size:22px; line-height:1; }
+  #modal .thumb { width:100%; height:150px; object-fit:cover; border-radius:10px; margin:12px 0; background:#0e1512; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+  .stat { background:#1d2b23; border-radius:9px; padding:9px 11px; }
+  .stat .k { font-size:11px; color:#9fb4a6; }
+  .stat .v { font-size:17px; font-weight:700; color:#e8f0ea; margin-top:2px; }
+  .stat .v.big { color:#7ddb9a; }
+  .fb { background:#1a2620; border-left:3px solid #7ddb9a; border-radius:8px; padding:11px 13px; font-size:13px; color:#d7e8dc; }
+  .fb .lbl { font-size:11px; color:#7ddb9a; font-weight:700; margin-bottom:4px; }
+  .chip { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; font-weight:700; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="top" class="panel">
+  <h1>🌿 스마트팜 3D 대시보드</h1>
+  <div class="engine">분석 엔진: <span class="badge" id="engineBadge">…</span> · 공간 60×40×50cm · 조명 3개</div>
+  <div class="engine" style="margin-top:6px">식물을 <b style="color:#ffd36b">클릭</b>하면 최신 분석 결과가 떠요.</div>
+</div>
+
+<div id="upload" class="panel">
+  <h2>📷 사진 업로드 → 분석</h2>
+  <label>① 분석할 식물(구역) 선택</label>
+  <select id="plantSelect"></select>
+  <label>② 그 식물 사진 선택</label>
+  <input type="file" id="fileInput" accept="image/*" />
+  <button class="btn" id="analyzeBtn" disabled>분석하기</button>
+  <div id="uStatus"></div>
+</div>
+
+<div id="legend" class="panel">
+  <div style="color:#9fb4a6;margin-bottom:5px">식물 색 = 빛 효율</div>
+  <div><span class="dot" style="background:#e0433a"></span>낮음 &nbsp;<span class="dot" style="background:#e8c53b"></span>보통 &nbsp;<span class="dot" style="background:#4fbf5f"></span>높음 &nbsp;<span class="dot" style="background:#5a6b60"></span>미분석</div>
+</div>
+
+<div id="views" class="panel">
+  <button data-view="front">정면뷰</button>
+  <button data-view="top">탑뷰</button>
+  <button data-view="orbit">자유회전</button>
+</div>
+<div id="hint" class="panel">드래그=회전 · 휠=확대</div>
+
+<div id="modalWrap">
+  <div id="modal">
+    <h3><span id="mTitle">식물</span><span class="close" id="mClose">×</span></h3>
+    <img class="thumb" id="mThumb" alt="분석 사진" />
+    <div style="margin-bottom:10px"><span class="chip" id="mSize"></span> <span class="chip" id="mShoot"></span></div>
+    <div class="grid">
+      <div class="stat"><div class="k">총 잎 개수</div><div class="v big" id="mLeaf">–</div></div>
+      <div class="stat"><div class="k">겹친 잎</div><div class="v" id="mOverlap">–</div></div>
+      <div class="stat"><div class="k">🌡️ 온도</div><div class="v" id="mTemp">–</div></div>
+      <div class="stat"><div class="k">💡 빛 효율</div><div class="v" id="mLight">–</div></div>
+    </div>
+    <div class="fb"><div class="lbl">🤖 RAG 생장 피드백</div><span id="mFeedback">–</span></div>
+    <div style="font-size:11px;color:#6f8073;margin-top:9px;text-align:right" id="mUpdated"></div>
+  </div>
+</div>
+
+<script src="/static/three.min.js"></script>
+<script src="/static/OrbitControls.js"></script>
+<script>
+// ===========================================================================
+// 스마트팜 3D 대시보드 프론트엔드
+// ===========================================================================
+const W = 60, D = 40, H = 50;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1512);
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 1, 3000);
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.getElementById('app').appendChild(renderer.domElement);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.target.set(0,14,0);
+
+scene.add(new THREE.HemisphereLight(0x9fb8c8, 0x1a241e, 0.5));
+scene.add(new THREE.AmbientLight(0xffffff, 0.28));
+
+// 바닥 + 케이지
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D),
+  new THREE.MeshStandardMaterial({ color:0x1a221d, roughness:1 }));
+floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
+scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(W,H,D)),
+  new THREE.LineBasicMaterial({ color:0x3f5a49 })).translateY(H/2));
+
+// 그로우 라이트 3개(왼쪽2·오른쪽1)
+[[-22,17],[-22,-13],[22,2]].forEach(([x,z])=>{
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(10,1,6),
+    new THREE.MeshStandardMaterial({ color:0xff86c8, emissive:0xff86c8, emissiveIntensity:0.9 }));
+  panel.position.set(x, H-3, z); scene.add(panel);
+  const sp = new THREE.SpotLight(0xffe1f1, 0.7, 0, Math.PI/3, 0.5, 1.0);
+  sp.position.set(x,H-3,z); sp.target.position.set(x*0.35,0,z*0.35);
+  sp.castShadow = true; scene.add(sp); scene.add(sp.target);
+});
+
+// 색상 유틸: 빛 효율(0~100) → 색
+function effColor(eff){
+  if(eff==null) return new THREE.Color(0x5a6b60);
+  const t = Math.max(0,Math.min(1,eff/100)); const c=new THREE.Color();
+  if(t<0.5) c.setRGB(0.88, 0.26+t, 0.23); else c.setRGB(0.88-(t-0.5)*0.55, 0.72+(t-0.5)*0.2, 0.23+(t-0.5)*0.5);
+  return c;
+}
+const SIZE_SCALE = { "미분석":0.55, "소품":0.8, "중품":1.15, "대품":1.6 };
+
+function labelSprite(text, color){
+  const cv=document.createElement('canvas'); cv.width=256; cv.height=96;
+  const x=cv.getContext('2d'); x.fillStyle='rgba(18,26,22,0.82)';
+  x.beginPath(); x.roundRect(8,20,240,56,14); x.fill();
+  x.fillStyle=color||'#c9f2d4'; x.font='bold 40px sans-serif'; x.textAlign='center'; x.textBaseline='middle';
+  x.fillText(text,128,50);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(cv), depthTest:false }));
+  s.scale.set(9,3.4,1); return s;
+}
+
+// ---- 식물 오브젝트 ----
+const plantObjs = {};   // id -> { group, foliage, label, data }
+const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2();
+let ENGINE = "…";
+
+function buildPlant(p){
+  const group = new THREE.Group();
+  const scale = SIZE_SCALE[p.size_class] || 0.55;
+  const potH = 7;
+  const pot = new THREE.Mesh(new THREE.CylinderGeometry(3.4,2.5,potH,16),
+    new THREE.MeshStandardMaterial({ color:0x8a5a3c, roughness:0.9 }));
+  pot.position.y = potH/2; pot.castShadow = pot.receiveShadow = true; group.add(pot);
+
+  // 잎 뭉치(하나의 오브젝트, 크기=size_class, 색=빛효율)
+  const foliage = new THREE.Mesh(new THREE.IcosahedronGeometry(4.2,1),
+    new THREE.MeshStandardMaterial({ color:effColor(p.light_eff), roughness:0.6, flatShading:true }));
+  foliage.scale.set(1.2*scale, 1.0*scale, 1.2*scale);
+  foliage.position.y = potH + 4.5*scale; foliage.castShadow = true; group.add(foliage);
+
+  // 새순 표시(작은 밝은 싹)
+  const shoot = new THREE.Mesh(new THREE.ConeGeometry(0.9,3,8),
+    new THREE.MeshStandardMaterial({ color:0xbff29a, emissive:0x2f5a1f, emissiveIntensity:0.4 }));
+  shoot.position.y = potH + 8*scale; shoot.visible = !!p.new_shoot; group.add(shoot);
+
+  const label = labelSprite(p.id + (p.analyzed? ' · '+p.size_class : ''), p.analyzed?'#c9f2d4':'#9fb4a6');
+  label.position.y = potH + 12*scale + 3; group.add(label);
+
+  group.position.set(p.x, 0, p.z);
+  group.userData.plantId = p.id;
+  group.traverse(o=>o.userData.plantId = p.id);
+  scene.add(group);
+  plantObjs[p.id] = { group, foliage, shoot, label, data:p };
+}
+
+function updatePlant(p){
+  const o = plantObjs[p.id]; if(!o){ buildPlant(p); return; }
+  o.data = p;
+  const scale = SIZE_SCALE[p.size_class] || 0.55;
+  o.foliage.scale.set(1.2*scale, 1.0*scale, 1.2*scale);
+  o.foliage.position.y = 7 + 4.5*scale;
+  o.foliage.material.color.copy(effColor(p.light_eff));
+  o.shoot.visible = !!p.new_shoot; o.shoot.position.y = 7 + 8*scale;
+  o.group.remove(o.label);
+  o.label = labelSprite(p.id+' · '+p.size_class, '#c9f2d4');
+  o.label.position.y = 7 + 12*scale + 3; o.label.traverse(x=>x.userData.plantId=p.id);
+  o.group.add(o.label);
+}
+
+// ---- 데이터 로드 ----
+async function loadPlants(){
+  const r = await fetch('/api/plants'); const d = await r.json();
+  ENGINE = d.engine; document.getElementById('engineBadge').textContent = d.engine;
+  const sel = document.getElementById('plantSelect');
+  d.plants.forEach(p=>{
+    buildPlant(p);
+    const opt=document.createElement('option'); opt.value=p.id; opt.textContent='구역 '+p.zone+' · '+p.id; sel.appendChild(opt);
+  });
+}
+
+// ---- 업로드 & 분석 ----
+const fileInput=document.getElementById('fileInput'), analyzeBtn=document.getElementById('analyzeBtn');
+const uStatus=document.getElementById('uStatus');
+fileInput.addEventListener('change', ()=>{ analyzeBtn.disabled = !fileInput.files[0]; });
+analyzeBtn.addEventListener('click', async ()=>{
+  const pid=document.getElementById('plantSelect').value, file=fileInput.files[0];
+  if(!file) return;
+  analyzeBtn.disabled=true; uStatus.textContent='분석 중…';
+  const fd=new FormData(); fd.append('plant_id',pid); fd.append('file',file);
+  try{
+    const r=await fetch('/api/analyze',{method:'POST',body:fd});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.detail||'분석 실패'); }
+    const p=await r.json();
+    updatePlant(p); openModal(p);
+    uStatus.textContent='✅ '+pid+' 갱신 완료';
+  }catch(e){ uStatus.textContent='⚠️ '+e.message; }
+  finally{ analyzeBtn.disabled=false; }
+});
+
+// ---- 클릭 → 모달 ----
+renderer.domElement.addEventListener('pointerdown', (e)=>{
+  pointer.x=(e.clientX/innerWidth)*2-1; pointer.y=-(e.clientY/innerHeight)*2+1;
+  raycaster.setFromCamera(pointer,camera);
+  const hits=raycaster.intersectObjects(scene.children,true);
+  for(const h of hits){ const id=h.object.userData.plantId; if(id){ openModal(plantObjs[id].data); break; } }
+});
+
+function openModal(p){
+  document.getElementById('mTitle').textContent='구역 '+p.zone+' · 식물 '+p.id;
+  const thumb=document.getElementById('mThumb'); thumb.src=p.thumb||''; thumb.style.display=p.thumb?'block':'none';
+  const sizeChip=document.getElementById('mSize');
+  sizeChip.textContent=p.size_class;
+  sizeChip.style.background = p.analyzed?'#2e7d32':'#3a4a40'; sizeChip.style.color='#fff';
+  const shootChip=document.getElementById('mShoot');
+  shootChip.textContent = p.new_shoot?'🌱 새순 있음':'새순 없음';
+  shootChip.style.background = p.new_shoot?'#4a7d2e':'#333'; shootChip.style.color='#fff';
+  document.getElementById('mLeaf').textContent = p.analyzed? p.leaf_count : '–';
+  document.getElementById('mOverlap').textContent = p.analyzed? p.overlap_count+'개' : '–';
+  document.getElementById('mTemp').textContent = p.temp!=null? p.temp+'°C' : '–';
+  document.getElementById('mLight').textContent = p.light_eff!=null? p.light_eff+'%' : '–';
+  document.getElementById('mFeedback').textContent = p.feedback;
+  document.getElementById('mUpdated').textContent = p.updated? ('최근 분석: '+p.updated) : '';
+  document.getElementById('modalWrap').style.display='flex';
+}
+document.getElementById('mClose').addEventListener('click',()=>document.getElementById('modalWrap').style.display='none');
+document.getElementById('modalWrap').addEventListener('click',(e)=>{ if(e.target.id==='modalWrap') e.currentTarget.style.display='none'; });
+
+// ---- 뷰 ----
+const views={ front:[[0,26,84],[0,14,0]], top:[[0,105,0.1],[0,0,0]], orbit:[[60,48,70],[0,12,0]] };
+function setView(n){ const v=views[n]; camera.position.set(...v[0]); controls.target.set(...v[1]); controls.update(); }
+document.querySelectorAll('#views button').forEach(b=>b.addEventListener('click',()=>setView(b.dataset.view)));
+setView('orbit');
+
+addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+(function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); })();
+
+loadPlants();
+</script>
+</body>
+</html>
