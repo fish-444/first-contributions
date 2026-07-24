@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>문서 RAG 챗봇</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    background: #f0f2f5;
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px 12px;
+  }
+  .app { width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { font-size: 1.3rem; color: #333; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .upload-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button {
+    background: #4f46e5; color: #fff; border: none; border-radius: 8px;
+    padding: 10px 16px; font-size: .95rem; cursor: pointer;
+  }
+  button:disabled { background: #a5a1e8; cursor: wait; }
+  button.secondary { background: #e5e7eb; color: #374151; }
+  #doc-list { margin-top: 10px; font-size: .85rem; color: #555; }
+  #doc-list li { margin-left: 18px; }
+  .section-title { font-size: .95rem; font-weight: 600; color: #444; margin-bottom: 8px; }
+  #class-input { flex: 1; min-width: 140px; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: .85rem; }
+  #img-result { margin-top: 12px; font-size: .85rem; color: #333; }
+  #img-result .desc { background: #eef2ff; padding: 10px; border-radius: 8px; margin-bottom: 10px; line-height: 1.5; }
+  #img-result table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+  #img-result th, #img-result td { border: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; }
+  #img-result th { background: #f9fafb; }
+  .mask-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .mask-row img { width: 90px; height: 90px; object-fit: cover; border: 1px solid #ddd; border-radius: 6px; }
+  #chat-log {
+    display: flex; flex-direction: column; gap: 10px;
+    min-height: 260px; max-height: 55vh; overflow-y: auto; padding: 4px;
+  }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: #4f46e5; color: #fff; }
+  .msg.bot { align-self: flex-start; background: #f3f4f6; color: #111; }
+  .msg.bot .sources { margin-top: 8px; font-size: .78rem; color: #6b7280; }
+  .msg.error { align-self: flex-start; background: #fee2e2; color: #991b1b; }
+  .input-row { display: flex; gap: 8px; margin-top: 12px; }
+  #question { flex: 1; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: .95rem; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>📄 문서 RAG 챗봇</h1>
+
+  <div class="card">
+    <div class="section-title">📄 문서 업로드</div>
+    <div class="upload-row">
+      <input type="file" id="file-input" accept=".txt,.md,.pdf" />
+      <button id="upload-btn">업로드</button>
+      <button id="reset-btn" class="secondary">전체 삭제</button>
+    </div>
+    <ul id="doc-list"></ul>
+  </div>
+
+  <div class="card">
+    <div class="section-title">🖼️ 이미지 분석 (YOLO-World + SAM-2)</div>
+    <div class="upload-row">
+      <input type="file" id="image-input" accept="image/*" />
+      <input type="text" id="class-input" placeholder="탐지할 클래스 (쉼표 구분, 비우면 기본값)" />
+      <button id="analyze-btn">분석</button>
+    </div>
+    <div id="img-result"></div>
+  </div>
+
+  <div class="card">
+    <div id="chat-log"></div>
+    <div class="input-row">
+      <input type="text" id="question" placeholder="업로드한 문서에 대해 질문해 보세요…" />
+      <button id="send-btn">질문</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const log = $("chat-log");
+
+function addMessage(text, cls, sources) {
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  div.textContent = text;
+  if (sources && sources.length) {
+    const src = document.createElement("div");
+    src.className = "sources";
+    src.textContent = "출처: " + sources.join(", ");
+    div.appendChild(src);
+  }
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+async function refreshDocs() {
+  const res = await fetch("/documents");
+  const data = await res.json();
+  const list = $("doc-list");
+  list.innerHTML = "";
+  for (const d of data.documents) {
+    const li = document.createElement("li");
+    li.textContent = `${d.filename} (청크 ${d.chunks}개)`;
+    list.appendChild(li);
+  }
+}
+
+$("upload-btn").addEventListener("click", async () => {
+  const file = $("file-input").files[0];
+  if (!file) { alert("파일을 먼저 선택해 주세요."); return; }
+  const btn = $("upload-btn");
+  btn.disabled = true; btn.textContent = "업로드 중…";
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/upload", { method: "POST", body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "업로드 실패");
+    addMessage(`"${data.filename}" 업로드 완료 (청크 ${data.chunks}개)`, "bot");
+    await refreshDocs();
+  } catch (e) {
+    addMessage("오류: " + e.message, "error");
+  } finally {
+    btn.disabled = false; btn.textContent = "업로드";
+  }
+});
+
+$("analyze-btn").addEventListener("click", async () => {
+  const file = $("image-input").files[0];
+  if (!file) { alert("이미지를 먼저 선택해 주세요."); return; }
+  const btn = $("analyze-btn");
+  const box = $("img-result");
+  btn.disabled = true; btn.textContent = "분석 중…";
+  box.innerHTML = "<div class='desc'>YOLO-World와 SAM-2를 실행하는 중… (수십 초 걸릴 수 있습니다)</div>";
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("class_names", $("class-input").value.trim());
+    const res = await fetch("/upload-image", { method: "POST", body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "분석 실패");
+
+    let html = `<div class='desc'>${data.description}</div>`;
+
+    if (data.detections.length) {
+      html += "<table><tr><th>클래스</th><th>신뢰도</th><th>박스 [x0,y0,x1,y1]</th></tr>";
+      for (const d of data.detections) {
+        html += `<tr><td>${d.cls}</td><td>${d.score}</td><td>${d.box.join(", ")}</td></tr>`;
+      }
+      html += "</table>";
+    }
+
+    const seg = data.segmentation || {};
+    if (seg.combined_mask) {
+      html += `<div style='margin-top:10px'>전체 마스크:</div><div class='mask-row'><img src='${seg.combined_mask}' alt='combined mask' /></div>`;
+    }
+    if (seg.individual_masks && seg.individual_masks.length) {
+      html += `<div style='margin-top:10px'>개별 마스크 (${seg.mask_count}개):</div><div class='mask-row'>`;
+      for (const m of seg.individual_masks.slice(0, 12)) {
+        html += `<img src='${m}' alt='mask' />`;
+      }
+      html += "</div>";
+    }
+
+    box.innerHTML = html;
+    addMessage(`이미지 "${data.filename}" 분석 완료 — 챗봇 검색에 반영되었습니다.`, "bot");
+    await refreshDocs();
+  } catch (e) {
+    box.innerHTML = `<div class='desc' style='background:#fee2e2;color:#991b1b'>오류: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = "분석";
+  }
+});
+
+$("reset-btn").addEventListener("click", async () => {
+  if (!confirm("업로드한 문서를 전부 삭제할까요?")) return;
+  await fetch("/documents", { method: "DELETE" });
+  await refreshDocs();
+  addMessage("모든 문서를 삭제했습니다.", "bot");
+});
+
+async function sendQuestion() {
+  const input = $("question");
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = "";
+  addMessage(question, "user");
+  const waiting = addMessage("답변을 생성하는 중…", "bot");
+  $("send-btn").disabled = true;
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const data = await res.json();
+    waiting.remove();
+    if (!res.ok) throw new Error(data.detail || "답변 생성 실패");
+    addMessage(data.answer, "bot", data.sources);
+  } catch (e) {
+    waiting.remove();
+    addMessage("오류: " + e.message, "error");
+  } finally {
+    $("send-btn").disabled = false;
+  }
+}
+
+$("send-btn").addEventListener("click", sendQuestion);
+$("question").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendQuestion();
+});
+
+refreshDocs();
+</script>
+</body>
+</html>
