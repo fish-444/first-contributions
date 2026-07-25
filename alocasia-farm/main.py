@@ -252,7 +252,7 @@ async def add_plant(name: str = Form(...), file: UploadFile = File(...)):
 
     x, z = _free_slot()
     pid = uuid.uuid4().hex[:8]
-    plant = {"id": pid, "name": name, "x": x, "z": z,
+    plant = {"id": pid, "name": name, "x": x, "z": z, "rot": 0,
              "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
     PLANTS[pid] = plant
     return plant
@@ -271,11 +271,14 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
 
 
 @app.patch("/api/plants/{pid}")
-async def rename(pid: str, name: str = Form(...)):
-    """식물 이름 커스텀."""
+async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)):
+    """식물 이름 커스텀 / 화분 방향(회전) 설정."""
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
-    PLANTS[pid]["name"] = name.strip() or PLANTS[pid]["name"]
+    if name is not None and name.strip():
+        PLANTS[pid]["name"] = name.strip()
+    if rot is not None:
+        PLANTS[pid]["rot"] = float(rot) % 360
     return PLANTS[pid]
 
 
