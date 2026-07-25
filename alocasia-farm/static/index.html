@@ -163,7 +163,6 @@ function leafShape(){const s=new THREE.Shape();s.moveTo(0,2.1);
   s.lineTo(0,-0.02);s.lineTo(-0.06,-0.18);s.bezierCurveTo(-0.2,-0.5,-0.45,-0.5,-0.6,-0.15);
   s.bezierCurveTo(-0.95,0.25,-1.05,1.7,0,2.1);return s;}
 const LEAF_GEO=new THREE.ShapeGeometry(leafShape(),10);
-const LEAF_MAT=new THREE.MeshStandardMaterial({color:0x2f6b34,roughness:0.5,side:THREE.DoubleSide});
 const PET_MAT=new THREE.MeshStandardMaterial({color:0x4f8a44,roughness:0.7});
 // 잎 단계별 색: 새순=연두 / 성숙잎=녹색 / 늙은잎=노란색
 const STAGE_COL={shoot:0xa4e05a, mature:0x35913c, old:0xe0cf4a};

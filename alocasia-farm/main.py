@@ -3,19 +3,18 @@
 =================================================
 
 핵심 파이프라인만:
-  [웹 UI] 사진 업로드 + 식물 이름 입력
-      │  POST /api/plants  (name, file)
+  [웹 UI] 사진 + 식물 이름 + 자리(A1~E10) 선택
+      │  POST /api/plants  (name, file, pos)
       ▼
-  [FastAPI] Roboflow(YOLO) 로 분석 →
-      · 크기 분류(대/중/소품)
-      · 잎 개수
-      · 겹침 밀도(overlap)
-      · 새순 유무
-      → 이름을 가진 식물로 등록/저장
+  [FastAPI] YOLO 모델 2개로 분석 →
+      · 모델1 맨 위 잎(광합성) → top_leaf_size  → 3D 화분/식물 크기
+      · 모델2 잎 단계          → shoot/mature/old → 3D 잎 색 + 모달 수치
+      · 겹침 밀도(overlap), 크기 분류(대/중/소품)
+      → 선택한 자리에 식물로 등록/저장
       ▼
   [3D 온실] 화분으로 시각화, 클릭 시 이름+분석결과 모달
 
-센서·RAG 없음. 오직 [사진+이름 → YOLO → 3D 반영 + 이름 커스텀].
+센서·RAG 없음. 오직 [사진+이름+자리 → YOLO → 3D 반영 + 이름/방향 커스텀].
 
 분석 엔진 자동 선택:
   1) 로보플로우(ROBOFLOW_API_KEY 있으면)  2) 로컬 ultralytics(.pt)  3) 데모(모델 없어도 동작)
@@ -175,11 +174,11 @@ def analyze_top(boxes: List[dict], img_area: float) -> dict:
     """모델1: 식물의 '맨 위 잎'(광합성 주력) 크기 → 3D 온실 반영용."""
     leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     if not leaves:
-        return {"top_leaf_present": False, "top_leaf_size": "없음", "top_leaf_pct": 0.0}
+        return {"top_leaf_size": "없음", "top_leaf_pct": 0.0}
     top = min(leaves, key=lambda b: b["y1"])          # 사진에서 가장 위쪽 잎
     pct = round(top["area"] / img_area * 100, 1) if img_area else 0.0
     size = "대엽" if pct > 18 else ("중엽" if pct > 8 else "소엽")
-    return {"top_leaf_present": True, "top_leaf_size": size, "top_leaf_pct": pct}
+    return {"top_leaf_size": size, "top_leaf_pct": pct}
 
 
 def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
@@ -201,8 +200,6 @@ def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
     overlap_count = len(overlapping)
     overlap_density = round(overlap_count / leaf_count * 100) if leaf_count else 0
 
-    new_shoot = counts["shoot"] > 0
-
     # 크기 분류 (잎 면적 비율 + 개수)
     coverage = sum(b["area"] for b in leaves) / img_area if img_area else 0
     if coverage > 0.45 or leaf_count >= 9:
@@ -215,7 +212,7 @@ def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
     return {"size_class": size_class, "leaf_count": leaf_count,
             "shoot_count": counts["shoot"], "mature_count": counts["mature"],
             "old_count": counts["old"], "overlap_count": overlap_count,
-            "overlap_density": overlap_density, "new_shoot": new_shoot}
+            "overlap_density": overlap_density}
 
 
 def _analyze_file(raw: bytes) -> dict:
