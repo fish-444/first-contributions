@@ -172,7 +172,7 @@ function buildPlant(p){
 
   // 잎 뭉치(하나의 오브젝트, 크기=size_class, 색=빛효율)
   const foliage = new THREE.Mesh(new THREE.IcosahedronGeometry(4.2,1),
-    new THREE.MeshStandardMaterial({ color:effColor(p.light_eff), roughness:0.6, flatShading:true }));
+    new THREE.MeshStandardMaterial({ color:effColor(p.light_eff ?? p.light_eff_base), roughness:0.6, flatShading:true }));
   foliage.scale.set(1.2*scale, 1.0*scale, 1.2*scale);
   foliage.position.y = potH + 4.5*scale; foliage.castShadow = true; group.add(foliage);
 
@@ -197,7 +197,7 @@ function updatePlant(p){
   const scale = SIZE_SCALE[p.size_class] || 0.55;
   o.foliage.scale.set(1.2*scale, 1.0*scale, 1.2*scale);
   o.foliage.position.y = 7 + 4.5*scale;
-  o.foliage.material.color.copy(effColor(p.light_eff));
+  o.foliage.material.color.copy(effColor(p.light_eff ?? p.light_eff_base));
   o.shoot.visible = !!p.new_shoot; o.shoot.position.y = 7 + 8*scale;
   o.group.remove(o.label);
   o.label = labelSprite(p.id+' · '+p.size_class, '#c9f2d4');

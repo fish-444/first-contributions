@@ -71,6 +71,25 @@ app = FastAPI(title="Smart Farm 3D Dashboard")
 # ===========================================================================
 ZONES = ["A", "B", "C"]
 
+# --- 조명 배치(정면기준 왼쪽2·오른쪽1), (x, y=높이, z) cm ---
+LIGHTS = [(-22, 47, 14), (-22, 47, -14), (22, 47, 0)]
+CANOPY_Y = 15  # 잎이 모인 대략 높이(cm) — 빛이 닿는 지점
+
+
+def _raw_illuminance(x: float, z: float, canopy_y: float = CANOPY_Y) -> float:
+    """한 지점이 조명 3개로부터 받는 빛의 양 (거리²반비례 + 입사각 cos)."""
+    total = 0.0
+    for lx, ly, lz in LIGHTS:
+        dx, dy, dz = lx - x, ly - canopy_y, lz - z
+        d2 = dx * dx + dy * dy + dz * dz
+        d = d2 ** 0.5
+        if d <= 0:
+            continue
+        cos = dy / d              # 위(잎 방향)로 들어오는 정도
+        if cos > 0:
+            total += cos / d2
+    return total
+
 
 def _new_plant(pid: str, zone: str, x: float, z: float) -> dict:
     return {
@@ -97,6 +116,12 @@ def _build_layout() -> Dict[str, dict]:
             x = -21 + i * 14                 # 가로 위치
             z = -14 + zi * 14                # 구역별 깊이
             plants[pid] = _new_plant(pid, zone, x, z)
+
+    # 위치 기반 '빛 효율(%)' 미리 계산 — 가장 밝은 자리를 100 기준으로 정규화
+    raws = {pid: _raw_illuminance(p["x"], p["z"]) for pid, p in plants.items()}
+    mx = max(raws.values()) or 1.0
+    for pid, p in plants.items():
+        p["light_eff_base"] = max(15, round(raws[pid] / mx * 100))
     return plants
 
 
@@ -237,10 +262,12 @@ def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
 # 가상 IoT 센서 (온도, 빛 효율)
 # ===========================================================================
 def read_sensors(plant: dict) -> dict:
-    # 구역별로 약간 다른 경향 + 약간의 랜덤
+    # 온도: 구역별 경향 + 약간의 센서 노이즈
     base_temp = {"A": 24, "B": 26, "C": 22}.get(plant["zone"], 24)
     temp = round(base_temp + random.uniform(-2.5, 3.5), 1)
-    light_eff = max(20, min(98, int(random.gauss(70, 15))))
+    # 빛 효율: 조명 위치·거리 기반으로 미리 계산한 값(위치가 곧 효율) + 소폭 노이즈
+    base = plant.get("light_eff_base", 60)
+    light_eff = max(10, min(100, base + random.randint(-4, 4)))
     return {"temp": temp, "light_eff": light_eff}
 
 
