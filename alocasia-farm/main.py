@@ -67,10 +67,15 @@ app = FastAPI(title="Alocasia Smart Farm")
 
 # --------------------------------------------------------------------------- 상태
 PLANTS: Dict[str, dict] = {}          # id -> 식물 상태
-# 번호 붙은 자리(슬롯): A1~C5 (3줄 x 5칸 = 15자리)
-_ROWS = ["A", "B", "C"]
-_COLS = 5
-SLOTS = [{"label": f"{r}{c + 1}", "x": -24 + c * 12, "z": -14 + ri * 14}
+# 번호 붙은 자리(슬롯): 온실 60x40cm 을 촘촘한 격자로 분할
+# 기본 A1~E10 (5줄 x 10칸 = 50자리), 한 칸 = 12 x 8 cm
+_ROWS = ["A", "B", "C", "D", "E"]
+_COLS = 10
+_W, _D = 60.0, 40.0
+_CW, _CD = _W / _COLS, _D / len(_ROWS)      # 칸 크기 (6 x 8 cm)
+SLOTS = [{"label": f"{r}{c + 1}",
+          "x": round(-_W / 2 + _CW * (c + 0.5), 2),
+          "z": round(-_D / 2 + _CD * (ri + 0.5), 2)}
          for ri, r in enumerate(_ROWS) for c in range(_COLS)]
 
 
