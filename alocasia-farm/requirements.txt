@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+requests
+# 로컬 .pt 방식일 때만 필요(로보플로우/데모만 쓰면 설치 안 해도 됨)
+ultralytics

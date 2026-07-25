@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>알로카시아 스마트팜 3D 온실 🌿</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:#0e1512;color:#e8f0ea;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic","Apple SD Gothic Neo",sans-serif}
+  #app{position:fixed;inset:0}canvas{display:block}
+  .panel{position:fixed;background:rgba(18,26,22,.92);border:1px solid rgba(120,180,140,.25);
+    border-radius:12px;padding:14px 16px;backdrop-filter:blur(6px);z-index:10;font-size:13px;line-height:1.5}
+
+  /* 왼쪽: 추가 폼 + 리스트 */
+  #side{top:14px;left:14px;width:270px;max-height:calc(100vh - 28px);display:flex;flex-direction:column;gap:12px}
+  #side h1{font-size:16px;color:#7ddb9a}
+  #side .eng{font-size:11px;color:#9fb4a6;margin-top:2px}
+  .form label{display:block;font-size:12px;color:#cfe0d4;margin:9px 0 4px}
+  .form input[type=text],.form input[type=file]{width:100%;font-size:13px;padding:9px;background:#14201a;
+    color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:8px}
+  .btn{width:100%;padding:11px;border:none;border-radius:9px;background:#2e7d32;color:#fff;
+    font-size:14px;font-weight:700;cursor:pointer;margin-top:11px}
+  .btn:hover:not(:disabled){background:#256428}.btn:disabled{background:#4b6b4e;cursor:not-allowed}
+  #status{margin-top:8px;font-size:12px;color:#9fb4a6;min-height:1.2em;text-align:center}
+
+  #listWrap{overflow-y:auto}
+  #listWrap h2{font-size:12px;letter-spacing:.05em;color:#9fb4a6;text-transform:uppercase;margin-bottom:8px}
+  .item{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid rgba(120,180,140,.18);
+    border-radius:9px;margin-bottom:7px;cursor:pointer;background:#14201a}
+  .item:hover{border-color:#7ddb9a;background:#182a20}
+  .item .nm{flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item .sz{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:#24382c;color:#7ddb9a}
+  .item .x{color:#c98;font-size:16px;padding:0 3px;line-height:1}
+  .item .x:hover{color:#f0a3a3}
+  .empty{font-size:12px;color:#6f8073;text-align:center;padding:10px}
+
+  #hint{bottom:14px;right:14px;font-size:11.5px;color:#9fb4a6}
+
+  /* 모달 */
+  #mWrap{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:50;display:none;align-items:center;justify-content:center}
+  #modal{width:390px;max-width:92vw;background:#16211b;border:1px solid rgba(120,180,140,.3);border-radius:16px;padding:20px}
+  #modal .hd{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  #modal .hd input{flex:1;font-size:17px;font-weight:700;color:#7ddb9a;background:transparent;border:none;border-bottom:1px dashed transparent;padding:2px 0}
+  #modal .hd input:focus{outline:none;border-bottom-color:#4fa85a}
+  #modal .close{cursor:pointer;color:#9fb4a6;font-size:22px;line-height:1}
+  #modal .thumb{width:100%;height:150px;object-fit:cover;border-radius:10px;margin:12px 0;background:#0e1512}
+  .chips{margin-bottom:12px;display:flex;gap:7px;flex-wrap:wrap}
+  .chip{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;color:#fff}
+  .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
+  .stat{background:#1d2b23;border-radius:9px;padding:10px}
+  .stat .k{font-size:11px;color:#9fb4a6}.stat .v{font-size:18px;font-weight:750;color:#e8f0ea;margin-top:2px}
+  .mrow{display:flex;gap:8px}
+  .mbtn{flex:1;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#24382c;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center}
+  .mbtn:hover{background:#2d4636}.mbtn.danger{background:#3a2020;border-color:#6b3030;color:#f0b3b3}
+  .mbtn input{display:none}
+  #mUpd{font-size:11px;color:#6f8073;text-align:right;margin-top:9px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="side" class="panel">
+  <div>
+    <h1>🌿 알로카시아 스마트팜</h1>
+    <div class="eng">분석 엔진: <b id="eng">…</b> · 3D 온실</div>
+  </div>
+  <div class="form">
+    <label>① 식물 이름</label>
+    <input type="text" id="name" placeholder="예: 프라이덱, 흑룡, 거북알로카시아" maxlength="24" />
+    <label>② 식물 사진</label>
+    <input type="file" id="file" accept="image/*" />
+    <button class="btn" id="addBtn" disabled>🌱 온실에 추가</button>
+    <div id="status"></div>
+  </div>
+  <div id="listWrap">
+    <h2>등록된 식물 <span id="cnt">(0)</span></h2>
+    <div id="list"></div>
+  </div>
+</div>
+
+<div id="hint" class="panel">드래그=회전 · 휠=확대 · 화분/리스트 클릭=상세</div>
+
+<div id="mWrap">
+  <div id="modal">
+    <div class="hd">
+      <input id="mName" type="text" maxlength="24" />
+      <span class="close" id="mClose">×</span>
+    </div>
+    <img class="thumb" id="mThumb" alt="분석 사진" />
+    <div class="chips"><span class="chip" id="mSize"></span><span class="chip" id="mShoot"></span></div>
+    <div class="grid">
+      <div class="stat"><div class="k">잎 개수</div><div class="v" id="mLeaf">–</div></div>
+      <div class="stat"><div class="k">겹친 잎</div><div class="v" id="mOv">–</div></div>
+      <div class="stat"><div class="k">겹침 밀도</div><div class="v" id="mDen">–</div></div>
+    </div>
+    <div class="mrow">
+      <label class="mbtn">📷 새 사진으로 갱신<input type="file" id="mReFile" accept="image/*"></label>
+      <button class="mbtn danger" id="mDel">🗑 제거</button>
+    </div>
+    <div id="mUpd"></div>
+  </div>
+</div>
+
+<script src="/static/three.min.js"></script>
+<script src="/static/OrbitControls.js"></script>
+<script>
+// ===== 3D 기본 =====
+const W=60,D=40,H=50;
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0e1512);
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,1,3000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+document.getElementById('app').appendChild(renderer.domElement);
+const controls=new THREE.OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.target.set(0,10,0);
+camera.position.set(46,42,60);
+scene.add(new THREE.HemisphereLight(0x9fb8c8,0x1a241e,0.5));
+scene.add(new THREE.AmbientLight(0xffffff,0.28));
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(W,D),new THREE.MeshStandardMaterial({color:0x1a221d,roughness:1}));
+floor.rotation.x=-Math.PI/2; floor.receiveShadow=true; scene.add(floor);
+scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(W,H,D)),new THREE.LineBasicMaterial({color:0x3f5a49})).translateY(H/2));
+[[-22,17],[-22,-13],[22,2]].forEach(([x,z])=>{
+  const pn=new THREE.Mesh(new THREE.BoxGeometry(10,1,6),new THREE.MeshStandardMaterial({color:0xff86c8,emissive:0xff86c8,emissiveIntensity:0.9}));
+  pn.position.set(x,H-3,z); scene.add(pn);
+  const sp=new THREE.SpotLight(0xffe1f1,0.7,0,Math.PI/3,0.5,1.0); sp.position.set(x,H-3,z);
+  sp.target.position.set(x*0.35,0,z*0.35); sp.castShadow=true; scene.add(sp,sp.target);
+});
+
+// ===== 알로카시아 모델 =====
+function leafShape(){const s=new THREE.Shape();s.moveTo(0,2.1);
+  s.bezierCurveTo(1.05,1.7,0.95,0.25,0.6,-0.15);s.bezierCurveTo(0.45,-0.5,0.2,-0.5,0.06,-0.18);
+  s.lineTo(0,-0.02);s.lineTo(-0.06,-0.18);s.bezierCurveTo(-0.2,-0.5,-0.45,-0.5,-0.6,-0.15);
+  s.bezierCurveTo(-0.95,0.25,-1.05,1.7,0,2.1);return s;}
+const LEAF_GEO=new THREE.ShapeGeometry(leafShape(),10);
+const LEAF_MAT=new THREE.MeshStandardMaterial({color:0x2f6b34,roughness:0.5,side:THREE.DoubleSide});
+const PET_MAT=new THREE.MeshStandardMaterial({color:0x4f8a44,roughness:0.7});
+function makeAlocasia(unit,n){const g=new THREE.Group();
+  for(let i=0;i<n;i++){const ang=(i/n)*Math.PI*2+i*0.7,px=Math.cos(ang),pz=Math.sin(ang);
+    const petH=(4+(i%3))*unit,lean=0.35+(i%2)*0.18;
+    const pet=new THREE.Mesh(new THREE.CylinderGeometry(0.1*unit,0.16*unit,petH,5),PET_MAT);
+    pet.position.set(px*0.5*unit,petH/2,pz*0.5*unit); pet.rotation.set(pz*lean,0,-px*lean); pet.castShadow=true; g.add(pet);
+    const bl=new THREE.Mesh(LEAF_GEO,LEAF_MAT); const bs=(1.5+(i%3)*0.35)*unit; bl.scale.set(bs,bs,bs);
+    bl.position.set(px*(0.5*unit+petH*0.5*lean+bs*0.2),(petH+Math.cos(lean)*0.3*unit)*0.98,pz*(0.5*unit+petH*0.5*lean+bs*0.2));
+    bl.rotation.y=-ang+Math.PI/2; bl.rotation.x=-1.15-lean*0.3; bl.castShadow=true; g.add(bl);}
+  return g;}
+const SIZE_UNIT={"소품":1.25,"중품":1.8,"대품":2.45};
+
+function nameSprite(text){const cv=document.createElement('canvas');cv.width=320;cv.height=80;
+  const x=cv.getContext('2d');x.fillStyle='rgba(18,26,22,0.85)';x.beginPath();x.roundRect(6,18,308,46,12);x.fill();
+  x.fillStyle='#c9f2d4';x.font='bold 34px sans-serif';x.textAlign='center';x.textBaseline='middle';
+  x.fillText(text.length>12?text.slice(0,12)+'…':text,160,42);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),depthTest:false}));
+  s.scale.set(13,3.3,1);return s;}
+
+// ===== 식물 오브젝트 관리 =====
+const objs={}; // id -> {group,data,label}
+const ray=new THREE.Raycaster(),ptr=new THREE.Vector2();
+function buildObj(p){
+  const g=new THREE.Group(); const unit=SIZE_UNIT[p.size_class]||1.5; const potH=6+unit*1.6;
+  const pot=new THREE.Mesh(new THREE.CylinderGeometry(unit*2.1,unit*1.6,potH,18),new THREE.MeshStandardMaterial({color:0x8a5a3c,roughness:0.9}));
+  pot.position.y=potH/2; pot.castShadow=pot.receiveShadow=true; g.add(pot);
+  const n=Math.max(2,Math.min(12,p.leaf_count||4));
+  const plant=makeAlocasia(unit,n); plant.position.y=potH-0.5; g.add(plant);
+  const label=nameSprite(p.name); label.position.y=potH+unit*4+2; g.add(label);
+  g.position.set(p.x,0,p.z); g.traverse(o=>o.userData.pid=p.id); scene.add(g);
+  objs[p.id]={group:g,data:p,label};
+}
+function removeObj(id){const o=objs[id];if(!o)return;scene.remove(o.group);delete objs[id];}
+function rebuildObj(p){removeObj(p.id);buildObj(p);}
+
+// ===== 리스트 & 상태 =====
+async function loadAll(){
+  const d=await(await fetch('/api/plants')).json();
+  document.getElementById('eng').textContent=d.engine;
+  Object.keys(objs).forEach(removeObj);
+  d.plants.forEach(buildObj); refreshList();
+}
+function refreshList(){
+  const list=document.getElementById('list'); const items=Object.values(objs).map(o=>o.data);
+  document.getElementById('cnt').textContent='('+items.length+')';
+  if(!items.length){list.innerHTML='<div class="empty">아직 없어요. 위에서 사진+이름으로 추가하세요.</div>';return;}
+  list.innerHTML='';
+  items.forEach(p=>{
+    const el=document.createElement('div'); el.className='item';
+    el.innerHTML=`<span class="nm"></span><span class="sz"></span><span class="x">×</span>`;
+    el.querySelector('.nm').textContent=p.name; el.querySelector('.sz').textContent=p.size_class;
+    el.addEventListener('click',ev=>{ if(ev.target.classList.contains('x')){delPlant(p.id);ev.stopPropagation();return;} openModal(p); });
+    list.appendChild(el);
+  });
+}
+
+// ===== 추가 =====
+const nameEl=document.getElementById('name'),fileEl=document.getElementById('file'),addBtn=document.getElementById('addBtn'),statusEl=document.getElementById('status');
+function chkForm(){addBtn.disabled=!(nameEl.value.trim()&&fileEl.files[0]);}
+nameEl.addEventListener('input',chkForm); fileEl.addEventListener('change',chkForm);
+addBtn.addEventListener('click',async()=>{
+  addBtn.disabled=true; statusEl.textContent='분석 중…';
+  const fd=new FormData(); fd.append('name',nameEl.value.trim()); fd.append('file',fileEl.files[0]);
+  try{
+    const r=await fetch('/api/plants',{method:'POST',body:fd});
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'추가 실패');}
+    const p=await r.json(); buildObj(p); refreshList(); openModal(p);
+    statusEl.textContent='✅ '+p.name+' 추가됨'; nameEl.value=''; fileEl.value=''; chkForm();
+  }catch(e){statusEl.textContent='⚠️ '+e.message; addBtn.disabled=false;}
+});
+
+// ===== 제거 =====
+async function delPlant(id){
+  try{ await fetch('/api/plants/'+id,{method:'DELETE'}); }catch(e){}
+  removeObj(id); refreshList();
+  if(modalId===id) closeModal();
+}
+
+// ===== 클릭 → 모달 =====
+let downX,downY;
+renderer.domElement.addEventListener('pointerdown',e=>{downX=e.clientX;downY=e.clientY;});
+renderer.domElement.addEventListener('pointerup',e=>{
+  if(Math.hypot(e.clientX-downX,e.clientY-downY)>5)return;
+  ptr.x=(e.clientX/innerWidth)*2-1; ptr.y=-(e.clientY/innerHeight)*2+1; ray.setFromCamera(ptr,camera);
+  const hits=ray.intersectObjects(Object.values(objs).map(o=>o.group),true);
+  for(const h of hits){const id=h.object.userData.pid; if(id&&objs[id]){openModal(objs[id].data);break;}}
+});
+
+// ===== 모달 =====
+let modalId=null;
+function openModal(p){
+  modalId=p.id;
+  document.getElementById('mName').value=p.name;
+  const t=document.getElementById('mThumb'); t.src=p.thumb||''; t.style.display=p.thumb?'block':'none';
+  const sz=document.getElementById('mSize'); sz.textContent=p.size_class; sz.style.background='#2e7d32';
+  const sh=document.getElementById('mShoot'); sh.textContent=p.new_shoot?'🌱 새순 있음':'새순 없음'; sh.style.background=p.new_shoot?'#4a7d2e':'#3a4a40';
+  document.getElementById('mLeaf').textContent=p.leaf_count;
+  document.getElementById('mOv').textContent=p.overlap_count+'개';
+  document.getElementById('mDen').textContent=p.overlap_density+'%';
+  document.getElementById('mUpd').textContent=p.updated?('최근 분석: '+p.updated):'';
+  document.getElementById('mWrap').style.display='flex';
+}
+function closeModal(){document.getElementById('mWrap').style.display='none';modalId=null;}
+document.getElementById('mClose').addEventListener('click',closeModal);
+document.getElementById('mWrap').addEventListener('click',e=>{if(e.target.id==='mWrap')closeModal();});
+document.getElementById('mDel').addEventListener('click',()=>{if(modalId)delPlant(modalId);});
+
+// 이름 저장(수정)
+document.getElementById('mName').addEventListener('change',async()=>{
+  if(!modalId)return; const nm=document.getElementById('mName').value.trim(); if(!nm)return;
+  const fd=new FormData(); fd.append('name',nm);
+  const r=await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd}); const p=await r.json();
+  objs[modalId].data=p; rebuildObj(p); refreshList();
+});
+// 새 사진으로 갱신
+document.getElementById('mReFile').addEventListener('change',async(e)=>{
+  if(!modalId||!e.target.files[0])return;
+  const fd=new FormData(); fd.append('file',e.target.files[0]);
+  const r=await fetch('/api/plants/'+modalId+'/reanalyze',{method:'POST',body:fd});
+  if(r.ok){const p=await r.json(); objs[modalId].data=p; rebuildObj(p); refreshList(); openModal(p);}
+  e.target.value='';
+});
+
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+(function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
+loadAll();
+</script>
+</body>
+</html>
