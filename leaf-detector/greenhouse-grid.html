@@ -1237,6 +1237,48 @@ function rectFree(c0,r0,cw,ch,ignore){
 
 function sizeFromFootprint(cw,ch){ const m=Math.max(cw,ch); return m>=3?'대품':m===2?'중품':'소품'; }
 
+// ---- 알로카시아 잎 모양(화살촉/하트형) ----
+function alocasiaLeafShape(){
+  const s = new THREE.Shape();
+  s.moveTo(0, 2.1);                                  // 잎 끝(tip)
+  s.bezierCurveTo(1.05, 1.7, 0.95, 0.25, 0.6, -0.15);// 오른쪽 가장자리
+  s.bezierCurveTo(0.45, -0.5, 0.2, -0.5, 0.06, -0.18);// 오른쪽 밑돌기 → 중앙 홈
+  s.lineTo(0, -0.02);
+  s.lineTo(-0.06, -0.18);
+  s.bezierCurveTo(-0.2, -0.5, -0.45, -0.5, -0.6, -0.15);// 왼쪽 밑돌기
+  s.bezierCurveTo(-0.95, 0.25, -1.05, 1.7, 0, 2.1);  // 왼쪽 가장자리 → 끝
+  return s;
+}
+const LEAF_GEO = new THREE.ShapeGeometry(alocasiaLeafShape(), 10);
+const LEAF_MAT = new THREE.MeshStandardMaterial({ color:0x2f6b34, roughness:0.5, side:THREE.DoubleSide });
+const PETIOLE_MAT = new THREE.MeshStandardMaterial({ color:0x4f8a44, roughness:0.7 });
+
+// 알로카시아 한 포기: 잎자루(petiole) + 화살촉 잎(blade) 여러 장이 바깥·위로
+function makeAlocasia(unit, nLeaves){
+  const g = new THREE.Group();
+  for(let i=0;i<nLeaves;i++){
+    const ang = (i/nLeaves)*Math.PI*2 + i*0.7;
+    const px = Math.cos(ang), pz = Math.sin(ang);
+    const petH = (4 + (i%3)) * unit;             // 잎자루 길이
+    const lean = 0.35 + (i%2)*0.18;              // 바깥으로 벌어짐
+
+    const pet = new THREE.Mesh(new THREE.CylinderGeometry(0.1*unit, 0.16*unit, petH, 5), PETIOLE_MAT);
+    pet.position.set(px*0.5*unit, petH/2, pz*0.5*unit);
+    pet.rotation.set(pz*lean, 0, -px*lean);
+    pet.castShadow = true; g.add(pet);
+
+    const blade = new THREE.Mesh(LEAF_GEO, LEAF_MAT);
+    const bs = (1.5 + (i%3)*0.35) * unit;        // 잎 크기
+    blade.scale.set(bs, bs, bs);
+    const tipY = petH + Math.cos(lean)*0.3*unit;
+    blade.position.set(px*(0.5*unit + petH*0.5*lean + bs*0.2), tipY*0.98, pz*(0.5*unit + petH*0.5*lean + bs*0.2));
+    blade.rotation.y = -ang + Math.PI/2;         // 앞면이 바깥을 향하도록
+    blade.rotation.x = -1.15 - lean*0.3;         // 위로 살짝 눕힘(끝이 바깥/아래로)
+    blade.castShadow = true; g.add(blade);
+  }
+  return g;
+}
+
 function addPot(c0,r0,cw,ch,size){
   const id='p'+(++potSeq);
   for(let c=c0;c<c0+cw;c++) for(let r=r0;r<r0+ch;r++) occ[c][r]=id;
@@ -1246,12 +1288,13 @@ function addPot(c0,r0,cw,ch,size){
   const potMesh=new THREE.Mesh(new THREE.CylinderGeometry(potR, potR*0.75, potH, 18),
     new THREE.MeshStandardMaterial({ color:0x8a5a3c, roughness:0.9 }));
   potMesh.position.y=potH/2; potMesh.castShadow=potMesh.receiveShadow=true; group.add(potMesh);
-  const fscale=Math.max(cw,ch);
-  const foliage=new THREE.Mesh(new THREE.IcosahedronGeometry(potR*1.15,1),
-    new THREE.MeshStandardMaterial({ color:0x4fa85a, roughness:0.6, flatShading:true }));
-  foliage.scale.set(1,0.8,1); foliage.position.y=potH+potR*0.8; foliage.castShadow=true; group.add(foliage);
+  // 알로카시아 포기 (크기=footprint, 잎 수=크기별)
+  const unit = 1.1 + Math.max(cw,ch)*0.9;
+  const nLeaves = 3 + Math.max(cw,ch)*2;         // 소품3+ ~ 대품9
+  const plant = makeAlocasia(unit, nLeaves);
+  plant.position.y = potH - 0.5; group.add(plant);
   group.position.set(cx,0,cz);
-  const canopyY=potH+potR*0.8;
+  const canopyY = potH + unit*3.5;
   const rec={ id, c0,r0,cw,ch, size, x:cx, z:cz, topY:canopyY, group, potMesh, illum:0 };
   group.traverse(o=>o.userData.potId=id);
   scene.add(group); pots.set(id,rec);
