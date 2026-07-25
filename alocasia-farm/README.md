@@ -48,6 +48,23 @@ ROBOFLOW_API_KEY="개인키" ROBOFLOW_MODEL_ID="find-leaf-and-object/1" python3 
 ```
 > **Private API Key** 사용 (공개키는 막힘). Windows PowerShell 은 `$env:ROBOFLOW_API_KEY="..."; ...`
 
+### 모델 2개 연동 (키 하나로)
+로보플로우 키 1개로 **모델 두 개**를 함께 씁니다. 각각 다른 영역에 반영돼요:
+
+| 모델 | 환경변수 | 반영 위치 |
+|---|---|---|
+| **모델1** 맨 위 잎(광합성) | `ROBOFLOW_MODEL_TOP` | **3D 온실** (식물 크기·강조 잎) |
+| **모델2** 새순/성숙/노령 | `ROBOFLOW_MODEL_STAGE` | **개체 특징 모달** (단계별 개수) |
+
+```bash
+ROBOFLOW_API_KEY="개인키" \
+ROBOFLOW_MODEL_TOP="top-leaf-model/1" \
+ROBOFLOW_MODEL_STAGE="leaf-stage-model/1" \
+python3 -m uvicorn main:app --reload
+```
+> 두 모델을 **다르게** 지정하면 사진 1장당 추론이 2번 돌아 크레딧도 2배예요.
+> 같게 두거나 하나만 지정하면 1번만 호출(재사용)해서 절약합니다.
+
 ## API
 | 메서드 | 경로 | 설명 |
 |---|---|---|

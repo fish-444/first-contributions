@@ -38,6 +38,9 @@ from PIL import Image
 # --------------------------------------------------------------------------- 설정
 ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY", "")
 ROBOFLOW_MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "find-leaf-and-object/1")
+# 두 모델 (키 하나로 둘 다 호출)
+ROBOFLOW_MODEL_TOP = os.environ.get("ROBOFLOW_MODEL_TOP", ROBOFLOW_MODEL_ID)      # 모델1: 맨 위 잎(광합성) → 3D
+ROBOFLOW_MODEL_STAGE = os.environ.get("ROBOFLOW_MODEL_STAGE", ROBOFLOW_MODEL_ID)  # 모델2: 새순/성숙/노령 → 모달
 ROBOFLOW_API_URL = os.environ.get("ROBOFLOW_API_URL", "https://serverless.roboflow.com")
 MODEL_PATH = os.environ.get("MODEL_PATH", "yolov8n.pt")
 CONFIDENCE = float(os.environ.get("CONFIDENCE", "25"))
@@ -78,21 +81,21 @@ def _free_slot() -> tuple:
 
 
 # --------------------------------------------------------------------------- YOLO 탐지
-def detect_boxes(image: Image.Image):
+def detect_boxes(image: Image.Image, model_id: str):
     if ENGINE == "roboflow":
-        return _detect_roboflow(image)
+        return _detect_roboflow(image, model_id)
     if ENGINE == "local":
         return _detect_local(image)
     return _detect_demo(image)
 
 
-def _detect_roboflow(image: Image.Image):
+def _detect_roboflow(image: Image.Image, model_id: str):
     import requests
     buf = io.BytesIO(); image.save(buf, format="JPEG")
     img_b64 = base64.b64encode(buf.getvalue()).decode()
     try:
         resp = requests.post(
-            f"{ROBOFLOW_API_URL}/{ROBOFLOW_MODEL_ID}",
+            f"{ROBOFLOW_API_URL}/{model_id}",
             params={"api_key": ROBOFLOW_API_KEY, "confidence": CONFIDENCE},
             data=img_b64, headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=60,
         )
@@ -156,6 +159,17 @@ def _stage(cls: str) -> str:
     return "mature"           # 성엽(성숙잎) — 'leaf','matureleaf','mature'
 
 
+def analyze_top(boxes: List[dict], img_area: float) -> dict:
+    """모델1: 식물의 '맨 위 잎'(광합성 주력) 크기 → 3D 온실 반영용."""
+    leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
+    if not leaves:
+        return {"top_leaf_present": False, "top_leaf_size": "없음", "top_leaf_pct": 0.0}
+    top = min(leaves, key=lambda b: b["y1"])          # 사진에서 가장 위쪽 잎
+    pct = round(top["area"] / img_area * 100, 1) if img_area else 0.0
+    size = "대엽" if pct > 18 else ("중엽" if pct > 8 else "소엽")
+    return {"top_leaf_present": True, "top_leaf_size": size, "top_leaf_pct": pct}
+
+
 def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
     leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     leaf_count = len(leaves)
@@ -197,8 +211,19 @@ def _analyze_file(raw: bytes) -> dict:
         image = Image.open(io.BytesIO(raw)).convert("RGB")
     except Exception:
         raise HTTPException(400, "이미지를 읽을 수 없어요.")
-    boxes, img_area = detect_boxes(image)
-    metrics = analyze_metrics(boxes, img_area)
+
+    # 모델1(맨 위 잎) 실행
+    boxes_top, img_area = detect_boxes(image, ROBOFLOW_MODEL_TOP)
+    # 모델2(단계) 실행 — 두 모델이 다르고 로보플로우일 때만 따로 호출(아니면 재사용해 크레딧 절약)
+    if ENGINE == "roboflow" and ROBOFLOW_MODEL_STAGE != ROBOFLOW_MODEL_TOP:
+        boxes_stage, _ = detect_boxes(image, ROBOFLOW_MODEL_STAGE)
+    else:
+        boxes_stage = boxes_top
+
+    metrics = {}
+    metrics.update(analyze_top(boxes_top, img_area))        # 모델1 → 3D
+    metrics.update(analyze_metrics(boxes_stage, img_area))  # 모델2 → 모달
+
     thumb = image.copy(); thumb.thumbnail((260, 260))
     tb = io.BytesIO(); thumb.save(tb, format="JPEG", quality=72)
     metrics["thumb"] = "data:image/jpeg;base64," + base64.b64encode(tb.getvalue()).decode()

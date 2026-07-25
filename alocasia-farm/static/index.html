@@ -88,6 +88,10 @@
       <span class="close" id="mClose">×</span>
     </div>
     <img class="thumb" id="mThumb" alt="분석 사진" />
+    <div style="background:#1a2620;border-left:3px solid #8fe36a;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:13px">
+      ☀️ <b style="color:#8fe36a">광합성 잎 (모델1 · 3D 반영)</b> — 맨 위 잎 <b id="mTopSize">–</b> <span id="mTopPct" style="color:#9fb4a6"></span>
+    </div>
+    <div style="font-size:11px;color:#9fb4a6;margin-bottom:6px">개체 특징 (모델2 · 잎 단계)</div>
     <div class="chips"><span class="chip" id="mSize"></span></div>
     <div class="grid">
       <div class="stat"><div class="k">🌱 새순 Shoot</div><div class="v" id="mShootN">–</div></div>
@@ -140,30 +144,25 @@ function leafShape(){const s=new THREE.Shape();s.moveTo(0,2.1);
 const LEAF_GEO=new THREE.ShapeGeometry(leafShape(),10);
 const LEAF_MAT=new THREE.MeshStandardMaterial({color:0x2f6b34,roughness:0.5,side:THREE.DoubleSide});
 const PET_MAT=new THREE.MeshStandardMaterial({color:0x4f8a44,roughness:0.7});
-// 단계별 잎 색: 새순=연한밝은초록, 성엽=진초록, 노엽=누런초록
-const STAGE_COL={shoot:0x9fe07a, mature:0x2f6b34, old:0x9a8a3a};
-function makeAlocasia(unit,counts){
-  const seq=[];
-  for(let i=0;i<(counts.old||0);i++) seq.push('old');
-  for(let i=0;i<(counts.mature||0);i++) seq.push('mature');
-  for(let i=0;i<(counts.shoot||0);i++) seq.push('shoot');
-  if(!seq.length) seq.push('mature','mature');
-  const total=Math.min(seq.length,14);
+// 3D 온실 = 모델1(맨 위 잎/광합성) 반영: 크기는 맨위잎 크기, 맨 위 잎을 밝게 강조
+function makeAlocasia(unit,n){
+  const total=Math.max(2,Math.min(14,n||3));
   const g=new THREE.Group();
   for(let i=0;i<total;i++){
-    const stage=seq[i], ang=(i/total)*Math.PI*2+i*0.7, px=Math.cos(ang), pz=Math.sin(ang);
-    const petH=(4+(i%3))*unit, lean=0.35+(i%2)*0.18;
+    const isTop=(i===0);                                      // 맨 위(광합성) 잎
+    const ang=(i/total)*Math.PI*2+i*0.7, px=Math.cos(ang), pz=Math.sin(ang);
+    const petH=(4+(i%3))*unit*(isTop?1.18:1), lean=isTop?0.12:0.35+(i%2)*0.18;
     const pet=new THREE.Mesh(new THREE.CylinderGeometry(0.1*unit,0.16*unit,petH,5),PET_MAT);
     pet.position.set(px*0.5*unit,petH/2,pz*0.5*unit); pet.rotation.set(pz*lean,0,-px*lean); pet.castShadow=true; g.add(pet);
-    const mat=new THREE.MeshStandardMaterial({color:STAGE_COL[stage],roughness:0.5,side:THREE.DoubleSide});
+    const mat=new THREE.MeshStandardMaterial({color:isTop?0x8fe36a:0x2f6b34,emissive:isTop?0x1e4014:0x000000,roughness:0.5,side:THREE.DoubleSide});
     const bl=new THREE.Mesh(LEAF_GEO,mat);
-    const mul=stage==='shoot'?0.55:stage==='old'?1.15:1.0;      // 새순 작게, 노엽 크게
-    const bs=(1.5+(i%3)*0.35)*unit*mul; bl.scale.set(bs,bs,bs);
+    const bs=(1.5+(i%3)*0.35)*unit*(isTop?1.4:1.0); bl.scale.set(bs,bs,bs);   // 맨위잎 크게
     bl.position.set(px*(0.5*unit+petH*0.5*lean+bs*0.2),(petH+Math.cos(lean)*0.3*unit)*0.98,pz*(0.5*unit+petH*0.5*lean+bs*0.2));
     bl.rotation.y=-ang+Math.PI/2; bl.rotation.x=-1.15-lean*0.3; bl.castShadow=true; g.add(bl);
   }
   return g;}
-const SIZE_UNIT={"소품":1.25,"중품":1.8,"대품":2.45};
+// 3D 식물 크기 = 모델1의 '맨 위 잎' 크기
+const TOP_UNIT={"소엽":1.3,"중엽":1.85,"대엽":2.5,"없음":1.15};
 
 function nameSprite(text){const cv=document.createElement('canvas');cv.width=320;cv.height=80;
   const x=cv.getContext('2d');x.fillStyle='rgba(18,26,22,0.85)';x.beginPath();x.roundRect(6,18,308,46,12);x.fill();
@@ -176,12 +175,11 @@ function nameSprite(text){const cv=document.createElement('canvas');cv.width=320
 const objs={}; // id -> {group,data,label}
 const ray=new THREE.Raycaster(),ptr=new THREE.Vector2();
 function buildObj(p){
-  const g=new THREE.Group(); const unit=SIZE_UNIT[p.size_class]||1.5; const potH=6+unit*1.6;
+  const g=new THREE.Group(); const unit=TOP_UNIT[p.top_leaf_size]||1.4; const potH=6+unit*1.6;
   const pot=new THREE.Mesh(new THREE.CylinderGeometry(unit*2.1,unit*1.6,potH,18),new THREE.MeshStandardMaterial({color:0x8a5a3c,roughness:0.9}));
   pot.position.y=potH/2; pot.castShadow=pot.receiveShadow=true; g.add(pot);
-  const counts={shoot:p.shoot_count||0,mature:p.mature_count||0,old:p.old_count||0};
-  if(counts.shoot+counts.mature+counts.old===0) counts.mature=Math.max(2,p.leaf_count||3);
-  const plant=makeAlocasia(unit,counts); plant.position.y=potH-0.5; g.add(plant);
+  const n=Math.max(2,Math.min(14,p.leaf_count||4));
+  const plant=makeAlocasia(unit,n); plant.position.y=potH-0.5; g.add(plant);
   const label=nameSprite(p.name); label.position.y=potH+unit*4+2; g.add(label);
   g.position.set(p.x,0,p.z); g.traverse(o=>o.userData.pid=p.id); scene.add(g);
   objs[p.id]={group:g,data:p,label};
@@ -248,6 +246,8 @@ function openModal(p){
   modalId=p.id;
   document.getElementById('mName').value=p.name;
   const t=document.getElementById('mThumb'); t.src=p.thumb||''; t.style.display=p.thumb?'block':'none';
+  document.getElementById('mTopSize').textContent=p.top_leaf_size||'–';
+  document.getElementById('mTopPct').textContent=(p.top_leaf_pct?('· 화면의 '+p.top_leaf_pct+'%'):'');
   const sz=document.getElementById('mSize'); sz.textContent=p.size_class; sz.style.background='#2e7d32';
   document.getElementById('mShootN').textContent=(p.shoot_count!=null?p.shoot_count:'–');
   document.getElementById('mMatN').textContent=(p.mature_count!=null?p.mature_count:'–');
