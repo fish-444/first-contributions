@@ -69,6 +69,9 @@
     <button data-size="중품">중품 2×2</button>
     <button data-size="대품">대품 3×3</button>
   </div>
+  <div class="ctrl"><label>🍃 잎 개수 <span id="v_leaf">6</span></label>
+    <input type="range" id="leaf" min="1" max="16" step="1" value="6"></div>
+  <div style="font-size:11px;color:#9fb4a6;margin:-4px 0 9px">새 화분은 이 잎 수로 놓이고, 화분 선택 후 조절하면 그 화분 잎 수가 바뀌어요.</div>
   <button class="btn" id="placeSel">✅ 선택칸에 배치 (다중선택)</button>
   <div class="seg">
     <button class="btn danger" id="delSel" style="margin:0">🗑 선택 화분 삭제</button>
@@ -1222,7 +1225,8 @@ buildLights();
 const occ = Array.from({length:COLS},()=>Array(ROWS).fill(null)); // occ[c][r]=potId
 const pots = new Map();  // id -> {id,c0,r0,cw,ch,size,group,potMesh,illum}
 let potSeq = 0;
-let mode = 'place', curSize = '소품';
+let mode = 'place', curSize = '소품', curLeaves = 6;
+const leafEl = document.getElementById('leaf'), leafOut = document.getElementById('v_leaf');
 const selCells = new Set();     // "c,r"
 let selectedPot = null;
 
@@ -1279,7 +1283,8 @@ function makeAlocasia(unit, nLeaves){
   return g;
 }
 
-function addPot(c0,r0,cw,ch,size){
+function addPot(c0,r0,cw,ch,size,nLeaves){
+  nLeaves = nLeaves || curLeaves;                 // 잎 수 = 사용자가 정한 값
   const id='p'+(++potSeq);
   for(let c=c0;c<c0+cw;c++) for(let r=r0;r<r0+ch;r++) occ[c][r]=id;
   const cx=-W/2+CELL*c0+CELL*cw/2, cz=-D/2+CELL*r0+CELL*ch/2;
@@ -1288,17 +1293,26 @@ function addPot(c0,r0,cw,ch,size){
   const potMesh=new THREE.Mesh(new THREE.CylinderGeometry(potR, potR*0.75, potH, 18),
     new THREE.MeshStandardMaterial({ color:0x8a5a3c, roughness:0.9 }));
   potMesh.position.y=potH/2; potMesh.castShadow=potMesh.receiveShadow=true; group.add(potMesh);
-  // 알로카시아 포기 (크기=footprint, 잎 수=크기별)
   const unit = 1.1 + Math.max(cw,ch)*0.9;
-  const nLeaves = 3 + Math.max(cw,ch)*2;         // 소품3+ ~ 대품9
   const plant = makeAlocasia(unit, nLeaves);
   plant.position.y = potH - 0.5; group.add(plant);
   group.position.set(cx,0,cz);
   const canopyY = potH + unit*3.5;
-  const rec={ id, c0,r0,cw,ch, size, x:cx, z:cz, topY:canopyY, group, potMesh, illum:0 };
+  const rec={ id, c0,r0,cw,ch, size, nLeaves, unit, potH, x:cx, z:cz, topY:canopyY, group, potMesh, plant, illum:0 };
   group.traverse(o=>o.userData.potId=id);
   scene.add(group); pots.set(id,rec);
   return rec;
+}
+
+// 선택한 화분의 잎 수만 바꿔 다시 그림
+function setPotLeaves(rec, n){
+  rec.group.remove(rec.plant);
+  rec.plant.traverse(o=>{ if(o.geometry && o.geometry!==LEAF_GEO) o.geometry.dispose(); });
+  rec.nLeaves = n;
+  rec.plant = makeAlocasia(rec.unit, n);
+  rec.plant.position.y = rec.potH - 0.5;
+  rec.plant.traverse(o=>o.userData.potId=rec.id);
+  rec.group.add(rec.plant);
 }
 function removePot(id){
   const p=pots.get(id); if(!p) return;
@@ -1374,7 +1388,9 @@ renderer.domElement.addEventListener('pointerup',e=>{
   const moved=Math.hypot(e.clientX-downX,e.clientY-downY);
   if(moved>5 || Date.now()-downT>400) return;   // 드래그(회전)면 무시
   const potId=pickPot(e);
-  if(potId){ selectedPot=(selectedPot===potId?null:potId); computeLight(); return; }
+  if(potId){ selectedPot=(selectedPot===potId?null:potId);
+    if(selectedPot){ const r=pots.get(selectedPot); leafEl.value=r.nLeaves; leafOut.textContent=r.nLeaves; curLeaves=r.nLeaves; }
+    computeLight(); return; }
   const cell=pickCell(e); if(!cell) return;
   selectedPot=null;
   if(mode==='place'){
@@ -1408,6 +1424,10 @@ document.querySelectorAll('#modeSeg button').forEach(b=>b.addEventListener('clic
 document.querySelectorAll('#sizeSeg button').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('#sizeSeg button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); curSize=b.dataset.size;
 }));
+leafEl.addEventListener('input',()=>{
+  curLeaves=parseInt(leafEl.value); leafOut.textContent=leafEl.value;
+  if(selectedPot){ setPotLeaves(pots.get(selectedPot), curLeaves); computeLight(); }
+});
 function slider(id,key,fmt){ const el=document.getElementById(id),out=document.getElementById('v_'+id);
   el.addEventListener('input',()=>{ P[key]=parseFloat(el.value); if(out)out.textContent=fmt?fmt(P[key]):el.value; buildLights(); computeLight(); }); }
 slider('lh','lh'); slider('langle','langle');
