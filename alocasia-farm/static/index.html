@@ -34,6 +34,15 @@
   .item .x{color:#c98;font-size:16px;padding:0 3px;line-height:1}
   .item .x:hover{color:#f0a3a3}
   .empty{font-size:12px;color:#6f8073;text-align:center;padding:10px}
+  #mapWrap h2{font-size:12px;letter-spacing:.05em;color:#9fb4a6;text-transform:uppercase;margin-bottom:8px}
+  #map{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+  .cell{background:#14201a;border:1px solid rgba(120,180,140,.2);border-radius:7px;padding:6px 3px;text-align:center;cursor:pointer;overflow:hidden}
+  .cell:hover{border-color:#7ddb9a}
+  .cell.on{background:#1d3324;border-color:#4fa85a}
+  .cell .lb{color:#7ddb9a;font-weight:700;font-size:11px;line-height:1.2}
+  .cell .nm{color:#7f8f83;font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cell.on .nm{color:#d7e8dc}
+  .poschip{font-size:12px;font-weight:700;color:#0e1512;background:#7ddb9a;border-radius:6px;padding:2px 8px;margin-right:8px;flex:none}
 
   #hint{bottom:14px;right:14px;font-size:11.5px;color:#9fb4a6}
 
@@ -70,8 +79,15 @@
     <input type="text" id="name" placeholder="예: 프라이덱, 흑룡, 거북알로카시아" maxlength="24" />
     <label>② 식물 사진</label>
     <input type="file" id="file" accept="image/*" />
+    <label>③ 자리 선택</label>
+    <select id="pos"></select>
     <button class="btn" id="addBtn" disabled>🌱 온실에 추가</button>
     <div id="status"></div>
+  </div>
+  <div id="mapWrap">
+    <h2>🗺️ 온실 자리 지도</h2>
+    <div id="map"></div>
+    <div style="font-size:10.5px;color:#6f8073;margin-top:6px">자리 탭 → 그 식물 상세 · 빈자리 탭 → 추가 준비</div>
   </div>
   <div id="listWrap">
     <h2>등록된 식물 <span id="cnt">(0)</span></h2>
@@ -84,6 +100,7 @@
 <div id="mWrap">
   <div id="modal">
     <div class="hd">
+      <span class="poschip" id="mPos"></span>
       <input id="mName" type="text" maxlength="24" />
       <span class="close" id="mClose">×</span>
     </div>
@@ -191,7 +208,7 @@ function buildObj(p){
   const counts={shoot:p.shoot_count||0,mature:p.mature_count||0,old:p.old_count||0};
   if(counts.shoot+counts.mature+counts.old===0) counts.mature=Math.max(2,p.leaf_count||3);
   const plant=makeAlocasia(unit,counts); plant.position.y=potH-0.5; g.add(plant);
-  const label=nameSprite(p.name); label.position.y=potH+unit*4+2; g.add(label);
+  const label=nameSprite((p.pos?p.pos+' · ':'')+p.name); label.position.y=potH+unit*4+2; g.add(label);
   g.position.set(p.x,0,p.z); g.rotation.y=((p.rot||0))*Math.PI/180;
   g.traverse(o=>o.userData.pid=p.id); scene.add(g);
   objs[p.id]={group:g,data:p,label};
@@ -204,19 +221,42 @@ async function loadAll(){
   const d=await(await fetch('/api/plants')).json();
   document.getElementById('eng').textContent=d.engine;
   Object.keys(objs).forEach(removeObj);
-  d.plants.forEach(buildObj); refreshList();
+  d.plants.forEach(buildObj); refreshList(); await refreshSlots();
 }
 function refreshList(){
   const list=document.getElementById('list'); const items=Object.values(objs).map(o=>o.data);
   document.getElementById('cnt').textContent='('+items.length+')';
   if(!items.length){list.innerHTML='<div class="empty">아직 없어요. 위에서 사진+이름으로 추가하세요.</div>';return;}
   list.innerHTML='';
+  items.sort((a,b)=>(a.pos||'').localeCompare(b.pos||''));
   items.forEach(p=>{
     const el=document.createElement('div'); el.className='item';
     el.innerHTML=`<span class="nm"></span><span class="sz"></span><span class="x">×</span>`;
-    el.querySelector('.nm').textContent=p.name; el.querySelector('.sz').textContent=p.size_class;
+    el.querySelector('.nm').textContent=(p.pos?p.pos+' · ':'')+p.name; el.querySelector('.sz').textContent=p.size_class;
     el.addEventListener('click',ev=>{ if(ev.target.classList.contains('x')){delPlant(p.id);ev.stopPropagation();return;} openModal(p); });
     list.appendChild(el);
+  });
+}
+// 자리 지도 + 자리 선택 갱신
+async function refreshSlots(){
+  const slots=await(await fetch('/api/slots')).json();
+  const sel=document.getElementById('pos'); const prev=sel.value; sel.innerHTML='';
+  const empties=slots.filter(s=>!s.occupied);
+  if(empties.length){ empties.forEach(s=>{const o=document.createElement('option');o.value=s.label;o.textContent='자리 '+s.label;sel.appendChild(o);});
+    if(empties.some(s=>s.label===prev)) sel.value=prev; }
+  else { const o=document.createElement('option');o.value='';o.textContent='빈 자리 없음';sel.appendChild(o); }
+  const map=document.getElementById('map'); map.innerHTML='';
+  slots.forEach(s=>{
+    const cell=document.createElement('div'); cell.className='cell'+(s.occupied?' on':'');
+    const nm=(s.occupied&&objs[s.plant_id])?objs[s.plant_id].data.name:'빈자리';
+    const lb=document.createElement('div'); lb.className='lb'; lb.textContent=s.label;
+    const nmEl=document.createElement('div'); nmEl.className='nm'; nmEl.textContent=nm;
+    cell.appendChild(lb); cell.appendChild(nmEl);
+    cell.addEventListener('click',()=>{
+      if(s.occupied&&objs[s.plant_id]) openModal(objs[s.plant_id].data);
+      else { document.getElementById('pos').value=s.label; document.getElementById('name').focus(); }
+    });
+    map.appendChild(cell);
   });
 }
 
@@ -226,19 +266,19 @@ function chkForm(){addBtn.disabled=!(nameEl.value.trim()&&fileEl.files[0]);}
 nameEl.addEventListener('input',chkForm); fileEl.addEventListener('change',chkForm);
 addBtn.addEventListener('click',async()=>{
   addBtn.disabled=true; statusEl.textContent='분석 중…';
-  const fd=new FormData(); fd.append('name',nameEl.value.trim()); fd.append('file',fileEl.files[0]);
+  const fd=new FormData(); fd.append('name',nameEl.value.trim()); fd.append('file',fileEl.files[0]); fd.append('pos',document.getElementById('pos').value);
   try{
     const r=await fetch('/api/plants',{method:'POST',body:fd});
     if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'추가 실패');}
-    const p=await r.json(); buildObj(p); refreshList(); openModal(p);
-    statusEl.textContent='✅ '+p.name+' 추가됨'; nameEl.value=''; fileEl.value=''; chkForm();
+    const p=await r.json(); buildObj(p); refreshList(); await refreshSlots(); openModal(p);
+    statusEl.textContent='✅ 자리 '+p.pos+' 에 '+p.name+' 추가됨'; nameEl.value=''; fileEl.value=''; chkForm();
   }catch(e){statusEl.textContent='⚠️ '+e.message; addBtn.disabled=false;}
 });
 
 // ===== 제거 =====
 async function delPlant(id){
   try{ await fetch('/api/plants/'+id,{method:'DELETE'}); }catch(e){}
-  removeObj(id); refreshList();
+  removeObj(id); refreshList(); refreshSlots();
   if(modalId===id) closeModal();
 }
 
@@ -256,6 +296,7 @@ renderer.domElement.addEventListener('pointerup',e=>{
 let modalId=null;
 function openModal(p){
   modalId=p.id;
+  document.getElementById('mPos').textContent=p.pos||'';
   document.getElementById('mName').value=p.name;
   const t=document.getElementById('mThumb'); t.src=p.thumb||''; t.style.display=p.thumb?'block':'none';
   document.getElementById('mTopSize').textContent=p.top_leaf_size||'–';
@@ -290,7 +331,7 @@ document.getElementById('mName').addEventListener('change',async()=>{
   if(!modalId)return; const nm=document.getElementById('mName').value.trim(); if(!nm)return;
   const fd=new FormData(); fd.append('name',nm);
   const r=await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd}); const p=await r.json();
-  objs[modalId].data=p; rebuildObj(p); refreshList();
+  objs[modalId].data=p; rebuildObj(p); refreshList(); refreshSlots();
 });
 // 새 사진으로 갱신
 document.getElementById('mReFile').addEventListener('change',async(e)=>{

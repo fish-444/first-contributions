@@ -67,17 +67,24 @@ app = FastAPI(title="Alocasia Smart Farm")
 
 # --------------------------------------------------------------------------- 상태
 PLANTS: Dict[str, dict] = {}          # id -> 식물 상태
-# 3D 온실 배치용 격자 슬롯(60x40 안에서 자동 배치)
-SLOTS = [(-24 + c * 12, -14 + r * 14) for r in range(3) for c in range(5)]  # 15자리
+# 번호 붙은 자리(슬롯): A1~C5 (3줄 x 5칸 = 15자리)
+_ROWS = ["A", "B", "C"]
+_COLS = 5
+SLOTS = [{"label": f"{r}{c + 1}", "x": -24 + c * 12, "z": -14 + ri * 14}
+         for ri, r in enumerate(_ROWS) for c in range(_COLS)]
 
 
-def _free_slot() -> tuple:
-    used = {(p["x"], p["z"]) for p in PLANTS.values()}
-    for s in SLOTS:
-        if s not in used:
+def _slot_by_label(label: str):
+    return next((s for s in SLOTS if s["label"] == label), None)
+
+
+def _free_slot(prefer: str = None):
+    used = {p.get("pos") for p in PLANTS.values()}
+    if prefer:
+        s = _slot_by_label(prefer)
+        if s and s["label"] not in used:
             return s
-    # 다 차면 살짝 흩뿌려 추가
-    return (random.randint(-26, 26), random.randint(-16, 16))
+    return next((s for s in SLOTS if s["label"] not in used), None)
 
 
 # --------------------------------------------------------------------------- YOLO 탐지
@@ -241,18 +248,30 @@ def list_plants():
     return {"engine": ENGINE, "plants": list(PLANTS.values())}
 
 
+@app.get("/api/slots")
+def get_slots():
+    """온실 자리(슬롯) 목록 + 점유 여부. 자리 지도·자리 선택에 사용."""
+    used = {p.get("pos"): p["id"] for p in PLANTS.values()}
+    return [{"label": s["label"], "x": s["x"], "z": s["z"],
+             "occupied": s["label"] in used, "plant_id": used.get(s["label"])} for s in SLOTS]
+
+
 @app.post("/api/plants")
-async def add_plant(name: str = Form(...), file: UploadFile = File(...)):
-    """사진 + 이름으로 식물을 3D 온실에 추가(분석 포함)."""
+async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: str = Form(None)):
+    """사진 + 이름 + 자리로 식물을 3D 온실에 추가(분석 포함)."""
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "이미지 파일만 업로드할 수 있어요.")
     name = name.strip() or "이름없는 알로카시아"
+
+    slot = _free_slot(pos)
+    if slot is None:
+        raise HTTPException(400, "빈 자리가 없어요. 식물을 제거해 자리를 비워 주세요.")
+
     raw = await file.read()
     metrics = _analyze_file(raw)
 
-    x, z = _free_slot()
     pid = uuid.uuid4().hex[:8]
-    plant = {"id": pid, "name": name, "x": x, "z": z, "rot": 0,
+    plant = {"id": pid, "name": name, "pos": slot["label"], "x": slot["x"], "z": slot["z"], "rot": 0,
              "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
     PLANTS[pid] = plant
     return plant
