@@ -127,7 +127,7 @@ def _detect_demo(image: Image.Image):
     for _ in range(random.randint(3, 11)):
         bw = random.uniform(0.12, 0.32) * W; bh = random.uniform(0.12, 0.32) * Hh
         cx = random.uniform(bw / 2, W - bw / 2); cy = random.uniform(bh / 2, Hh - bh / 2)
-        cls = "newleaf" if random.random() < 0.25 else "leaf"
+        cls = random.choices(["shoot", "mature leaf", "old leaf"], weights=[0.22, 0.55, 0.23])[0]
         boxes.append({"cls": cls, "conf": random.uniform(0.4, 0.95),
                       "x1": cx - bw / 2, "y1": cy - bh / 2, "x2": cx + bw / 2, "y2": cy + bh / 2, "area": bw * bh})
     return boxes, W * Hh
@@ -142,10 +142,30 @@ def _iou(a, b):
     return inter / union if union > 0 else 0.0
 
 
+# 잎이 아닌 클래스(화분·기준물 등)는 잎 계수에서 제외
+NON_LEAF = {"object", "pot", "background", "ruler", "marker", "tag"}
+
+
+def _stage(cls: str) -> str:
+    """클래스 이름을 잎 단계(shoot/mature/old)로 매핑. 이름 표기 흔들려도 인식."""
+    c = cls.lower().replace(" ", "").replace("_", "").replace("-", "")
+    if "shoot" in c or "newleaf" in c or c.startswith("new"):
+        return "shoot"        # 새순
+    if "old" in c or "senes" in c:
+        return "old"          # 노엽(노화잎)
+    return "mature"           # 성엽(성숙잎) — 'leaf','matureleaf','mature'
+
+
 def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
-    leaves = [b for b in boxes if b["cls"] in ("leaf", "newleaf", "new_shoot", "new-shoot")]
+    leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     leaf_count = len(leaves)
 
+    # 단계별 개수 (Shoot / Mature / Old)
+    counts = {"shoot": 0, "mature": 0, "old": 0}
+    for b in leaves:
+        counts[_stage(b["cls"])] += 1
+
+    # 겹침
     OVERLAP_IOU = 0.12
     overlapping = set()
     for i in range(len(leaves)):
@@ -155,11 +175,9 @@ def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
     overlap_count = len(overlapping)
     overlap_density = round(overlap_count / leaf_count * 100) if leaf_count else 0
 
-    new_shoot = any(b["cls"] in ("newleaf", "new_shoot", "new-shoot") for b in boxes)
-    if not new_shoot and leaves:
-        areas = sorted(b["area"] for b in leaves); median = areas[len(areas) // 2]
-        new_shoot = any(b["area"] < 0.4 * median for b in leaves)
+    new_shoot = counts["shoot"] > 0
 
+    # 크기 분류 (잎 면적 비율 + 개수)
     coverage = sum(b["area"] for b in leaves) / img_area if img_area else 0
     if coverage > 0.45 or leaf_count >= 9:
         size_class = "대품"
@@ -169,8 +187,9 @@ def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
         size_class = "소품"
 
     return {"size_class": size_class, "leaf_count": leaf_count,
-            "overlap_count": overlap_count, "overlap_density": overlap_density,
-            "new_shoot": new_shoot}
+            "shoot_count": counts["shoot"], "mature_count": counts["mature"],
+            "old_count": counts["old"], "overlap_count": overlap_count,
+            "overlap_density": overlap_density, "new_shoot": new_shoot}
 
 
 def _analyze_file(raw: bytes) -> dict:
