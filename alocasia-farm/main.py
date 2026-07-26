@@ -79,6 +79,10 @@ app = FastAPI(title="Alocasia Smart Farm")
 # --------------------------------------------------------------------------- 상태
 PLANTS: Dict[str, dict] = {}          # id -> 식물 상태
 FEATS: Dict[str, dict] = {}           # id -> 생김새 특징(모양 그룹 계산용, 응답에는 안 나감)
+# 미리 지정한 화분 자리 — 모델에 pot 클래스를 라벨링하는 대신 쓴다.
+# 화분은 안 움직이니 한 번만 찍어 두면 계속 재사용되고, 자리(슬롯)가 고정돼
+# 매번 스캔해도 "이 화분 = 항상 같은 식물"이 유지된다. 선반 정규좌표(0~1).
+POTS: List[dict] = []
 # 번호 붙은 자리(슬롯): 온실 60x40cm 을 촘촘한 격자로 분할
 # 기본 A1~E10 (5줄 x 10칸 = 50자리)
 _ROWS = ["A", "B", "C", "D", "E"]
@@ -461,15 +465,26 @@ def _mean_features(feats: List[dict]) -> dict:
     return out
 
 
-def group_by_pots_and_shape(leaves: List[dict], pots: List[dict], feats: List[dict]) -> List[List[dict]]:
-    """화분 + 생김새를 함께 쓰는 그룹화.
+def synthetic_pots(canvas_w: float, canvas_h: float) -> List[dict]:
+    """미리 지정한 화분 자리 → 화분 박스. 모델이 화분을 못 잡아도 그룹화가 된다.
 
-    · 화분 박스 '안'에 있는 잎 → 그 화분으로 확정 (씨앗)
-    · 화분 밖으로 뻗은 잎 → 가까움 + 씨앗 잎과의 닮은 정도를 함께 보고 배정
-
-    알로카시아는 잎이 화분 밖으로 멀리 뻗어서, 거리만 보면 옆 화분에 잘못 붙는다.
-    이때 '같은 식물 잎끼리는 닮았다'는 성질이 교정해 준다.
+    화분 크기는 이웃 화분과의 간격에서 추정한다(빽빽한 트레이에서 잘 맞는다).
     """
+    if not POTS:
+        return []
+    pts = [(p["u"] * canvas_w, p["v"] * canvas_h) for p in POTS]
+    if len(pts) > 1:
+        nn = [min(math.dist(a, b) for j, b in enumerate(pts) if j != i) for i, a in enumerate(pts)]
+        r = sorted(nn)[len(nn) // 2] * 0.45
+    else:
+        r = min(canvas_w, canvas_h) * 0.1
+    return [{"cls": "pot", "conf": 1.0, "x1": x - r, "y1": y - r,
+             "x2": x + r, "y2": y + r, "area": 4 * r * r} for x, y in pts]
+
+
+def group_by_pots_indexed(leaves: List[dict], pots: List[dict],
+                          feats: List[dict]) -> List[tuple]:
+    """group_by_pots_and_shape 와 같되, 각 무리가 몇 번 화분에서 나왔는지도 알려 준다."""
     groups: List[List[dict]] = [[] for _ in pots]
     seed_feats: List[List[dict]] = [[] for _ in pots]
     strays = []
@@ -483,24 +498,32 @@ def group_by_pots_and_shape(leaves: List[dict], pots: List[dict], feats: List[di
         else:
             strays.append(idx)
 
-    ref = sum(_span(p) for p in pots) / len(pots)      # 화분 크기 = 거리 기준자
+    ref = sum(_span(p) for p in pots) / len(pots)
     for idx in strays:
-        lf, lx_ly = leaves[idx], _center(leaves[idx])
+        lx_ly = _center(leaves[idx])
 
         def score(i):
             dist = math.dist(_center(pots[i]), lx_ly)
-            near = ref / (ref + dist)                   # 0~1, 가까울수록 큼
-            if seed_feats[i]:
-                sim = shape_similarity(feats[idx], _mean_features(seed_feats[i]))
-            else:
-                sim = 0.5                               # 씨앗이 없으면 중립
+            near = ref / (ref + dist)
+            sim = shape_similarity(feats[idx], _mean_features(seed_feats[i])) if seed_feats[i] else 0.5
             # 곱으로 본다 — 더하면 '아주 가깝다'가 '전혀 안 닮았다'를 덮어써서
             # 멀리 뻗은 잎이 옆 화분에 붙어 버린다. 곱이면 둘 다 맞아야 이긴다.
             return near * sim
 
-        best = max(range(len(pots)), key=score)
-        groups[best].append(lf)
-    return [g for g in groups if g]
+        groups[max(range(len(pots)), key=score)].append(leaves[idx])
+    return [(i, g) for i, g in enumerate(groups) if g]
+
+
+def group_by_pots_and_shape(leaves: List[dict], pots: List[dict], feats: List[dict]) -> List[List[dict]]:
+    """화분 + 생김새를 함께 쓰는 그룹화.
+
+    · 화분 박스 '안'에 있는 잎 → 그 화분으로 확정 (씨앗)
+    · 화분 밖으로 뻗은 잎 → 가까움 + 씨앗 잎과의 닮은 정도를 함께 보고 배정
+
+    알로카시아는 잎이 화분 밖으로 멀리 뻗어서, 거리만 보면 옆 화분에 잘못 붙는다.
+    이때 '같은 식물 잎끼리는 닮았다'는 성질이 교정해 준다.
+    """
+    return [g for _, g in group_by_pots_indexed(leaves, pots, feats)]
 
 
 def group_by_distance_and_shape(leaves: List[dict], feats: List[dict],
@@ -548,18 +571,37 @@ def group_leaves(boxes: List[dict], image: Image.Image = None,
     image 를 주면 잎을 잘라 색까지 보고, 없으면 박스 비율·크기만으로 판단한다.
     feats 를 주면 그걸 쓴다 — 사진이 여러 장이라 박스마다 원본이 다를 때 필요.
     """
+    return group_plants(boxes, image, scale, feats)[0]
+
+
+def group_plants(boxes: List[dict], image: Image.Image = None, scale: float = 1.0,
+                 feats: List[dict] = None, canvas: tuple = None) -> tuple:
+    """(무리 목록, 무리→고정자리) 를 돌려준다.
+
+    canvas(=(폭, 높이)) 를 주고 화분 자리를 미리 지정해 뒀으면, 모델이 화분을
+    못 잡아도 그 자리를 화분으로 삼는다. 이때 무리마다 자리가 고정된다.
+    """
     leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     pots = [b for b in boxes if b["cls"].lower() in NON_LEAF]
     if not leaves:
-        return []
+        return [], {}
     if feats is not None:
         by_id = {id(b): f for b, f in zip(boxes, feats)}
-        feats = [by_id[id(b)] for b in leaves]
+        lfeats = [by_id[id(b)] for b in leaves]
     else:
-        feats = [leaf_features(image, b, scale) for b in leaves]
+        lfeats = [leaf_features(image, b, scale) for b in leaves]
+
+    predefined = False
+    if not pots and POTS and canvas:
+        pots = synthetic_pots(*canvas)
+        predefined = True
+
     if pots:
-        return group_by_pots_and_shape(leaves, pots, feats)
-    return group_by_distance_and_shape(leaves, feats)
+        indexed = group_by_pots_indexed(leaves, pots, lfeats)
+        groups = [g for _, g in indexed]
+        slots = {id(g): POTS[i]["slot"] for i, g in indexed} if predefined else {}
+        return groups, slots
+    return group_by_distance_and_shape(leaves, lfeats), {}
 
 
 def analyze_top(boxes: List[dict], img_area: float, ref_area: float = None) -> dict:
@@ -668,6 +710,63 @@ def get_slots():
              "occupied": s["label"] in used, "plant_id": used.get(s["label"])} for s in SLOTS]
 
 
+@app.get("/api/pots")
+def get_pots():
+    """미리 지정해 둔 화분 자리."""
+    return {"count": len(POTS), "pots": POTS}
+
+
+@app.post("/api/pots")
+async def set_pots(points: str = Form(None), points_px: str = Form(None),
+                   corners: str = Form(None)):
+    """화분 중심을 저장. 모델에 pot 클래스를 라벨링하는 대신 쓴다.
+
+    화분은 안 움직이니 한 번만 지정하면 이후 스캔에서 계속 재사용되고,
+    화분마다 자리(슬롯)가 고정돼 개체가 안 섞인다.
+
+    · `points`    선반 정규좌표 `[[u,v], …]` (0~1)
+    · `points_px` 사진 픽셀 좌표 + `corners`(네 모서리) → 서버가 원근 보정해서 변환
+    """
+    import json
+    if points_px and corners:
+        try:
+            px, quad = json.loads(points_px), json.loads(corners)
+        except ValueError:
+            raise HTTPException(400, "좌표를 읽을 수 없어요 (JSON 형식).")
+        H = homography([tuple(p) for p in quad], [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)])
+        pts = [apply_h(H, float(p[0]), float(p[1])) for p in px]
+    elif points:
+        try:
+            pts = json.loads(points)
+        except ValueError:
+            raise HTTPException(400, "points 를 읽을 수 없어요 (JSON 형식).")
+    else:
+        raise HTTPException(400, "points 또는 points_px+corners 가 필요해요.")
+    if not isinstance(pts, list) or not pts:
+        raise HTTPException(400, "화분을 하나 이상 찍어 주세요.")
+
+    POTS.clear()
+    taken = set()
+    for i, p in enumerate(pts):
+        try:
+            u, v = float(p[0]), float(p[1])
+        except (TypeError, ValueError, IndexError):
+            raise HTTPException(400, f"{i + 1}번째 화분 좌표가 이상해요.")
+        u, v = min(max(u, 0.0), 1.0), min(max(v, 0.0), 1.0)
+        slot = _nearest_slot((u - 0.5) * _W, (v - 0.5) * _D, taken)
+        if slot is None:
+            raise HTTPException(400, "자리가 모자라요. 화분 수를 줄여 주세요.")
+        taken.add(slot["label"])
+        POTS.append({"i": i, "u": round(u, 4), "v": round(v, 4), "slot": slot["label"]})
+    return {"count": len(POTS), "pots": POTS}
+
+
+@app.delete("/api/pots")
+def clear_pots():
+    POTS.clear()
+    return {"ok": True}
+
+
 @app.post("/api/plants")
 async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: str = Form(None)):
     """사진 + 이름 + 자리로 식물을 3D 온실에 추가(분석 포함)."""
@@ -738,7 +837,7 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
     ch = math.sqrt(img_area / aspect) if aspect else float(image.height)
     scale = image.width / cw if cw else 1.0
 
-    groups = group_leaves(boxes, image, scale)
+    groups, slots = group_plants(boxes, image, scale, canvas=(cw, ch))
     if not groups:
         raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
 
@@ -751,17 +850,31 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
         thumb_of=lambda g: _crop_thumb(image, g, scale),
         feat_of=lambda g: _mean_features([leaf_features(image, b, scale) for b in g]),
         per_plant_area=img_area / len(groups),      # 식물 1개 몫 — 대/중/소엽 기준
-        img_area=img_area)
+        img_area=img_area,
+        slot_of=(lambda g: slots.get(id(g))) if slots else None)
 
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
-    return {"count": len(result), "grouped_by": "pot" if any(
-        b["cls"].lower() in NON_LEAF for b in boxes) else "distance",
-        "shape_groups": len(shapes), "plants": result}
+    return {"count": len(result), "grouped_by": _grouped_by(boxes, slots),
+            "shape_groups": len(shapes), "plants": result}
+
+
+def _grouped_by(boxes: List[dict], slots: dict) -> str:
+    """어떤 신호로 묶었는지 — UI 에 그대로 보여 준다."""
+    if slots:
+        return "pot_preset"                                    # 미리 지정한 화분 자리
+    if any(b["cls"].lower() in NON_LEAF for b in boxes):
+        return "pot"                                           # 모델이 잡은 화분
+    return "distance"
 
 
 def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
-                     thumb_of, feat_of, per_plant_area: float, img_area: float) -> List[dict]:
-    """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다."""
+                     thumb_of, feat_of, per_plant_area: float, img_area: float,
+                     slot_of=None) -> List[dict]:
+    """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다.
+
+    slot_of 를 주면(화분 자리를 미리 지정한 경우) 그 자리에 고정 배정한다.
+    그러면 매번 스캔해도 같은 화분이 같은 자리로 가서 개체가 안 섞인다.
+    """
     groups.sort(key=lambda g: sum(_center(b)[1] for b in g) / len(g))
     occupied = {p["pos"] for p in PLANTS.values()}
     claimed = set()
@@ -774,14 +887,19 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
         v = min(max(cy / canvas_h, 0.0), 1.0) if canvas_h else 0.5
         x, z = (u - 0.5) * _W, (v - 0.5) * _D
 
-        existing = None
-        cand = min((p for p in by_slot.values() if p["pos"] not in claimed),
-                   key=lambda p: math.dist((p["x"], p["z"]), (x, z)), default=None)
-        if cand is not None and math.dist((cand["x"], cand["z"]), (x, z)) <= max(_CW, _CD):
-            existing = cand
-        slot = _slot_by_label(existing["pos"]) if existing else _nearest_slot(x, z, occupied | claimed)
-        if slot is None:
-            break
+        forced = slot_of(g) if slot_of else None
+        if forced:
+            slot = _slot_by_label(forced)
+            existing = by_slot.get(forced)
+        else:
+            existing = None
+            cand = min((p for p in by_slot.values() if p["pos"] not in claimed),
+                       key=lambda p: math.dist((p["x"], p["z"]), (x, z)), default=None)
+            if cand is not None and math.dist((cand["x"], cand["z"]), (x, z)) <= max(_CW, _CD):
+                existing = cand
+            slot = _slot_by_label(existing["pos"]) if existing else _nearest_slot(x, z, occupied | claimed)
+        if slot is None or slot["label"] in claimed:
+            continue
         claimed.add(slot["label"])
 
         metrics = {}
@@ -883,7 +1001,7 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(..
 
     boxes_m = [merged[i] for i in keep]
     feats_m = [feats[i] for i in keep]
-    groups = group_leaves(boxes_m, feats=feats_m)
+    groups, slots = group_plants(boxes_m, feats=feats_m, canvas=(CANVAS, canvas_h))
     if not groups:
         raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
 
@@ -903,12 +1021,12 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(..
 
     canvas_area = CANVAS * canvas_h
     result = _register_groups(groups, CANVAS, canvas_h, thumb_of, feat_of,
-                              canvas_area / len(groups), canvas_area)
+                              canvas_area / len(groups), canvas_area,
+                              slot_of=(lambda g: slots.get(id(g))) if slots else None)
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "photos": len(files), "merged_boxes": len(boxes_m),
             "deduped": dropped, "shape_groups": len(shapes),
-            "grouped_by": "pot" if any(b["cls"].lower() in NON_LEAF for b in boxes_m) else "distance",
-            "plants": result}
+            "grouped_by": _grouped_by(boxes_m, slots), "plants": result}
 
 
 @app.post("/api/plants/{pid}/reanalyze")
