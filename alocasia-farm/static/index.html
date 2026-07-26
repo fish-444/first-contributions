@@ -59,6 +59,20 @@
   .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
   .stat{background:#1d2b23;border-radius:9px;padding:10px}
   .stat .k{font-size:11px;color:#9fb4a6}.stat .v{font-size:18px;font-weight:750;color:#e8f0ea;margin-top:2px}
+  /* 잎 개수 −/+ */
+  .cnt{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:2px}
+  .cnt .v{margin:0;font-variant-numeric:tabular-nums;min-width:20px;text-align:center}
+  .cnt button{width:22px;height:22px;flex:none;border-radius:6px;cursor:pointer;
+    border:1px solid rgba(120,180,140,.3);background:#24382c;color:#d7e8dc;
+    font-size:14px;font-weight:700;line-height:1;padding:0}
+  .cnt button:hover{background:#2d4636;border-color:#7ddb9a}
+  .cnt button:active{background:#356b45}
+  /* 크기 등급 선택 */
+  .szrow{display:flex;gap:6px}
+  .szrow button{flex:1;padding:7px 0;border-radius:8px;cursor:pointer;font-size:12.5px;
+    font-weight:600;border:1px solid rgba(120,180,140,.3);background:#1d2b23;color:#9fb4a6}
+  .szrow button:hover{border-color:#7ddb9a;color:#d7e8dc}
+  .szrow button[aria-pressed="true"]{background:#2e7d32;border-color:#2e7d32;color:#fff}
   .mrow{display:flex;gap:8px}
   .mbtn{flex:1;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#24382c;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center}
   .mbtn:hover{background:#2d4636}.mbtn.danger{background:#3a2020;border-color:#6b3030;color:#f0b3b3}
@@ -89,9 +103,14 @@
     <label class="mbtn" style="display:block;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#24382c;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
       📸 탑뷰 사진 스캔<input type="file" id="scanFile" accept="image/*" style="display:none">
     </label>
-    <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#9fb4a6;margin-top:7px">
-      <input type="checkbox" id="scanReplace" style="accent-color:#4fa85a"> 기존 식물 지우고 새로 채우기
-    </label>
+    <label style="display:block;font-size:11px;color:#9fb4a6;margin:9px 0 4px">스캔할 때 기존 기록은</label>
+    <select id="scanMode" style="width:100%;font-size:12.5px;padding:8px;background:#14201a;
+      color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:8px">
+      <option value="keep" selected>잎 유지 · 새 잎만 기록 (권장)</option>
+      <option value="update">탐지값으로 덮어쓰기</option>
+      <option value="replace">전부 지우고 새로 채우기</option>
+    </select>
+    <div id="scanModeHelp" style="font-size:10.5px;color:#6f8073;margin-top:4px;line-height:1.5"></div>
     <div id="scanStatus" style="margin-top:6px;font-size:12px;color:#9fb4a6;min-height:1.2em"></div>
     <label class="mbtn" style="display:block;margin-top:7px;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#1d3324;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
       📐 여러 장 + 원근 보정<input type="file" id="multiFile" accept="image/*" multiple style="display:none">
@@ -137,11 +156,31 @@
       ☀️ <b style="color:#8fe36a">광합성 잎 (모델1 · 3D 반영)</b> — 맨 위 잎 <b id="mTopSize">–</b> <span id="mTopPct" style="color:#9fb4a6"></span>
     </div>
     <div style="font-size:11px;color:#9fb4a6;margin-bottom:6px">개체 특징 (모델2 · 잎 단계)</div>
-    <div class="chips"><span class="chip" id="mSize"></span><span class="chip" id="mShape" style="display:none"></span></div>
+    <div class="chips"><span class="chip" id="mSize"></span><span class="chip" id="mShape" style="display:none"></span><span class="chip" id="mManual" style="display:none;background:#7a5c22">✋ 직접 수정함</span></div>
+
+    <div style="font-size:11px;color:#9fb4a6;margin-bottom:5px">크기 등급 — 눌러서 바꾸기</div>
+    <div class="szrow" id="mSizePick">
+      <button type="button" data-sz="소품">소품</button>
+      <button type="button" data-sz="중품">중품</button>
+      <button type="button" data-sz="대품">대품</button>
+    </div>
+
+    <div style="font-size:11px;color:#9fb4a6;margin:11px 0 5px">
+      잎 개수 — <b style="color:#cfe0d4">−/+</b> 로 고치세요 (성엽 −1, 노엽 +1 = 단계 이동)
+    </div>
     <div class="grid">
-      <div class="stat"><div class="k">🌱 새순 Shoot</div><div class="v" id="mShootN">–</div></div>
-      <div class="stat"><div class="k">🍃 성엽 Mature</div><div class="v" id="mMatN">–</div></div>
-      <div class="stat"><div class="k">🍂 노엽 Old</div><div class="v" id="mOldN">–</div></div>
+      <div class="stat"><div class="k">🌱 새순</div>
+        <div class="cnt"><button type="button" data-st="shoot" data-d="-1">−</button>
+          <span class="v" id="mShootN">–</span>
+          <button type="button" data-st="shoot" data-d="1">+</button></div></div>
+      <div class="stat"><div class="k">🍃 성엽</div>
+        <div class="cnt"><button type="button" data-st="mature" data-d="-1">−</button>
+          <span class="v" id="mMatN">–</span>
+          <button type="button" data-st="mature" data-d="1">+</button></div></div>
+      <div class="stat"><div class="k">🍂 노엽</div>
+        <div class="cnt"><button type="button" data-st="old" data-d="-1">−</button>
+          <span class="v" id="mOldN">–</span>
+          <button type="button" data-st="old" data-d="1">+</button></div></div>
     </div>
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div class="stat"><div class="k">총 잎 개수</div><div class="v" id="mLeaf">–</div></div>
@@ -357,18 +396,30 @@ addBtn.addEventListener('click',async()=>{
 
 // ===== 농장 전체 사진 스캔 =====
 const scanStatus=document.getElementById('scanStatus');
+const MODE_HELP={
+  keep:'잎이 가려져 덜 잡혀도 기존 개수를 지킵니다. 늘어난 만큼만 새 잎으로 기록해요.',
+  update:'탐지된 값으로 덮어씁니다. 직접 고친 값도 사라집니다.',
+  replace:'등록된 식물을 모두 지우고 처음부터 다시 만듭니다.'};
+const scanModeEl=document.getElementById('scanMode');
+function updModeHelp(){document.getElementById('scanModeHelp').textContent=MODE_HELP[scanModeEl.value];}
+scanModeEl.addEventListener('change',updModeHelp); updModeHelp();
+// 스캔 결과 문구 — 새 잎이 몇 장 났는지가 핵심
+function scanMsg(d,how){
+  const nl=d.new_leaves?` · 새 잎 ${d.new_leaves}장`:'';
+  return `✅ ${d.count}개 개체${nl} · 모양 ${d.shape_groups}종 (${how})`;
+}
 document.getElementById('scanFile').addEventListener('change',async(e)=>{
   const f=e.target.files[0]; if(!f)return;
   scanStatus.textContent='분석 중… (여러 개체를 묶는 중)';
   const fd=new FormData(); fd.append('file',f);
-  if(document.getElementById('scanReplace').checked) fd.append('replace','1');
+  fd.append('mode',document.getElementById('scanMode').value);
   try{
     const r=await fetch('/api/scan',{method:'POST',body:fd});
     if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
     const d=await r.json();
     await loadAll();
     const how=({pot_preset:'지정한 화분자리',pot:'화분+생김새'})[d.grouped_by]||'거리+생김새';
-    scanStatus.textContent=`✅ ${d.count}개 개체 · 모양 ${d.shape_groups}종 (${how})`;
+    scanStatus.textContent=scanMsg(d,how);
   }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
   e.target.value='';
 });
@@ -567,13 +618,13 @@ calNext.addEventListener('click',async()=>{
     const fd=new FormData();
     CAL.files.forEach(f=>fd.append('files',f));
     fd.append('pot_refs',JSON.stringify(CAL.allRefs));
-    if(document.getElementById('scanReplace').checked) fd.append('replace','1');
+    fd.append('mode',document.getElementById('scanMode').value);
     try{
       const r=await fetch('/api/scan-multi',{method:'POST',body:fd});
       if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
       const d=await r.json();
       await loadAll();
-      scanStatus.textContent=`✅ ${d.photos}장 → ${d.count}개 개체 · 모양 ${d.shape_groups}종 (중복 ${d.deduped}개 제거)`;
+      scanStatus.textContent=scanMsg(d,`${d.photos}장 · 중복 ${d.deduped}개 제거`);
     }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
     CAL.files=[]; CAL.mode='multi';
     return;
@@ -607,13 +658,13 @@ calNext.addEventListener('click',async()=>{
   CAL.files.forEach(f=>fd.append('files',f));
   fd.append('corners',JSON.stringify(CAL.quads));
   fd.append('regions',JSON.stringify(CAL.regions));
-  if(document.getElementById('scanReplace').checked) fd.append('replace','1');
+  fd.append('mode',document.getElementById('scanMode').value);
   try{
     const r=await fetch('/api/scan-multi',{method:'POST',body:fd});
     if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
     const d=await r.json();
     await loadAll();
-    scanStatus.textContent=`✅ ${d.photos}장 → ${d.count}개 개체 · 모양 ${d.shape_groups}종 (중복 ${d.deduped}개 제거)`;
+    scanStatus.textContent=scanMsg(d,`${d.photos}장 · 중복 ${d.deduped}개 제거`);
   }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
   CAL.files=[];
 });
@@ -645,6 +696,9 @@ function openModal(p){
   document.getElementById('mTopSize').textContent=p.top_leaf_size||'–';
   document.getElementById('mTopPct').textContent=(p.top_leaf_pct?('· 화면의 '+p.top_leaf_pct+'%'):'');
   const sz=document.getElementById('mSize'); sz.textContent=p.size_class; sz.style.background='#2e7d32';
+  document.getElementById('mManual').style.display=p.manual?'inline-block':'none';
+  [...document.querySelectorAll('#mSizePick button')].forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.sz===p.size_class ? 'true':'false'));
   const sh=document.getElementById('mShape');
   if(p.shape_group){ sh.style.display='inline-block'; sh.style.background=shapeColor(p.shape_group);
     sh.textContent='모양 '+p.shape_group+(p.shape_group_size>1?` · 같은 모양 ${p.shape_group_size}개`:' · 단독'); }
@@ -668,6 +722,28 @@ mRot.addEventListener('change',async()=>{
   if(!modalId)return; const fd=new FormData(); fd.append('rot',mRot.value);
   try{ await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd}); }catch(e){}
 });
+// ===== 직접 수정 (사진이 뭉개지거나 잎이 가려져 탐지가 틀렸을 때) =====
+async function patchPlant(fields){
+  if(!modalId)return;
+  const fd=new FormData();
+  Object.entries(fields).forEach(([k,v])=>fd.append(k,v));
+  const r=await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd});
+  if(!r.ok){const e=await r.json().catch(()=>({}));
+    document.getElementById('mUpd').textContent='⚠️ '+(e.detail||'수정 실패'); return;}
+  const p=await r.json();
+  objs[p.id].data=p; rebuildObj(p); refreshList(); refreshSlots(); openModal(p);
+}
+// 크기 등급
+document.querySelectorAll('#mSizePick button').forEach(b=>
+  b.addEventListener('click',()=>patchPlant({size_class:b.dataset.sz})));
+// 잎 −/+ (성엽 −1 · 노엽 +1 로 단계 이동)
+document.querySelectorAll('.cnt button').forEach(b=>b.addEventListener('click',()=>{
+  if(!modalId)return;
+  const p=objs[modalId].data, key=b.dataset.st+'_count';
+  const next=Math.max(0,(p[key]||0)+(+b.dataset.d));
+  patchPlant({[key]:next});
+}));
+
 function closeModal(){document.getElementById('mWrap').style.display='none';modalId=null;}
 document.getElementById('mClose').addEventListener('click',closeModal);
 document.getElementById('mWrap').addEventListener('click',e=>{if(e.target.id==='mWrap')closeModal();});

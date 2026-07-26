@@ -835,7 +835,8 @@ def _crop_thumb(image: Image.Image, group: List[dict], scale: float) -> str:
 
 
 @app.post("/api/scan")
-async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
+async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
+                    mode: str = Form(None)):
     """농장 전체를 찍은 탑뷰 사진 1장 → 잎을 식물별로 묶어 여러 개체를 한 번에 등록.
 
     사진 속 위치가 그대로 3D 온실 자리로 이어진다(사진 위쪽 = 온실 안쪽 A줄).
@@ -861,7 +862,8 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
     if not groups:
         raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
 
-    if replace:
+    scan_mode = _scan_mode(mode, replace)
+    if scan_mode == "replace":
         PLANTS.clear()
         FEATS.clear()
 
@@ -871,11 +873,48 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
         feat_of=lambda g: _mean_features([leaf_features(image, b, scale) for b in g]),
         per_plant_area=img_area / len(groups),      # 식물 1개 몫 — 대/중/소엽 기준
         img_area=img_area,
-        slot_of=(lambda g: slots.get(id(g))) if slots else None)
+        slot_of=(lambda g: slots.get(id(g))) if slots else None,
+        mode=scan_mode)
 
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "grouped_by": _grouped_by(boxes, slots),
-            "shape_groups": len(shapes), "plants": result}
+            "shape_groups": len(shapes), "mode": scan_mode,
+            "new_leaves": sum(p.get("new_leaves", 0) for p in result),
+            "plants": result}
+
+
+SCAN_MODES = ("replace", "update", "keep")
+
+
+def _scan_mode(mode: str, replace: str) -> str:
+    """스캔 모드 정리. replace 는 예전 방식이라 mode 로 접어 준다."""
+    if replace and not mode:
+        return "replace"
+    mode = (mode or "update").strip()
+    if mode not in SCAN_MODES:
+        raise HTTPException(400, f"스캔 모드는 {' / '.join(SCAN_MODES)} 중 하나여야 해요.")
+    return mode
+
+
+def _merge_keep(old: dict, new: dict) -> tuple:
+    """'잎은 유지, 새 잎만 기록' 병합.
+
+    사진마다 잎이 가려져 탐지가 들쭉날쭉한데, 그걸 그대로 반영하면 어제 8장이던
+    식물이 오늘 5장이 된다. 그래서 잎 수가 줄어드는 건 '가려진 것'으로 보고 무시하고,
+    늘어난 만큼만 새 잎으로 기록한다.
+
+    단계 분포(새순/성엽/노엽)는 탐지가 기존만큼 잡았을 때만 갱신한다.
+    그래야 새순이 성엽이 되는 변화는 따라가면서, 덜 잡힌 사진에 값이 깎이지 않는다.
+    """
+    o_tot = old.get("leaf_count", 0) or 0
+    n_tot = new.get("leaf_count", 0) or 0
+    added = max(0, n_tot - o_tot)
+    out = dict(new)
+    if n_tot < o_tot:                       # 덜 잡혔다 → 잎 수치는 기존 값을 지킨다
+        for k in ("shoot_count", "mature_count", "old_count", "leaf_count", "size_class"):
+            if k in old:
+                out[k] = old[k]
+    return out, added
 
 
 def _grouped_by(boxes: List[dict], slots: dict) -> str:
@@ -889,7 +928,7 @@ def _grouped_by(boxes: List[dict], slots: dict) -> str:
 
 def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
                      thumb_of, feat_of, per_plant_area: float, img_area: float,
-                     slot_of=None) -> List[dict]:
+                     slot_of=None, mode: str = "update") -> List[dict]:
     """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다.
 
     slot_of 를 주면(화분 자리를 미리 지정한 경우) 그 자리에 고정 배정한다.
@@ -929,8 +968,21 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
         feat = feat_of(g)
 
         if existing:
+            now = time.strftime("%Y-%m-%d %H:%M:%S")
+            if mode == "keep":
+                metrics, added = _merge_keep(existing, metrics)
+                if added:
+                    log = existing.setdefault("leaf_log", [])
+                    log.append({"at": now, "added": added,
+                                "total": metrics.get("leaf_count", 0)})
+                    del log[:-30]                      # 최근 30건만
+                    existing["new_leaves"] = added
+                else:
+                    existing["new_leaves"] = 0
+            else:
+                existing.pop("manual", None)           # 새 탐지값으로 덮어씀
             existing.update(metrics)
-            existing["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            existing["updated"] = now
             FEATS[existing["id"]] = feat
             result.append(existing)
         else:
@@ -949,7 +1001,7 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
 @app.post("/api/scan-multi")
 async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(None),
                      regions: str = Form(None), replace: str = Form(None),
-                     pot_refs: str = Form(None)):
+                     pot_refs: str = Form(None), mode: str = Form(None)):
     """여러 장을 원근 보정해 하나의 선반 좌표계로 합친 뒤 식물을 등록.
 
     사진을 이어 붙이지 않는다. 사진마다 네 모서리로 원근 변환을 구해
@@ -1058,7 +1110,8 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     if not groups:
         raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
 
-    if replace:
+    scan_mode = _scan_mode(mode, replace)
+    if scan_mode == "replace":
         PLANTS.clear(); FEATS.clear()
 
     src_of = {id(merged[i]): sources[i] for i in keep}
@@ -1075,10 +1128,12 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     canvas_area = CANVAS * canvas_h
     result = _register_groups(groups, CANVAS, canvas_h, thumb_of, feat_of,
                               canvas_area / len(groups), canvas_area,
-                              slot_of=(lambda g: slots.get(id(g))) if slots else None)
+                              slot_of=(lambda g: slots.get(id(g))) if slots else None,
+                              mode=scan_mode)
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "photos": len(files), "merged_boxes": len(boxes_m),
-            "deduped": dropped, "shape_groups": len(shapes),
+            "deduped": dropped, "shape_groups": len(shapes), "mode": scan_mode,
+            "new_leaves": sum(p.get("new_leaves", 0) for p in result),
             "grouped_by": _grouped_by(boxes_m, slots), "plants": result}
 
 
@@ -1096,16 +1151,46 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
     return PLANTS[pid]
 
 
+SIZE_CLASSES = ("소품", "중품", "대품")
+
+
 @app.patch("/api/plants/{pid}")
-async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)):
-    """식물 이름 커스텀 / 화분 방향(회전) 설정."""
+async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None),
+                       size_class: str = Form(None), shoot_count: int = Form(None),
+                       mature_count: int = Form(None), old_count: int = Form(None)):
+    """이름 · 화분 방향 · 그리고 사람이 직접 고치는 값들.
+
+    사진이 뭉개지거나 잎이 가려지면 탐지가 틀립니다. 그럴 때 손으로 바로잡으라고
+    크기 등급과 단계별 잎 수를 열어 뒀어요. 단계 이동(성엽→노엽)은 한쪽을 줄이고
+    다른 쪽을 늘리면 됩니다. 직접 고친 식물은 manual 로 표시됩니다.
+    """
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
+    p = PLANTS[pid]
     if name is not None and name.strip():
-        PLANTS[pid]["name"] = name.strip()
+        p["name"] = name.strip()
     if rot is not None:
-        PLANTS[pid]["rot"] = float(rot) % 360
-    return PLANTS[pid]
+        p["rot"] = float(rot) % 360
+
+    touched = False
+    if size_class is not None:
+        if size_class not in SIZE_CLASSES:
+            raise HTTPException(400, f"크기 등급은 {' / '.join(SIZE_CLASSES)} 중 하나여야 해요.")
+        p["size_class"] = size_class
+        touched = True
+    for key, val in (("shoot_count", shoot_count), ("mature_count", mature_count),
+                     ("old_count", old_count)):
+        if val is not None:
+            if val < 0:
+                raise HTTPException(400, "잎 개수는 0보다 작을 수 없어요.")
+            p[key] = int(val)
+            touched = True
+    if touched:
+        p["leaf_count"] = sum(p.get(k, 0) or 0 for k in
+                              ("shoot_count", "mature_count", "old_count"))
+        p["manual"] = True
+        p["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    return p
 
 
 @app.delete("/api/plants/{pid}")

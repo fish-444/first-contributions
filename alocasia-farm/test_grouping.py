@@ -238,7 +238,7 @@ def test_scan_endpoint_registers_one_plant_per_pot():
     main.detect_boxes = lambda image, model_id: (boxes, float(2000 * 1500))
     main.PLANTS.clear()
     try:
-        res = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None))
+        res = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None, mode=None))
         assert res["count"] == 3, res
         assert res["grouped_by"] == "pot", res
 
@@ -250,7 +250,7 @@ def test_scan_endpoint_registers_one_plant_per_pot():
 
         # 같은 사진을 다시 스캔해도 개체가 늘어나지 않는다 (이름·방향 유지하며 갱신)
         main.PLANTS[list(main.PLANTS)[0]]["name"] = "내가 지은 이름"
-        again = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None))
+        again = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None, mode=None))
         assert again["count"] == 3 and len(main.PLANTS) == 3, (again["count"], len(main.PLANTS))
         assert "내가 지은 이름" in [p["name"] for p in main.PLANTS.values()]
     finally:
@@ -291,7 +291,7 @@ def test_scan_labels_varieties_across_pots():
     main.detect_boxes = lambda image, model_id: (boxes, float(1200 * 1400))
     main.PLANTS.clear(); main.FEATS.clear()
     try:
-        res = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None))
+        res = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None, mode=None))
         assert res["count"] == 4, res["count"]
         assert res["shape_groups"] == 2, res["shape_groups"]
 

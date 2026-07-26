@@ -155,7 +155,7 @@ def test_same_pot_keeps_same_slot_across_scans():
     try:
         for shift in (0, 40, -35):
             main.detect_boxes = lambda image, mid, s=shift: (leaves_at(s), float(1200 * 800))
-            res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None))
+            res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
             assert res["count"] == 2, res["count"]
             assert res["grouped_by"] == "pot_preset", res["grouped_by"]
             if shift == 0:
@@ -179,7 +179,7 @@ def test_scan_without_preset_still_works():
     main.detect_boxes = lambda image, mid: (
         [box(200, 300, 90, 90), box(900, 300, 90, 90)], float(1200 * 800))
     try:
-        res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None))
+        res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
         assert res["count"] == 2 and res["grouped_by"] == "distance", res
     finally:
         main.detect_boxes = orig_detect
@@ -209,7 +209,7 @@ def test_pot_refs_recover_a_tilted_shot():
     try:
         res = asyncio.run(main.scan_multi(
             files=[_Upload(_jpeg())], corners=None, regions=None,
-            replace=None, pot_refs=json.dumps([refs])))
+            replace=None, pot_refs=json.dumps([refs]), mode=None))
         assert res["count"] == 4, res["count"]
         assert res["grouped_by"] == "pot_preset", res["grouped_by"]
         # 지정해 둔 화분의 자리에 정확히 들어가야 한다
@@ -225,7 +225,7 @@ def test_pot_refs_need_four_points():
     try:
         asyncio.run(main.scan_multi(files=[_Upload(_jpeg())], corners=None, regions=None,
                                     replace=None,
-                                    pot_refs=json.dumps([[[0, 10, 10], [1, 90, 10]]])))
+                                    pot_refs=json.dumps([[[0, 10, 10], [1, 90, 10]]]), mode=None))
     except HTTPException as e:
         assert e.status_code == 400 and "4개" in e.detail, e.detail
     else:
@@ -237,7 +237,7 @@ def test_pot_refs_require_defined_pots():
     _reset()
     try:
         asyncio.run(main.scan_multi(files=[_Upload(_jpeg())], corners=None, regions=None,
-                                    replace=None, pot_refs=json.dumps([[[0, 1, 1]]])))
+                                    replace=None, pot_refs=json.dumps([[[0, 1, 1]]]), mode=None))
     except HTTPException as e:
         assert e.status_code == 400 and "화분 자리" in e.detail
     else:
@@ -251,7 +251,7 @@ def test_unknown_pot_index_rejected():
     bad = [[0, 10, 10], [1, 90, 10], [2, 90, 90], [9, 10, 90]]     # 9번 화분은 없음
     try:
         asyncio.run(main.scan_multi(files=[_Upload(_jpeg())], corners=None, regions=None,
-                                    replace=None, pot_refs=json.dumps([bad])))
+                                    replace=None, pot_refs=json.dumps([bad]), mode=None))
     except HTTPException as e:
         assert e.status_code == 400 and "9번" in e.detail, e.detail
     else:
@@ -263,7 +263,7 @@ def test_neither_corners_nor_pot_refs_rejected():
     _reset()
     try:
         asyncio.run(main.scan_multi(files=[_Upload(_jpeg())], corners=None, regions=None,
-                                    replace=None, pot_refs=None))
+                                    replace=None, pot_refs=None, mode=None))
     except HTTPException as e:
         assert e.status_code == 400
     else:
