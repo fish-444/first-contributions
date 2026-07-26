@@ -28,6 +28,13 @@ python3 -m uvicorn main:app --reload           # 서버 실행
 ```
 브라우저에서 **http://127.0.0.1:8000** 접속.
 
+> **`Form data requires "python-multipart" to be installed`** 로 안 뜬다면
+> 설치가 중간에 끊긴 겁니다. 이것만 다시 실행하세요:
+> ```bash
+> python3 -m pip install fastapi "uvicorn[standard]" python-multipart pillow requests
+> ```
+> `ultralytics`(로컬 `.pt` 전용, torch 포함 2GB)는 로보플로우·데모만 쓰면 필요 없습니다.
+
 ## 사용법
 1. 왼쪽 **① 식물 이름** 입력 (예: 프라이덱)
 2. **② 식물 사진** 선택
