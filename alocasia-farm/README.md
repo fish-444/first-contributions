@@ -20,7 +20,22 @@ alocasia-farm/
     └── OrbitControls.js
 ```
 
-## ▶️ 실행
+## ▶️ 실행 — 더블클릭 (권장)
+매번 명령어를 치지 않아도 됩니다.
+
+1. `farm_env.example.bat` 를 **`farm_env.bat`** 로 복사
+2. 파일을 열어 `여기에_개인키` 자리에 로보플로우 **Private API Key** 입력
+3. **`start.bat` 더블클릭** — 서버가 뜨고 브라우저가 자동으로 열립니다
+
+끌 때는 검은 창에서 `Ctrl+C` 또는 창 닫기.
+**창을 닫으면 웹페이지는 멈추지만, 식물 정보는 `farm.db` 에 남습니다.**
+다시 쓰려면 `start.bat` 를 또 더블클릭하면 됩니다.
+
+> `farm_env.bat` 는 깃에 올라가지 않습니다 — 키가 새 나가지 않게 해 뒀어요.
+> 맥·리눅스는 `./start.sh` (키는 `farm_env.sh` 에).
+> 8123 포트가 막혀 있으면 8234 → 8345 로 자동으로 넘어갑니다.
+
+## ▶️ 실행 — 명령어로
 ```bash
 cd 경로/first-contributions/alocasia-farm
 python3 -m pip install -r requirements.txt     # 처음 한 번 (Windows: python)

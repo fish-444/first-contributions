@@ -4,3 +4,5 @@ __pycache__/
 .env
 farm.db
 *.db
+farm_env.bat
+farm_env.sh
