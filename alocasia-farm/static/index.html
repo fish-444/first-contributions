@@ -312,7 +312,7 @@ function nameSprite(text){const cv=document.createElement('canvas');cv.width=320
   x.fillStyle='#c9f2d4';x.font='bold 34px sans-serif';x.textAlign='center';x.textBaseline='middle';
   x.fillText(text.length>12?text.slice(0,12)+'…':text,160,42);
   const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),depthTest:false}));
-  s.scale.set(13,3.3,1);return s;}
+  s.scale.set(13*Math.max(.55,POT_FIT),3.3*Math.max(.55,POT_FIT),1);return s;}
 
 // 모양 그룹(A,B,C…) 딱지 색 — 같은 품종끼리 한눈에 보이게
 const SHAPE_COLS=['#3f7bd6','#b3529f','#c07a2a','#2f8f86','#8a5cd6','#a8452f'];
@@ -324,14 +324,40 @@ function shapeColor(tag){
 // ===== 식물 오브젝트 관리 =====
 const objs={}; // id -> {group,data,label}
 const ray=new THREE.Raycaster(),ptr=new THREE.Vector2();
+// 화분이 실제 간격보다 크면 서로 파고든다. 가장 가까운 두 화분 간격에 맞춰
+// 전체를 한 비율로 줄인다(비율은 유지). 1 = 줄일 필요 없음.
+let POT_FIT=1;
+function computePotFit(items){
+  POT_FIT=1;
+  if(items.length<2)return;
+  let m=Infinity;
+  for(let i=0;i<items.length;i++)for(let j=i+1;j<items.length;j++){
+    const d=Math.hypot(items[i].x-items[j].x, items[i].z-items[j].z);
+    if(d>0&&d<m)m=d;
+  }
+  if(!isFinite(m))return;
+  const biggest=2.5*2.1;                  // 대엽 화분 반지름
+  POT_FIT=Math.max(0.35, Math.min(1, (m*0.46)/biggest));
+}
+
 function buildObj(p){
   const g=new THREE.Group(); const unit=TOP_UNIT[p.top_leaf_size]||1.4; const potH=6+unit*1.6;
-  const pot=new THREE.Mesh(new THREE.CylinderGeometry(unit*2.1,unit*1.6,potH,18),new THREE.MeshStandardMaterial({color:0xededed,roughness:0.85}));
+  // 실제 화분처럼 팔각, 빈 화분은 흙색
+  const empty=!!p.empty;
+  const pot=new THREE.Mesh(new THREE.CylinderGeometry(unit*2.1,unit*1.6,potH,8),
+    new THREE.MeshStandardMaterial({color:empty?0xd9d3c4:0xededed,roughness:0.85}));
   pot.position.y=potH/2; pot.castShadow=pot.receiveShadow=true; g.add(pot);
   const counts={shoot:p.shoot_count||0,mature:p.mature_count||0,old:p.old_count||0};
-  if(counts.shoot+counts.mature+counts.old===0) counts.mature=Math.max(2,p.leaf_count||3);
-  const plant=makeAlocasia(unit,counts); plant.position.y=potH-0.5; g.add(plant);
-  const label=nameSprite((p.pos?p.pos+' · ':'')+p.name); label.position.y=potH+unit*4+2; g.add(label);
+  if(!empty&&counts.shoot+counts.mature+counts.old===0) counts.mature=Math.max(2,p.leaf_count||3);
+  if(!empty){ const plant=makeAlocasia(unit,counts); plant.position.y=potH-0.5; g.add(plant); }
+  else { const soil=new THREE.Mesh(new THREE.CylinderGeometry(unit*1.9,unit*1.9,0.4,8),
+           new THREE.MeshStandardMaterial({color:0x241d16,roughness:1}));
+         soil.position.y=potH-0.1; g.add(soil); }
+  // 이름표는 겹치기 쉬워 작게 + 화분마다 높이를 조금씩 어긋나게
+  const label=nameSprite((p.pos?p.pos+' · ':'')+p.name);
+  const jitter=((parseInt(p.id,36)||0)%3)*2.4;
+  label.position.y=potH+unit*4+2+jitter; g.add(label);
+  g.scale.setScalar(POT_FIT);
   g.position.set(p.x,0,p.z); g.rotation.y=((p.rot||0))*Math.PI/180;
   g.traverse(o=>o.userData.pid=p.id); scene.add(g);
   objs[p.id]={group:g,data:p,label};
@@ -344,6 +370,7 @@ async function loadAll(){
   const d=await(await fetch('/api/plants')).json();
   document.getElementById('eng').textContent=d.engine;
   Object.keys(objs).forEach(removeObj);
+  computePotFit(d.plants);
   d.plants.forEach(buildObj); refreshList(); await refreshSlots();
 }
 function refreshList(){
@@ -355,7 +382,8 @@ function refreshList(){
   items.forEach(p=>{
     const el=document.createElement('div'); el.className='item';
     el.innerHTML=`<span class="nm"></span><span class="sg"></span><span class="sz"></span><span class="x">×</span>`;
-    el.querySelector('.nm').textContent=(p.pos?p.pos+' · ':'')+p.name; el.querySelector('.sz').textContent=p.size_class;
+    el.querySelector('.nm').textContent=(p.pos?p.pos+' · ':'')+p.name; const szEl=el.querySelector('.sz'); szEl.textContent=p.size_class;
+    if(p.size_class==='미검출'){szEl.style.background='#4a3a1c';szEl.style.color='#e8c96a';}
     const sg=el.querySelector('.sg');
     if(p.shape_group){ sg.textContent=p.shape_group; sg.style.cssText=
       `font-size:10px;font-weight:800;color:#fff;background:${shapeColor(p.shape_group)};border-radius:20px;padding:1px 7px;flex:none`; }
@@ -702,7 +730,8 @@ function openModal(p){
   const t=document.getElementById('mThumb'); t.src=p.thumb||''; t.style.display=p.thumb?'block':'none';
   document.getElementById('mTopSize').textContent=p.top_leaf_size||'–';
   document.getElementById('mTopPct').textContent=(p.top_leaf_pct?('· 화면의 '+p.top_leaf_pct+'%'):'');
-  const sz=document.getElementById('mSize'); sz.textContent=p.size_class; sz.style.background='#2e7d32';
+  const sz=document.getElementById('mSize'); sz.textContent=p.size_class;
+  sz.style.background=(p.size_class==='미검출')?'#7a5c22':'#2e7d32';
   document.getElementById('mManual').style.display=p.manual?'inline-block':'none';
   [...document.querySelectorAll('#mSizePick button')].forEach(b=>
     b.setAttribute('aria-pressed', b.dataset.sz===p.size_class ? 'true':'false'));
@@ -715,7 +744,9 @@ function openModal(p){
   document.getElementById('mOldN').textContent=(p.old_count!=null?p.old_count:'–');
   document.getElementById('mLeaf').textContent=p.leaf_count;
   document.getElementById('mDen').textContent=p.overlap_density+'%';
-  document.getElementById('mUpd').textContent=p.updated?('최근 분석: '+p.updated):'';
+  document.getElementById('mUpd').textContent=
+    (p.size_class==='미검출'?'이 화분은 잎이 잡히지 않았어요 — 아래에서 직접 넣어 주세요 · ':'')
+    + (p.updated?('최근 분석: '+p.updated):'');
   const rv=p.rot||0; document.getElementById('mRot').value=rv; document.getElementById('mRotV').textContent=rv+'°';
   document.getElementById('mWrap').style.display='flex';
 }

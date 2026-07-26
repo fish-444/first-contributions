@@ -969,6 +969,14 @@ def _merge_keep(old: dict, new: dict) -> tuple:
     return out, added
 
 
+def _pot_xz(slot_label: str):
+    """지정한 화분의 실제 위치(cm). 격자 칸 중앙이 아니라 찍은 그 자리."""
+    pot = next((p for p in POTS if p["slot"] == slot_label), None)
+    if pot is None:
+        return None
+    return (pot["u"] - 0.5) * _W, (pot["v"] - 0.5) * _D
+
+
 def _ensure_pot_slots(result: List[dict]) -> None:
     """지정해 둔 화분은 잎이 안 잡혀도 자리를 지킨다.
 
@@ -985,10 +993,13 @@ def _ensure_pot_slots(result: List[dict]) -> None:
         slot = _slot_by_label(pot["slot"])
         if slot is None:
             continue
+        xz = _pot_xz(slot["label"]) or (slot["x"], slot["z"])
         pid = uuid.uuid4().hex[:8]
         plant = {"id": pid, "name": f"식물 {slot['label']}", "pos": slot["label"],
-                 "x": slot["x"], "z": slot["z"], "rot": 0,
-                 "size_class": "소품", "leaf_count": 0, "shoot_count": 0,
+                 "x": xz[0], "z": xz[1], "rot": 0,
+                 # 잎을 못 찾은 것뿐이지 '작은 식물'이라는 뜻이 아니다.
+                 # 소품으로 적어 두면 실제 소품과 구분이 안 된다.
+                 "size_class": "미검출", "leaf_count": 0, "shoot_count": 0,
                  "mature_count": 0, "old_count": 0,
                  "top_leaf_size": "없음", "top_leaf_pct": 0.0,
                  "overlap_count": 0, "overlap_density": 0, "empty": True,
@@ -1040,6 +1051,9 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
         if slot is None or slot["label"] in claimed:
             continue
         claimed.add(slot["label"])
+        # 격자 칸 중앙으로 스냅하면 가까운 화분끼리 같은 줄로 뭉친다.
+        # 지정한 화분이면 그 화분의 실제 자리를, 아니면 잎 무리의 무게중심을 쓴다.
+        px, pz = _pot_xz(slot["label"]) or (x, z)
 
         metrics = {}
         metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
@@ -1062,6 +1076,7 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
             else:
                 existing.pop("manual", None)           # 새 탐지값으로 덮어씀
             existing.pop("empty", None)                # 잎이 잡혔으니 빈 화분 아님
+            existing["x"], existing["z"] = round(px, 2), round(pz, 2)
             existing.update(metrics)
             existing["updated"] = now
             FEATS[existing["id"]] = feat
@@ -1069,7 +1084,7 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
         else:
             pid = uuid.uuid4().hex[:8]
             plant = {"id": pid, "name": f"식물 {slot['label']}", "pos": slot["label"],
-                     "x": slot["x"], "z": slot["z"], "rot": 0,
+                     "x": round(px, 2), "z": round(pz, 2), "rot": 0,
                      "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
             PLANTS[pid] = plant
             FEATS[pid] = feat

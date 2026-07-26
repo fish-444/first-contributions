@@ -241,9 +241,24 @@ def test_every_marked_pot_shows_up_even_with_no_leaves():
         assert sorted(p["pos"] for p in res["plants"]) == sorted(p["slot"] for p in main.POTS)
         empties = [p for p in res["plants"] if p.get("empty")]
         assert len(empties) == 1 and empties[0]["leaf_count"] == 0, empties
+        # 잎을 못 찾은 것과 '작은 식물'은 다르다 — 소품으로 적으면 실제 소품과 섞인다
+        assert empties[0]["size_class"] == "미검출", empties[0]["size_class"]
     finally:
         main.detect_boxes = orig
         _reset()
+
+
+def test_plants_sit_at_their_measured_spot_not_the_grid_cell():
+    """격자 칸 중앙으로 스냅하면 가까운 화분끼리 한 줄로 뭉쳐 보인다."""
+    _reset()
+    _set_pots([[0.10, 0.62], [0.22, 0.66], [0.34, 0.70]])   # 촘촘하고 비스듬한 배치
+    main._ensure_pot_slots([])
+    for p in main.PLANTS.values():
+        slot = main._slot_by_label(p["pos"])
+        assert (p["x"], p["z"]) != (slot["x"], slot["z"]), "칸 중앙으로 스냅됐다"
+    zs = sorted(round(p["z"], 1) for p in main.PLANTS.values())
+    assert len(set(zs)) == 3, f"세 화분이 같은 줄로 뭉쳤다: {zs}"
+    _reset()
 
 
 def test_empty_flag_clears_once_leaves_appear():
