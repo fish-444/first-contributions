@@ -291,6 +291,63 @@ def _stage(cls: str) -> str:
     return "mature"           # 성엽(성숙잎) — 'leaf','matureleaf','mature'
 
 
+# --------------------------------------------------------------------------- 원근 보정
+# 비스듬히 찍힌 사진의 네 모서리를 직사각형으로 펴서, 왜곡 없는 탑뷰 좌표를 얻는다.
+# 사진을 '이어 붙이는' 게 아니라 탐지된 좌표만 선반 좌표계로 옮긴다.
+# → 잎이 촬영 사이에 움직여도 상관없고, 특징점 매칭도 필요 없다.
+
+def _solve_linear(A: List[List[float]], b: List[float]) -> List[float]:
+    """가우스 소거법. 외부 라이브러리 없이 8x8 을 푼다."""
+    n = len(b)
+    M = [list(A[i]) + [b[i]] for i in range(n)]
+    for col in range(n):
+        piv = max(range(col, n), key=lambda r: abs(M[r][col]))
+        if abs(M[piv][col]) < 1e-12:
+            raise HTTPException(400, "모서리 네 점이 일직선이거나 겹칩니다. 다시 찍어 주세요.")
+        M[col], M[piv] = M[piv], M[col]
+        pv = M[col][col]
+        for r in range(n):
+            if r == col:
+                continue
+            f = M[r][col] / pv
+            if f:
+                for c in range(col, n + 1):
+                    M[r][c] -= f * M[col][c]
+    return [M[i][n] / M[i][i] for i in range(n)]
+
+
+def homography(src: List[tuple], dst: List[tuple]) -> List[List[float]]:
+    """네 점 대응 → 3x3 원근 변환 행렬. src/dst 는 [좌상, 우상, 우하, 좌하] 순서."""
+    if len(src) != 4 or len(dst) != 4:
+        raise HTTPException(400, "모서리는 정확히 4점이어야 해요.")
+    A, b = [], []
+    for (x, y), (u, v) in zip(src, dst):
+        A.append([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.append(u)
+        A.append([0, 0, 0, x, y, 1, -v * x, -v * y]); b.append(v)
+    h = _solve_linear(A, b)
+    return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1.0]]
+
+
+def apply_h(H: List[List[float]], x: float, y: float) -> tuple:
+    """점 하나를 원근 변환."""
+    d = H[2][0] * x + H[2][1] * y + H[2][2]
+    if abs(d) < 1e-12:
+        d = 1e-12
+    return ((H[0][0] * x + H[0][1] * y + H[0][2]) / d,
+            (H[1][0] * x + H[1][1] * y + H[1][2]) / d)
+
+
+def warp_box(H: List[List[float]], box: dict) -> dict:
+    """박스의 네 꼭짓점을 변환한 뒤, 그걸 감싸는 축정렬 박스로 되돌린다."""
+    pts = [apply_h(H, box["x1"], box["y1"]), apply_h(H, box["x2"], box["y1"]),
+           apply_h(H, box["x2"], box["y2"]), apply_h(H, box["x1"], box["y2"])]
+    xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+    x1, x2 = min(xs), max(xs); y1, y2 = min(ys), max(ys)
+    out = dict(box)
+    out.update({"x1": x1, "y1": y1, "x2": x2, "y2": y2, "area": max(0.0, (x2 - x1) * (y2 - y1))})
+    return out
+
+
 # --------------------------------------------------------------------------- 잎 → 식물 그룹화
 # 탑뷰 사진 한 장에 여러 화분이 들어올 때, 어느 잎이 어느 식물인지 묶는다.
 GROUP_GAP = float(os.environ.get("GROUP_GAP", "0.6"))   # 잎 크기 대비 '같은 무리' 인정 거리
@@ -484,17 +541,22 @@ def group_by_distance_and_shape(leaves: List[dict], feats: List[dict],
 
 
 def group_leaves(boxes: List[dict], image: Image.Image = None,
-                 scale: float = 1.0) -> List[List[dict]]:
+                 scale: float = 1.0, feats: List[dict] = None) -> List[List[dict]]:
     """탐지 박스 전체 → 식물별 잎 묶음.
 
     화분이 잡히면 화분+생김새, 아니면 거리+생김새로 묶는다.
     image 를 주면 잎을 잘라 색까지 보고, 없으면 박스 비율·크기만으로 판단한다.
+    feats 를 주면 그걸 쓴다 — 사진이 여러 장이라 박스마다 원본이 다를 때 필요.
     """
     leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     pots = [b for b in boxes if b["cls"].lower() in NON_LEAF]
     if not leaves:
         return []
-    feats = [leaf_features(image, b, scale) for b in leaves]
+    if feats is not None:
+        by_id = {id(b): f for b, f in zip(boxes, feats)}
+        feats = [by_id[id(b)] for b in leaves]
+    else:
+        feats = [leaf_features(image, b, scale) for b in leaves]
     if pots:
         return group_by_pots_and_shape(leaves, pots, feats)
     return group_by_distance_and_shape(leaves, feats)
@@ -684,22 +746,34 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
         PLANTS.clear()
         FEATS.clear()
 
-    # 사진 위쪽(안쪽 줄)부터 처리해야 자리 배정이 안정적
-    groups.sort(key=lambda g: sum(_center(b)[1] for b in g) / len(g))
-    per_plant_area = img_area / len(groups)          # 식물 1개 몫 — 대/중/소엽 기준
+    result = _register_groups(
+        groups, cw, ch,
+        thumb_of=lambda g: _crop_thumb(image, g, scale),
+        feat_of=lambda g: _mean_features([leaf_features(image, b, scale) for b in g]),
+        per_plant_area=img_area / len(groups),      # 식물 1개 몫 — 대/중/소엽 기준
+        img_area=img_area)
 
-    occupied = {p["pos"] for p in PLANTS.values()}   # 기존 식물이 이미 쓰는 자리
-    claimed = set()                                  # 이번 스캔에서 배정한 자리
+    shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
+    return {"count": len(result), "grouped_by": "pot" if any(
+        b["cls"].lower() in NON_LEAF for b in boxes) else "distance",
+        "shape_groups": len(shapes), "plants": result}
+
+
+def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
+                     thumb_of, feat_of, per_plant_area: float, img_area: float) -> List[dict]:
+    """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다."""
+    groups.sort(key=lambda g: sum(_center(b)[1] for b in g) / len(g))
+    occupied = {p["pos"] for p in PLANTS.values()}
+    claimed = set()
     by_slot = {p["pos"]: p for p in PLANTS.values()}
     result = []
     for g in groups:
         cx = sum(_center(b)[0] for b in g) / len(g)
         cy = sum(_center(b)[1] for b in g) / len(g)
-        u = min(max(cx / cw, 0.0), 1.0) if cw else 0.5
-        v = min(max(cy / ch, 0.0), 1.0) if ch else 0.5
+        u = min(max(cx / canvas_w, 0.0), 1.0) if canvas_w else 0.5
+        v = min(max(cy / canvas_h, 0.0), 1.0) if canvas_h else 0.5
         x, z = (u - 0.5) * _W, (v - 0.5) * _D
 
-        # 이미 그 근처에 등록된 식물이 있으면 그걸 갱신(이름·방향 유지)
         existing = None
         cand = min((p for p in by_slot.values() if p["pos"] not in claimed),
                    key=lambda p: math.dist((p["x"], p["z"]), (x, z)), default=None)
@@ -707,14 +781,14 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
             existing = cand
         slot = _slot_by_label(existing["pos"]) if existing else _nearest_slot(x, z, occupied | claimed)
         if slot is None:
-            break                                    # 자리가 다 찼으면 중단
+            break
         claimed.add(slot["label"])
 
         metrics = {}
         metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
         metrics.update(analyze_metrics(g, img_area))
-        metrics["thumb"] = _crop_thumb(image, g, scale)
-        feat = _mean_features([leaf_features(image, b, scale) for b in g])
+        metrics["thumb"] = thumb_of(g)
+        feat = feat_of(g)
 
         if existing:
             existing.update(metrics)
@@ -730,12 +804,111 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
             FEATS[pid] = feat
             by_slot[slot["label"]] = plant
             result.append(plant)
+    _recompute_shape_groups()
+    return result
 
-    _recompute_shape_groups()                 # 생김새가 닮은 개체끼리 A/B/C 딱지
-    shapes = sorted({p.get("shape_group") for p in result if p.get("shape_group")})
-    return {"count": len(result), "grouped_by": "pot" if any(
-        b["cls"].lower() in NON_LEAF for b in boxes) else "distance",
-        "shape_groups": len(shapes), "plants": result}
+
+@app.post("/api/scan-multi")
+async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(...),
+                     regions: str = Form(None), replace: str = Form(None)):
+    """여러 장을 원근 보정해 하나의 선반 좌표계로 합친 뒤 식물을 등록.
+
+    사진을 이어 붙이지 않는다. 사진마다 네 모서리로 원근 변환을 구해
+    '탐지 결과'만 선반 좌표로 옮기고, 겹치는 구역의 중복 탐지를 지운다.
+    잎이 촬영 사이에 움직여도 안전하고 특징점 매칭이 필요 없다.
+
+    corners: 사진별 [좌상, 우상, 우하, 좌하] 픽셀 좌표. 예 [[[x,y],[x,y],[x,y],[x,y]], …]
+    regions: 사진별 선반 구역 [u0,v0,u1,v1] (0~1). 생략하면 전체([0,0,1,1]).
+    """
+    import json
+    try:
+        quads = json.loads(corners)
+    except ValueError:
+        raise HTTPException(400, "corners 를 읽을 수 없어요 (JSON 형식).")
+    if len(quads) != len(files):
+        raise HTTPException(400, f"사진 {len(files)}장인데 모서리는 {len(quads)}장분이에요.")
+    if regions:
+        try:
+            rects = json.loads(regions)
+        except ValueError:
+            raise HTTPException(400, "regions 를 읽을 수 없어요 (JSON 형식).")
+        if len(rects) != len(files):
+            raise HTTPException(400, "regions 개수가 사진 수와 달라요.")
+    else:
+        rects = [[0, 0, 1, 1]] * len(files)
+
+    CANVAS = 1000.0                       # 선반 좌표계 폭(가상 픽셀). 높이는 선반 비율대로
+    canvas_h = CANVAS * (_D / _W)
+
+    merged, feats, sources = [], [], []
+    images = []
+    for i, f in enumerate(files):
+        if not f.content_type or not f.content_type.startswith("image/"):
+            raise HTTPException(400, "이미지 파일만 올릴 수 있어요.")
+        try:
+            image = Image.open(io.BytesIO(await f.read())).convert("RGB")
+        except Exception:
+            raise HTTPException(400, f"{i + 1}번째 이미지를 읽을 수 없어요.")
+        images.append(image)
+
+        boxes, img_area = detect_boxes(image, ROBOFLOW_MODEL_TOP)
+        aspect = image.width / image.height
+        cw = math.sqrt(img_area * aspect)
+        scale = image.width / cw if cw else 1.0
+
+        u0, v0, u1, v1 = rects[i]
+        dst = [(u0 * CANVAS, v0 * canvas_h), (u1 * CANVAS, v0 * canvas_h),
+               (u1 * CANVAS, v1 * canvas_h), (u0 * CANVAS, v1 * canvas_h)]
+        src = [(p[0] / scale, p[1] / scale) for p in quads[i]]   # 클릭은 원본 픽셀 기준
+        H = homography(src, dst)
+
+        for b in boxes:
+            merged.append(warp_box(H, b))
+            feats.append(leaf_features(image, b, scale))
+            sources.append((i, b))
+
+    # 겹치는 구역에서 같은 잎이 두 번 잡힌 것 제거 (사진이 다르고 위치가 거의 같으면 중복)
+    keep = []
+    for idx, b in enumerate(merged):
+        dup = None
+        for kidx in keep:
+            if sources[kidx][0] != sources[idx][0] and _iou(merged[kidx], b) > 0.5:
+                dup = kidx
+                break
+        if dup is None:
+            keep.append(idx)
+        elif b["conf"] > merged[dup]["conf"]:
+            keep[keep.index(dup)] = idx                 # 더 확신하는 쪽을 남긴다
+    dropped = len(merged) - len(keep)
+
+    boxes_m = [merged[i] for i in keep]
+    feats_m = [feats[i] for i in keep]
+    groups = group_leaves(boxes_m, feats=feats_m)
+    if not groups:
+        raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
+
+    if replace:
+        PLANTS.clear(); FEATS.clear()
+
+    src_of = {id(merged[i]): sources[i] for i in keep}
+    feat_of_box = {id(merged[i]): feats[i] for i in keep}
+
+    def thumb_of(group):
+        img_i, _ = src_of[id(max(group, key=lambda b: b["area"]))]
+        orig = [src_of[id(b)][1] for b in group if src_of[id(b)][0] == img_i]
+        return _crop_thumb(images[img_i], orig, 1.0)
+
+    def feat_of(group):
+        return _mean_features([feat_of_box[id(b)] for b in group])
+
+    canvas_area = CANVAS * canvas_h
+    result = _register_groups(groups, CANVAS, canvas_h, thumb_of, feat_of,
+                              canvas_area / len(groups), canvas_area)
+    shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
+    return {"count": len(result), "photos": len(files), "merged_boxes": len(boxes_m),
+            "deduped": dropped, "shape_groups": len(shapes),
+            "grouped_by": "pot" if any(b["cls"].lower() in NON_LEAF for b in boxes_m) else "distance",
+            "plants": result}
 
 
 @app.post("/api/plants/{pid}/reanalyze")

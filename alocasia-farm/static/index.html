@@ -93,6 +93,10 @@
       <input type="checkbox" id="scanReplace" style="accent-color:#4fa85a"> 기존 식물 지우고 새로 채우기
     </label>
     <div id="scanStatus" style="margin-top:6px;font-size:12px;color:#9fb4a6;min-height:1.2em"></div>
+    <label class="mbtn" style="display:block;margin-top:7px;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#1d3324;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
+      📐 여러 장 + 원근 보정<input type="file" id="multiFile" accept="image/*" multiple style="display:none">
+    </label>
+    <div style="font-size:10.5px;color:#6f8073;margin-top:5px">2~4장 · 사진마다 선반 네 모서리를 찍어 왜곡을 폅니다</div>
   </div>
   <div id="mapWrap">
     <h2>🗺️ 온실 자리 지도</h2>
@@ -138,6 +142,37 @@
       <button class="mbtn danger" id="mDel">🗑 제거</button>
     </div>
     <div id="mUpd"></div>
+  </div>
+</div>
+
+<!-- 네 모서리 찍기 오버레이 -->
+<div id="calWrap" style="position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:60;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px">
+  <div style="color:#e8f0ea;font-size:14px;text-align:center;line-height:1.6">
+    <b id="calTitle" style="color:#7ddb9a"></b><br>
+    <span id="calStep" style="font-size:13px"></span><br>
+    <span style="font-size:11.5px;color:#9fb4a6">선반(또는 이 사진이 덮는 구역)의 모서리를 <b>좌상 → 우상 → 우하 → 좌하</b> 순서로 클릭</span>
+  </div>
+  <div style="position:relative;max-width:88vw;max-height:62vh">
+    <img id="calImg" style="max-width:88vw;max-height:62vh;display:block;border-radius:8px">
+    <canvas id="calCv" style="position:absolute;inset:0;cursor:crosshair"></canvas>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <label style="color:#cfe0d4;font-size:12px">이 사진이 덮는 구역
+      <select id="calRegion" style="margin-left:6px;background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:7px;padding:6px">
+        <option value="0,0,1,1">전체</option>
+        <option value="0,0,0.55,1">왼쪽 절반</option>
+        <option value="0.45,0,1,1">오른쪽 절반</option>
+        <option value="0,0,1,0.55">위쪽 절반</option>
+        <option value="0,0.45,1,1">아래쪽 절반</option>
+        <option value="0,0,0.55,0.55">좌상 사분면</option>
+        <option value="0.45,0,1,0.55">우상 사분면</option>
+        <option value="0,0.45,0.55,1">좌하 사분면</option>
+        <option value="0.45,0.45,1,1">우하 사분면</option>
+      </select>
+    </label>
+    <button class="mbtn" id="calUndo" style="padding:8px 14px">↺ 다시</button>
+    <button class="mbtn" id="calNext" style="padding:8px 14px;background:#2e7d32;color:#fff;border:none" disabled>다음 →</button>
+    <button class="mbtn danger" id="calCancel" style="padding:8px 14px">취소</button>
   </div>
 </div>
 
@@ -310,6 +345,87 @@ document.getElementById('scanFile').addEventListener('change',async(e)=>{
     scanStatus.textContent=`✅ ${d.count}개 개체 · 모양 ${d.shape_groups}종 (${how})`;
   }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
   e.target.value='';
+});
+
+// ===== 여러 장 + 원근 보정 =====
+// 사진을 이어 붙이지 않는다. 사진마다 네 모서리로 원근 변환을 구해
+// '탐지 좌표'만 하나의 선반 좌표계로 옮기고 겹침 중복을 지운다.
+const CAL={files:[],i:0,quads:[],regions:[],pts:[],url:null};
+const calWrap=document.getElementById('calWrap'),calImg=document.getElementById('calImg'),
+      calCv=document.getElementById('calCv'),calNext=document.getElementById('calNext');
+const DEF_REGION=['0,0,1,1','0,0,0.55,1','0.45,0,1,1','0,0,1,0.55','0,0.45,1,1'];
+
+document.getElementById('multiFile').addEventListener('change',e=>{
+  const fs=[...e.target.files]; e.target.value='';
+  if(!fs.length)return;
+  if(fs.length<2){ scanStatus.textContent='⚠️ 2장 이상 골라 주세요 (1장이면 위의 탑뷰 스캔을 쓰세요)'; return; }
+  CAL.files=fs; CAL.i=0; CAL.quads=[]; CAL.regions=[];
+  calWrap.style.display='flex'; showCal();
+});
+
+function showCal(){
+  CAL.pts=[]; calNext.disabled=true;
+  const f=CAL.files[CAL.i];
+  document.getElementById('calTitle').textContent=`사진 ${CAL.i+1} / ${CAL.files.length} — ${f.name}`;
+  // 2장이면 좌/우, 3장 이상이면 전체를 기본값으로 (사용자가 바꿀 수 있음)
+  const sel=document.getElementById('calRegion');
+  sel.value=(CAL.files.length===2)?DEF_REGION[CAL.i+1]:'0,0,1,1';
+  if(CAL.url) URL.revokeObjectURL(CAL.url);
+  CAL.url=URL.createObjectURL(f);
+  calImg.onload=()=>{ calCv.width=calImg.clientWidth; calCv.height=calImg.clientHeight;
+    calCv.style.width=calImg.clientWidth+'px'; calCv.style.height=calImg.clientHeight+'px'; drawCal(); };
+  calImg.src=CAL.url;
+  updCalStep();
+}
+function updCalStep(){
+  const names=['좌상','우상','우하','좌하'];
+  document.getElementById('calStep').textContent=
+    CAL.pts.length>=4?'네 점 완료 — [다음]을 누르세요':`${CAL.pts.length+1}번째: ${names[CAL.pts.length]} 모서리`;
+}
+function drawCal(){
+  const g=calCv.getContext('2d'); g.clearRect(0,0,calCv.width,calCv.height);
+  g.strokeStyle='#7ddb9a'; g.lineWidth=2; g.fillStyle='rgba(125,219,154,.16)';
+  if(CAL.pts.length>1){ g.beginPath(); g.moveTo(CAL.pts[0].dx,CAL.pts[0].dy);
+    CAL.pts.slice(1).forEach(p=>g.lineTo(p.dx,p.dy));
+    if(CAL.pts.length===4)g.closePath(); g.stroke(); if(CAL.pts.length===4)g.fill(); }
+  CAL.pts.forEach((p,i)=>{ g.fillStyle='#7ddb9a'; g.beginPath(); g.arc(p.dx,p.dy,7,0,7); g.fill();
+    g.fillStyle='#0e1512'; g.font='bold 11px sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(i+1,p.dx,p.dy); });
+}
+calCv.addEventListener('click',e=>{
+  if(CAL.pts.length>=4)return;
+  const r=calCv.getBoundingClientRect();
+  const dx=e.clientX-r.left, dy=e.clientY-r.top;
+  // 화면 좌표 → 원본 픽셀 좌표 (백엔드는 원본 기준으로 받는다)
+  const sx=calImg.naturalWidth/calImg.clientWidth, sy=calImg.naturalHeight/calImg.clientHeight;
+  CAL.pts.push({dx,dy,x:dx*sx,y:dy*sy});
+  drawCal(); updCalStep(); calNext.disabled=CAL.pts.length<4;
+});
+document.getElementById('calUndo').addEventListener('click',()=>{CAL.pts=[];drawCal();updCalStep();calNext.disabled=true;});
+document.getElementById('calCancel').addEventListener('click',()=>{
+  calWrap.style.display='none'; if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;} CAL.files=[];
+});
+calNext.addEventListener('click',async()=>{
+  CAL.quads.push(CAL.pts.map(p=>[p.x,p.y]));
+  CAL.regions.push(document.getElementById('calRegion').value.split(',').map(Number));
+  CAL.i++;
+  if(CAL.i<CAL.files.length){ showCal(); return; }
+  calWrap.style.display='none';
+  if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;}
+  scanStatus.textContent=`분석 중… (${CAL.files.length}장 원근 보정 + 합치기)`;
+  const fd=new FormData();
+  CAL.files.forEach(f=>fd.append('files',f));
+  fd.append('corners',JSON.stringify(CAL.quads));
+  fd.append('regions',JSON.stringify(CAL.regions));
+  if(document.getElementById('scanReplace').checked) fd.append('replace','1');
+  try{
+    const r=await fetch('/api/scan-multi',{method:'POST',body:fd});
+    if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
+    const d=await r.json();
+    await loadAll();
+    scanStatus.textContent=`✅ ${d.photos}장 → ${d.count}개 개체 · 모양 ${d.shape_groups}종 (중복 ${d.deduped}개 제거)`;
+  }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
+  CAL.files=[];
 });
 
 // ===== 제거 =====
