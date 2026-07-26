@@ -157,7 +157,7 @@ def test_same_pot_keeps_same_slot_across_scans():
     orig_detect = main.detect_boxes
     try:
         for shift in (0, 40, -35):
-            main.detect_boxes = lambda image, mid, s=shift: (leaves_at(s), float(1200 * 800))
+            main.detect_boxes = lambda image, det=None, s=shift: (leaves_at(s), float(1200 * 800))
             res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
             assert res["count"] == 2, res["count"]
             assert res["grouped_by"] == "pot_preset", res["grouped_by"]
@@ -179,7 +179,7 @@ def test_scan_without_preset_still_works():
     """화분 자리를 안 정해 뒀으면 기존 동작(거리+생김새) 그대로."""
     _reset()
     orig_detect = main.detect_boxes
-    main.detect_boxes = lambda image, mid: (
+    main.detect_boxes = lambda image, det=None: (
         [box(200, 300, 90, 90), box(900, 300, 90, 90)], float(1200 * 800))
     try:
         res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
@@ -203,7 +203,7 @@ def test_pot_refs_recover_a_tilted_shot():
     seen = [(400, 200), (800, 200), (950, 700), (250, 700)]
     refs = [[i, x, y] for i, (x, y) in enumerate(seen)]
 
-    def fake_detect(image, mid):
+    def fake_detect(image, detector=None):
         # 각 화분 위치에 잎 하나씩
         return [box(x, y, 60, 60) for x, y in seen], float(1200 * 800)
 
@@ -232,7 +232,7 @@ def test_every_marked_pot_shows_up_even_with_no_leaves():
     _set_pots([[0.25, 0.5], [0.75, 0.5], [0.4, 0.8]])     # 화분 3개
     orig = main.detect_boxes
     # 잎은 첫 두 화분 근처에만 잡힌다
-    main.detect_boxes = lambda im, mid: (
+    main.detect_boxes = lambda im, det=None: (
         [box(300, 400, 90, 90, "mature leaf"), box(900, 400, 90, 90, "shoot")],
         float(1200 * 800))
     try:
@@ -287,7 +287,7 @@ def test_scan_cleans_ghosts_and_reports_them():
     main.PLANTS["ghost"] = {"id": "ghost", "name": "예전 식물", "pos": "A1",
                             "x": 0, "z": 0, "leaf_count": 3}
     orig = main.detect_boxes
-    main.detect_boxes = lambda im, mid: (
+    main.detect_boxes = lambda im, det=None: (
         [box(600, 400, 90, 90, "mature leaf")], float(1200 * 800))
     try:
         res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
@@ -313,7 +313,7 @@ def test_empty_flag_clears_once_leaves_appear():
     _set_pots([[0.5, 0.5]])
     orig = main.detect_boxes
     try:
-        main.detect_boxes = lambda im, mid: ([], float(1200 * 800))
+        main.detect_boxes = lambda im, det=None: ([], float(1200 * 800))
         try:
             asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
         except HTTPException:
@@ -323,7 +323,7 @@ def test_empty_flag_clears_once_leaves_appear():
         pid = list(main.PLANTS)[0]
         assert main.PLANTS[pid].get("empty") is True
 
-        main.detect_boxes = lambda im, mid: (
+        main.detect_boxes = lambda im, det=None: (
             [box(600, 400, 90, 90, "mature leaf")], float(1200 * 800))
         asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode="keep"))
         assert "empty" not in main.PLANTS[pid], main.PLANTS[pid]

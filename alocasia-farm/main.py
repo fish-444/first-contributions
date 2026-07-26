@@ -16,6 +16,14 @@
 
 센서·RAG 없음. 오직 [사진+이름+자리 → YOLO → 3D 반영 + 이름/방향 커스텀].
 
+좌표계가 네 가지라 변수 이름 뒤에 어느 것인지 붙인다:
+  _px      이미지 픽셀        0~4032    탐지 박스, 화면 클릭
+  _uv      선반 정규좌표      0~1       화분 자리 저장값 (카메라와 무관)
+  _canvas  선반 가상 픽셀     0~1000    여러 장을 합칠 때 쓰는 공통 도화지
+  _cm      실좌표 센티미터    -30~30    3D 배치, 조명 위치, 슬롯 중심
+
+  px ──(원근 변환)──> canvas ──(/CANVAS)──> uv ──(x_W-W/2)──> cm
+
 분석 엔진 자동 선택:
   1) 로보플로우(ROBOFLOW_API_KEY 있으면)  2) 로컬 ultralytics(.pt)  3) 데모(모델 없어도 동작)
 실행법은 README.md 참고.
@@ -35,44 +43,16 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+import providers
+
 # --------------------------------------------------------------------------- 설정
-ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY", "")
-ROBOFLOW_MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "find-leaf-and-object/1")
-# 두 모델 (키 하나로 둘 다 호출)
-ROBOFLOW_MODEL_TOP = os.environ.get("ROBOFLOW_MODEL_TOP", ROBOFLOW_MODEL_ID)      # 모델1: 맨 위 잎(광합성) → 3D
-ROBOFLOW_MODEL_STAGE = os.environ.get("ROBOFLOW_MODEL_STAGE", ROBOFLOW_MODEL_ID)  # 모델2: 새순/성숙/노령 → 모달
-ROBOFLOW_API_URL = os.environ.get("ROBOFLOW_API_URL", "https://serverless.roboflow.com")
-# 워크플로(Workflow) 방식 — 모델 대신 로보플로우에서 구성한 파이프라인을 통째로 호출
-ROBOFLOW_WORKSPACE = os.environ.get("ROBOFLOW_WORKSPACE", "")
-ROBOFLOW_WORKFLOW_ID = os.environ.get("ROBOFLOW_WORKFLOW_ID", "")
-ROBOFLOW_WORKFLOW_URL = os.environ.get("ROBOFLOW_WORKFLOW_URL", "")   # 전체 URL 직접 지정(선택)
-WORKFLOW_IMAGE_INPUT = os.environ.get("ROBOFLOW_WORKFLOW_IMAGE_INPUT", "image")
-MODEL_PATH = os.environ.get("MODEL_PATH", "yolov8n.pt")
-CONFIDENCE = float(os.environ.get("CONFIDENCE", "25"))
-
-_HAS_WORKFLOW = bool(ROBOFLOW_WORKFLOW_URL or (ROBOFLOW_WORKSPACE and ROBOFLOW_WORKFLOW_ID))
-if ROBOFLOW_API_KEY and _HAS_WORKFLOW:
-    ENGINE = "workflow"
-elif ROBOFLOW_API_KEY:
-    ENGINE = "roboflow"
-elif os.path.exists(MODEL_PATH) or os.environ.get("USE_LOCAL"):
-    ENGINE = "local"
-else:
-    ENGINE = "demo"
-
-local_model = None
-if ENGINE == "local":
-    try:
-        from ultralytics import YOLO
-        print(f"[엔진=로컬] 모델 로딩: {MODEL_PATH}")
-        local_model = YOLO(MODEL_PATH)
-    except Exception as e:
-        print(f"[경고] 로컬 모델 로딩 실패({e}) → 데모 모드")
-        ENGINE = "demo"
-
-# UI 에 표시할 이름 (어느 워크플로가 도는지 눈으로 확인) — 엔진 확정 후에 계산
-ENGINE_LABEL = f"workflow · {ROBOFLOW_WORKFLOW_ID}" if ENGINE == "workflow" and ROBOFLOW_WORKFLOW_ID else ENGINE
+# 탐지기는 providers 패키지가 환경변수를 보고 골라 준다.
+# 로보플로우를 걷어내고 로컬 모델로 갈아탈 때도 이 파일은 손대지 않는다.
+DETECT_TOP, DETECT_STAGE = providers.select()
+ENGINE_LABEL = DETECT_TOP.name          # 화면 왼쪽 위에 표시
 print(f"[분석 엔진] {ENGINE_LABEL}")
+
+CONFIDENCE = providers.CONFIDENCE
 
 app = FastAPI(title="Alocasia Smart Farm")
 
@@ -158,167 +138,13 @@ def _free_slot(prefer: str = None):
 
 
 # --------------------------------------------------------------------------- YOLO 탐지
-def detect_boxes(image: Image.Image, model_id: str):
-    if ENGINE == "workflow":
-        return _detect_workflow(image)
-    if ENGINE == "roboflow":
-        return _detect_roboflow(image, model_id)
-    if ENGINE == "local":
-        return _detect_local(image)
-    return _detect_demo(image)
+def detect_boxes(image: Image.Image, detector=None):
+    """이미지 → (픽셀 좌표 박스 목록, 이미지 면적 px²).
 
-
-def _jpeg_b64(image: Image.Image) -> str:
-    buf = io.BytesIO(); image.save(buf, format="JPEG")
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-def _boxes_from_predictions(preds: List[dict]) -> List[dict]:
-    """로보플로우 predictions(중심좌표 x,y + width,height) → 내부 박스 형식."""
-    boxes = []
-    for p in preds:
-        try:
-            w, h = float(p["width"]), float(p["height"])
-            cx, cy = float(p["x"]), float(p["y"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        boxes.append({"cls": p.get("class") or p.get("class_name") or "leaf",
-                      "conf": float(p.get("confidence", 0) or 0),
-                      "x1": cx - w / 2, "y1": cy - h / 2,
-                      "x2": cx + w / 2, "y2": cy + h / 2, "area": w * h})
-    return boxes
-
-
-def _detect_roboflow(image: Image.Image, model_id: str):
-    import requests
-    try:
-        resp = requests.post(
-            f"{ROBOFLOW_API_URL}/{model_id}",
-            params={"api_key": ROBOFLOW_API_KEY, "confidence": CONFIDENCE},
-            data=_jpeg_b64(image),
-            headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=60,
-        )
-    except requests.RequestException:
-        raise HTTPException(502, "로보플로우 서버 연결 실패 (인터넷 확인)")
-    if resp.status_code in (401, 403):
-        raise HTTPException(401, "로보플로우 개인(Private) API 키를 확인하세요.")
-    if not resp.ok:
-        raise HTTPException(502, f"로보플로우 오류: {resp.text[:150]}")
-    return _boxes_from_predictions(resp.json().get("predictions", [])), image.width * image.height
-
-
-# --------------------------------------------------------------------------- 워크플로
-def _workflow_urls() -> List[str]:
-    """호출할 워크플로 URL 후보. 로보플로우가 쓰는 두 경로 형식을 모두 시도한다."""
-    if ROBOFLOW_WORKFLOW_URL:
-        return [ROBOFLOW_WORKFLOW_URL]
-    ws, wf = ROBOFLOW_WORKSPACE, ROBOFLOW_WORKFLOW_ID
-    return [f"{ROBOFLOW_API_URL}/infer/workflows/{ws}/{wf}",
-            f"{ROBOFLOW_API_URL}/{ws}/workflows/{wf}"]
-
-
-def _iter_prediction_lists(node):
-    """워크플로 응답 어디에 박혀 있든 탐지 predictions 리스트를 전부 찾아낸다.
-
-    출력 블록 이름(step 이름)이 워크플로마다 달라서 경로를 고정할 수 없다.
-    그래서 응답 트리를 훑어 '박스처럼 생긴' predictions 리스트만 골라낸다.
+    실제 탐지는 providers 가 맡는다. 이 함수는 앱 전체가 쓰는 하나의 출입구로,
+    테스트에서 여기만 갈아 끼우면 어떤 제공자든 흉내 낼 수 있다.
     """
-    if isinstance(node, dict):
-        preds = node.get("predictions")
-        if isinstance(preds, list) and any(
-                isinstance(p, dict) and "x" in p and "width" in p for p in preds):
-            yield preds
-        for v in node.values():
-            yield from _iter_prediction_lists(v)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _iter_prediction_lists(v)
-
-
-def _iter_image_dims(node):
-    """응답에 실려 오는 이미지 크기({"image": {"width":…, "height":…}})를 찾는다."""
-    if isinstance(node, dict):
-        img = node.get("image")
-        if isinstance(img, dict):
-            w, h = img.get("width"), img.get("height")
-            if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0:
-                yield float(w) * float(h)
-        for v in node.values():
-            yield from _iter_image_dims(v)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _iter_image_dims(v)
-
-
-def _workflow_image_area(payload, fallback: float) -> float:
-    """워크플로가 리사이즈를 포함하면 박스 좌표계가 업로드한 원본과 달라진다.
-    응답이 알려 주는 이미지 크기를 우선 쓰고, 없으면 원본 크기로 되돌아간다."""
-    return next(_iter_image_dims(payload), fallback)
-
-
-def _extract_workflow_boxes(payload) -> List[dict]:
-    """워크플로 응답 → 박스 목록. 중복 박스는 한 번만 센다."""
-    boxes, seen = [], set()
-    for preds in _iter_prediction_lists(payload):
-        for b in _boxes_from_predictions(preds):
-            key = (b["cls"], round(b["x1"], 1), round(b["y1"], 1),
-                   round(b["x2"], 1), round(b["y2"], 1))
-            if key in seen:
-                continue
-            seen.add(key)
-            # 워크플로는 confidence 파라미터를 안 받는 경우가 있어 여기서 걸러 준다
-            if b["conf"] and b["conf"] < CONFIDENCE / 100.0:
-                continue
-            boxes.append(b)
-    return boxes
-
-
-def _detect_workflow(image: Image.Image):
-    import requests
-    payload = {"api_key": ROBOFLOW_API_KEY,
-               "inputs": {WORKFLOW_IMAGE_INPUT: {"type": "base64", "value": _jpeg_b64(image)}}}
-    resp = None
-    for url in _workflow_urls():
-        try:
-            resp = requests.post(url, json=payload, timeout=90)
-        except requests.RequestException:
-            raise HTTPException(502, "로보플로우 서버 연결 실패 (인터넷 확인)")
-        if resp.status_code != 404:
-            break                      # 404 면 다른 경로 형식으로 한 번 더
-    if resp.status_code in (401, 403):
-        raise HTTPException(401, "로보플로우 개인(Private) API 키를 확인하세요.")
-    if resp.status_code == 404:
-        raise HTTPException(502, "워크플로를 찾을 수 없어요. ROBOFLOW_WORKSPACE / ROBOFLOW_WORKFLOW_ID 확인")
-    if not resp.ok:
-        raise HTTPException(502, f"워크플로 오류: {resp.text[:150]}")
-    try:
-        data = resp.json()
-    except ValueError:
-        raise HTTPException(502, "워크플로 응답을 해석할 수 없어요.")
-    area = _workflow_image_area(data, float(image.width * image.height))
-    return _extract_workflow_boxes(data), area
-
-
-def _detect_local(image: Image.Image):
-    r = local_model.predict(image, conf=CONFIDENCE / 100.0, verbose=False)[0]
-    names = r.names; boxes = []
-    if r.boxes is not None:
-        for b in r.boxes:
-            x1, y1, x2, y2 = [float(v) for v in b.xyxy[0]]
-            boxes.append({"cls": names.get(int(b.cls[0]), "leaf"), "conf": float(b.conf[0]),
-                          "x1": x1, "y1": y1, "x2": x2, "y2": y2, "area": (x2 - x1) * (y2 - y1)})
-    return boxes, image.width * image.height
-
-
-def _detect_demo(image: Image.Image):
-    W, Hh = image.width, image.height; boxes = []
-    for _ in range(random.randint(3, 11)):
-        bw = random.uniform(0.12, 0.32) * W; bh = random.uniform(0.12, 0.32) * Hh
-        cx = random.uniform(bw / 2, W - bw / 2); cy = random.uniform(bh / 2, Hh - bh / 2)
-        cls = random.choices(["shoot", "mature leaf", "old leaf"], weights=[0.22, 0.55, 0.23])[0]
-        boxes.append({"cls": cls, "conf": random.uniform(0.4, 0.95),
-                      "x1": cx - bw / 2, "y1": cy - bh / 2, "x2": cx + bw / 2, "y2": cy + bh / 2, "area": bw * bh})
-    return boxes, W * Hh
+    return (detector or DETECT_TOP).detect(image)
 
 
 def _iou(a, b):
@@ -435,8 +261,9 @@ def _span(b):
     return math.hypot(b["x2"] - b["x1"], b["y2"] - b["y1"])
 
 
-def _contains(outer, px, py) -> bool:
-    return outer["x1"] <= px <= outer["x2"] and outer["y1"] <= py <= outer["y2"]
+def _contains(outer, x, y) -> bool:
+    """박스 안에 점이 들어오는지. 좌표계는 호출부와 같은 것을 쓴다."""
+    return outer["x1"] <= x <= outer["x2"] and outer["y1"] <= y <= outer["y2"]
 
 
 # --- 잎 생김새(모양·색) 특징 ------------------------------------------------
@@ -445,7 +272,7 @@ def _contains(outer, px, py) -> bool:
 SHAPE_SIM = float(os.environ.get("SHAPE_SIM", "0.55"))   # 같은 모양으로 볼 최소 유사도(0~1)
 
 
-def leaf_features(image: Image.Image, box: dict, scale: float = 1.0) -> dict:
+def leaf_features(image: Image.Image, box: dict, box_to_px: float = 1.0) -> dict:
     """잎 하나의 생김새 특징. 이미지가 없으면 박스 비율만으로 만든다."""
     w, h = box["x2"] - box["x1"], box["y2"] - box["y1"]
     if w <= 0 or h <= 0:
@@ -458,16 +285,17 @@ def leaf_features(image: Image.Image, box: dict, scale: float = 1.0) -> dict:
     # 박스 가운데 60%만 봐서 가장자리 배경이 섞이는 걸 줄인다
     cx, cy = _center(box)
     hw, hh = w * 0.3, h * 0.3
-    crop_box = (max(0, int((cx - hw) * scale)), max(0, int((cy - hh) * scale)),
-                min(image.width, int((cx + hw) * scale)), min(image.height, int((cy + hh) * scale)))
-    if crop_box[2] <= crop_box[0] or crop_box[3] <= crop_box[1]:
+    crop_px = (max(0, int((cx - hw) * box_to_px)), max(0, int((cy - hh) * box_to_px)),
+               min(image.width, int((cx + hw) * box_to_px)),
+               min(image.height, int((cy + hh) * box_to_px)))
+    if crop_px[2] <= crop_px[0] or crop_px[3] <= crop_px[1]:
         return feat
-    px = list(image.crop(crop_box).resize((8, 8)).convert("HSV").getdata())
-    if not px:
+    pixels = list(image.crop(crop_px).resize((8, 8)).convert("HSV").getdata())
+    if not pixels:
         return feat
-    n = len(px)
-    feat.update({"h": sum(p[0] for p in px) / n, "s": sum(p[1] for p in px) / n,
-                 "v": sum(p[2] for p in px) / n, "has_color": True})
+    n = len(pixels)
+    feat.update({"h": sum(p[0] for p in pixels) / n, "s": sum(p[1] for p in pixels) / n,
+                 "v": sum(p[2] for p in pixels) / n, "has_color": True})
     return feat
 
 
@@ -534,19 +362,19 @@ def _mean_features(feats: List[dict]) -> dict:
     return out
 
 
-def synthetic_pots(canvas_w: float, canvas_h: float) -> List[dict]:
+def synthetic_pots(space_w: float, space_h: float) -> List[dict]:
     """미리 지정한 화분 자리 → 화분 박스. 모델이 화분을 못 잡아도 그룹화가 된다.
 
     화분 크기는 이웃 화분과의 간격에서 추정한다(빽빽한 트레이에서 잘 맞는다).
     """
     if not POTS:
         return []
-    pts = [(p["u"] * canvas_w, p["v"] * canvas_h) for p in POTS]
+    pts = [(p["u"] * space_w, p["v"] * space_h) for p in POTS]   # uv → 박스 좌표계
     if len(pts) > 1:
         nn = [min(math.dist(a, b) for j, b in enumerate(pts) if j != i) for i, a in enumerate(pts)]
         r = sorted(nn)[len(nn) // 2] * 0.45
     else:
-        r = min(canvas_w, canvas_h) * 0.1
+        r = min(space_w, space_h) * 0.1
     return [{"cls": "pot", "conf": 1.0, "x1": x - r, "y1": y - r,
              "x2": x + r, "y2": y + r, "area": 4 * r * r} for x, y in pts]
 
@@ -633,17 +461,17 @@ def group_by_distance_and_shape(leaves: List[dict], feats: List[dict],
 
 
 def group_leaves(boxes: List[dict], image: Image.Image = None,
-                 scale: float = 1.0, feats: List[dict] = None) -> List[List[dict]]:
+                 box_to_px: float = 1.0, feats: List[dict] = None) -> List[List[dict]]:
     """탐지 박스 전체 → 식물별 잎 묶음.
 
     화분이 잡히면 화분+생김새, 아니면 거리+생김새로 묶는다.
     image 를 주면 잎을 잘라 색까지 보고, 없으면 박스 비율·크기만으로 판단한다.
     feats 를 주면 그걸 쓴다 — 사진이 여러 장이라 박스마다 원본이 다를 때 필요.
     """
-    return group_plants(boxes, image, scale, feats)[0]
+    return group_plants(boxes, image, box_to_px, feats)[0]
 
 
-def group_plants(boxes: List[dict], image: Image.Image = None, scale: float = 1.0,
+def group_plants(boxes: List[dict], image: Image.Image = None, box_to_px: float = 1.0,
                  feats: List[dict] = None, canvas: tuple = None) -> tuple:
     """(무리 목록, 무리→고정자리) 를 돌려준다.
 
@@ -658,7 +486,7 @@ def group_plants(boxes: List[dict], image: Image.Image = None, scale: float = 1.
         by_id = {id(b): f for b, f in zip(boxes, feats)}
         lfeats = [by_id[id(b)] for b in leaves]
     else:
-        lfeats = [leaf_features(image, b, scale) for b in leaves]
+        lfeats = [leaf_features(image, b, box_to_px) for b in leaves]
 
     predefined = False
     if not pots and POTS and canvas:
@@ -738,10 +566,10 @@ def _analyze_file(raw: bytes) -> dict:
         raise HTTPException(400, "이미지를 읽을 수 없어요.")
 
     # 모델1(맨 위 잎) 실행
-    boxes_top, img_area = detect_boxes(image, ROBOFLOW_MODEL_TOP)
-    # 모델2(단계) 실행 — 두 모델이 다르고 로보플로우일 때만 따로 호출(아니면 재사용해 크레딧 절약)
-    if ENGINE == "roboflow" and ROBOFLOW_MODEL_STAGE != ROBOFLOW_MODEL_TOP:
-        boxes_stage, _ = detect_boxes(image, ROBOFLOW_MODEL_STAGE)
+    boxes_top, img_area = detect_boxes(image)
+    # 모델2(단계) — 제공자가 다를 때만 따로 호출한다. 같은 객체면 재사용해 크레딧 절약.
+    if DETECT_STAGE is not DETECT_TOP:
+        boxes_stage, _ = detect_boxes(image, DETECT_STAGE)
     else:
         boxes_stage = boxes_top
 
@@ -755,8 +583,9 @@ def _analyze_file(raw: bytes) -> dict:
 
     # 이 식물의 생김새 = 잎들의 특징 평균 (모양 그룹 딱지 계산에 쓰임)
     leaves = [b for b in boxes_top if b["cls"].lower() not in NON_LEAF]
-    scale = image.width / math.sqrt(img_area * (image.width / image.height)) if img_area else 1.0
-    feat = _mean_features([leaf_features(image, b, scale) for b in leaves])
+    box_to_px = (image.width / math.sqrt(img_area * (image.width / image.height))
+                 if img_area else 1.0)
+    feat = _mean_features([leaf_features(image, b, box_to_px) for b in leaves])
     return metrics, feat
 
 
@@ -821,12 +650,12 @@ async def set_pots(points: str = Form(None), points_px: str = Form(None),
             u, v = float(p[0]), float(p[1])
         except (TypeError, ValueError, IndexError):
             raise HTTPException(400, f"{i + 1}번째 화분 좌표가 이상해요.")
-        u, v = min(max(u, 0.0), 1.0), min(max(v, 0.0), 1.0)
-        slot = _nearest_slot((u - 0.5) * _W, (v - 0.5) * _D, taken)
+        u_uv, v_uv = min(max(u, 0.0), 1.0), min(max(v, 0.0), 1.0)
+        slot = _nearest_slot((u_uv - 0.5) * _W, (v_uv - 0.5) * _D, taken)
         if slot is None:
             raise HTTPException(400, "자리가 모자라요. 화분 수를 줄여 주세요.")
         taken.add(slot["label"])
-        POTS.append({"i": i, "u": round(u, 4), "v": round(v, 4), "slot": slot["label"]})
+        POTS.append({"i": i, "u": round(u_uv, 4), "v": round(v_uv, 4), "slot": slot["label"]})
     removed = _drop_orphans()      # 예전 자리에 남은 식물은 유령이 된다
     save_state()
     return {"count": len(POTS), "removed": removed, "pots": POTS}
@@ -863,26 +692,26 @@ async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: st
     return plant
 
 
-def _nearest_slot(x: float, z: float, blocked: set):
+def _nearest_slot(x_cm: float, z_cm: float, blocked: set):
     """3D 좌표에 가장 가까운, 아직 안 쓴 자리."""
     free = [s for s in SLOTS if s["label"] not in blocked]
     if not free:
         return None
-    return min(free, key=lambda s: math.dist((s["x"], s["z"]), (x, z)))
+    return min(free, key=lambda s: math.dist((s["x"], s["z"]), (x_cm, z_cm)))
 
 
-def _crop_thumb(image: Image.Image, group: List[dict], scale: float) -> str:
+def _crop_thumb(image: Image.Image, group: List[dict], box_to_px: float) -> str:
     """식물 무리의 바운딩 박스를 잘라 썸네일로. 모달에서 그 개체만 보이게."""
-    x1 = min(b["x1"] for b in group) * scale
-    y1 = min(b["y1"] for b in group) * scale
-    x2 = max(b["x2"] for b in group) * scale
-    y2 = max(b["y2"] for b in group) * scale
-    pad = 0.06 * max(x2 - x1, y2 - y1)
-    box = (max(0, int(x1 - pad)), max(0, int(y1 - pad)),
-           min(image.width, int(x2 + pad)), min(image.height, int(y2 + pad)))
-    if box[2] <= box[0] or box[3] <= box[1]:
-        box = (0, 0, image.width, image.height)
-    crop = image.crop(box); crop.thumbnail((260, 260))
+    x1_px = min(b["x1"] for b in group) * box_to_px
+    y1_px = min(b["y1"] for b in group) * box_to_px
+    x2_px = max(b["x2"] for b in group) * box_to_px
+    y2_px = max(b["y2"] for b in group) * box_to_px
+    pad_px = 0.06 * max(x2_px - x1_px, y2_px - y1_px)
+    crop_px = (max(0, int(x1_px - pad_px)), max(0, int(y1_px - pad_px)),
+               min(image.width, int(x2_px + pad_px)), min(image.height, int(y2_px + pad_px)))
+    if crop_px[2] <= crop_px[0] or crop_px[3] <= crop_px[1]:
+        crop_px = (0, 0, image.width, image.height)
+    crop = image.crop(crop_px); crop.thumbnail((260, 260))
     tb = io.BytesIO(); crop.save(tb, format="JPEG", quality=72)
     return "data:image/jpeg;base64," + base64.b64encode(tb.getvalue()).decode()
 
@@ -903,15 +732,15 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     except Exception:
         raise HTTPException(400, "이미지를 읽을 수 없어요.")
 
-    boxes, img_area = detect_boxes(image, ROBOFLOW_MODEL_TOP)
+    boxes, img_area = detect_boxes(image)
 
-    # 박스 좌표계의 폭·높이 (워크플로가 리사이즈했어도 비율은 유지된다고 본다)
+    # 박스가 놓인 좌표계의 폭·높이 (워크플로가 리사이즈했어도 비율은 유지된다고 본다)
     aspect = image.width / image.height
-    cw = math.sqrt(img_area * aspect)
-    ch = math.sqrt(img_area / aspect) if aspect else float(image.height)
-    scale = image.width / cw if cw else 1.0
+    space_w = math.sqrt(img_area * aspect)
+    space_h = math.sqrt(img_area / aspect) if aspect else float(image.height)
+    box_to_px = image.width / space_w if space_w else 1.0
 
-    groups, slots = group_plants(boxes, image, scale, canvas=(cw, ch))
+    groups, slots = group_plants(boxes, image, box_to_px, canvas=(space_w, space_h))
     if not groups:
         raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
 
@@ -922,9 +751,9 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     removed = _drop_orphans()      # 예전 화분 좌표로 만들어진 유령 정리
 
     result = _register_groups(
-        groups, cw, ch,
-        thumb_of=lambda g: _crop_thumb(image, g, scale),
-        feat_of=lambda g: _mean_features([leaf_features(image, b, scale) for b in g]),
+        groups, space_w, space_h,
+        thumb_of=lambda g: _crop_thumb(image, g, box_to_px),
+        feat_of=lambda g: _mean_features([leaf_features(image, b, box_to_px) for b in g]),
         per_plant_area=img_area / len(groups),      # 식물 1개 몫 — 대/중/소엽 기준
         img_area=img_area,
         slot_of=(lambda g: slots.get(id(g))) if slots else None,
@@ -971,7 +800,7 @@ def _merge_keep(old: dict, new: dict) -> tuple:
     return out, added
 
 
-def _pot_xz(slot_label: str):
+def _pot_xz_cm(slot_label: str):
     """지정한 화분의 실제 위치(cm). 격자 칸 중앙이 아니라 찍은 그 자리."""
     pot = next((p for p in POTS if p["slot"] == slot_label), None)
     if pot is None:
@@ -1012,10 +841,10 @@ def _ensure_pot_slots(result: List[dict]) -> None:
         slot = _slot_by_label(pot["slot"])
         if slot is None:
             continue
-        xz = _pot_xz(slot["label"]) or (slot["x"], slot["z"])
+        xz_cm = _pot_xz_cm(slot["label"]) or (slot["x"], slot["z"])
         pid = uuid.uuid4().hex[:8]
         plant = {"id": pid, "name": f"식물 {slot['label']}", "pos": slot["label"],
-                 "x": xz[0], "z": xz[1], "rot": 0,
+                 "x": xz_cm[0], "z": xz_cm[1], "rot": 0,
                  # 잎을 못 찾은 것뿐이지 '작은 식물'이라는 뜻이 아니다.
                  # 소품으로 적어 두면 실제 소품과 구분이 안 된다.
                  "size_class": "미검출", "leaf_count": 0, "shoot_count": 0,
@@ -1036,10 +865,15 @@ def _grouped_by(boxes: List[dict], slots: dict) -> str:
     return "distance"
 
 
-def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
+def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
                      thumb_of, feat_of, per_plant_area: float, img_area: float,
                      slot_of=None, mode: str = "update") -> List[dict]:
     """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다.
+
+    space_w/space_h 는 **박스가 놓인 좌표계의 크기**다. 한 장 스캔이면 사진 박스
+    공간, 여러 장 스캔이면 선반 캔버스라 값의 단위가 다르다. 여기서는 정규화
+    (0~1)에만 쓰므로 어느 쪽이든 상관없지만, 이름을 canvas 로 두면 늘 선반
+    캔버스인 것처럼 읽혀서 space 로 바꿨다.
 
     slot_of 를 주면(화분 자리를 미리 지정한 경우) 그 자리에 고정 배정한다.
     그러면 매번 스캔해도 같은 화분이 같은 자리로 가서 개체가 안 섞인다.
@@ -1050,11 +884,11 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
     by_slot = {p["pos"]: p for p in PLANTS.values()}
     result = []
     for g in groups:
-        cx = sum(_center(b)[0] for b in g) / len(g)
-        cy = sum(_center(b)[1] for b in g) / len(g)
-        u = min(max(cx / canvas_w, 0.0), 1.0) if canvas_w else 0.5
-        v = min(max(cy / canvas_h, 0.0), 1.0) if canvas_h else 0.5
-        x, z = (u - 0.5) * _W, (v - 0.5) * _D
+        cx_space = sum(_center(b)[0] for b in g) / len(g)
+        cy_space = sum(_center(b)[1] for b in g) / len(g)
+        u_uv = min(max(cx_space / space_w, 0.0), 1.0) if space_w else 0.5
+        v_uv = min(max(cy_space / space_h, 0.0), 1.0) if space_h else 0.5
+        x_cm, z_cm = (u_uv - 0.5) * _W, (v_uv - 0.5) * _D
 
         forced = slot_of(g) if slot_of else None
         if forced:
@@ -1063,16 +897,17 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
         else:
             existing = None
             cand = min((p for p in by_slot.values() if p["pos"] not in claimed),
-                       key=lambda p: math.dist((p["x"], p["z"]), (x, z)), default=None)
-            if cand is not None and math.dist((cand["x"], cand["z"]), (x, z)) <= max(_CW, _CD):
+                       key=lambda p: math.dist((p["x"], p["z"]), (x_cm, z_cm)), default=None)
+            if cand is not None and math.dist((cand["x"], cand["z"]), (x_cm, z_cm)) <= max(_CW, _CD):
                 existing = cand
-            slot = _slot_by_label(existing["pos"]) if existing else _nearest_slot(x, z, occupied | claimed)
+            slot = (_slot_by_label(existing["pos"]) if existing
+                    else _nearest_slot(x_cm, z_cm, occupied | claimed))
         if slot is None or slot["label"] in claimed:
             continue
         claimed.add(slot["label"])
         # 격자 칸 중앙으로 스냅하면 가까운 화분끼리 같은 줄로 뭉친다.
         # 지정한 화분이면 그 화분의 실제 자리를, 아니면 잎 무리의 무게중심을 쓴다.
-        px, pz = _pot_xz(slot["label"]) or (x, z)
+        px_cm, pz_cm = _pot_xz_cm(slot["label"]) or (x_cm, z_cm)
 
         metrics = {}
         metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
@@ -1095,7 +930,7 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
             else:
                 existing.pop("manual", None)           # 새 탐지값으로 덮어씀
             existing.pop("empty", None)                # 잎이 잡혔으니 빈 화분 아님
-            existing["x"], existing["z"] = round(px, 2), round(pz, 2)
+            existing["x"], existing["z"] = round(px_cm, 2), round(pz_cm, 2)
             existing.update(metrics)
             existing["updated"] = now
             FEATS[existing["id"]] = feat
@@ -1103,7 +938,7 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
         else:
             pid = uuid.uuid4().hex[:8]
             plant = {"id": pid, "name": f"식물 {slot['label']}", "pos": slot["label"],
-                     "x": round(px, 2), "z": round(pz, 2), "rot": 0,
+                     "x": round(px_cm, 2), "z": round(pz_cm, 2), "rot": 0,
                      "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
             PLANTS[pid] = plant
             FEATS[pid] = feat
@@ -1163,7 +998,7 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     else:
         rects = [[0, 0, 1, 1]] * len(files)
 
-    CANVAS = 1000.0                       # 선반 좌표계 폭(가상 픽셀). 높이는 선반 비율대로
+    CANVAS = 1000.0                       # 선반 캔버스 폭(가상 픽셀). 높이는 선반 비율대로
     canvas_h = CANVAS * (_D / _W)
 
     merged, feats, sources = [], [], []
@@ -1177,10 +1012,10 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
             raise HTTPException(400, f"{i + 1}번째 이미지를 읽을 수 없어요.")
         images.append(image)
 
-        boxes, img_area = detect_boxes(image, ROBOFLOW_MODEL_TOP)
+        boxes, img_area = detect_boxes(image)
         aspect = image.width / image.height
-        cw = math.sqrt(img_area * aspect)
-        scale = image.width / cw if cw else 1.0
+        space_w = math.sqrt(img_area * aspect)
+        box_to_px = image.width / space_w if space_w else 1.0
 
         if refs and refs[i]:
             # 이미 위치를 아는 화분들을 기준점으로 (모서리가 안 보일 때)
@@ -1192,19 +1027,19 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
                     raise HTTPException(400, f"{i + 1}번째 사진의 기준점 형식이 이상해요.")
                 if not 0 <= pi < len(POTS):
                     raise HTTPException(400, f"{pi}번 화분이 없어요.")
-                src.append((px / scale, py / scale))
+                src.append((px / box_to_px, py / box_to_px))
                 dst.append((POTS[pi]["u"] * CANVAS, POTS[pi]["v"] * canvas_h))
             H = homography_lstsq(src, dst)
         else:
             u0, v0, u1, v1 = rects[i]
             dst = [(u0 * CANVAS, v0 * canvas_h), (u1 * CANVAS, v0 * canvas_h),
                    (u1 * CANVAS, v1 * canvas_h), (u0 * CANVAS, v1 * canvas_h)]
-            src = [(p[0] / scale, p[1] / scale) for p in quads[i]]   # 클릭은 원본 픽셀 기준
+            src = [(p[0] / box_to_px, p[1] / box_to_px) for p in quads[i]]   # 클릭은 원본 픽셀 기준
             H = homography(src, dst)
 
         for b in boxes:
             merged.append(warp_box(H, b))
-            feats.append(leaf_features(image, b, scale))
+            feats.append(leaf_features(image, b, box_to_px))
             sources.append((i, b))
 
     # 겹치는 구역에서 같은 잎이 두 번 잡힌 것 제거 (사진이 다르고 위치가 거의 같으면 중복)
@@ -1238,7 +1073,7 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     def thumb_of(group):
         img_i, _ = src_of[id(max(group, key=lambda b: b["area"]))]
         orig = [src_of[id(b)][1] for b in group if src_of[id(b)][0] == img_i]
-        return _crop_thumb(images[img_i], orig, 1.0)
+        return _crop_thumb(images[img_i], orig, 1.0)   # orig 는 이미 원본 픽셀
 
     def feat_of(group):
         return _mean_features([feat_of_box[id(b)] for b in group])

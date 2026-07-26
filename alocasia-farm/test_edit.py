@@ -129,7 +129,7 @@ def test_renaming_alone_is_not_a_hand_edit():
 # ── 스캔 모드 ────────────────────────────────────────────────────────────
 def _scan(mode, boxes):
     orig = main.detect_boxes
-    main.detect_boxes = lambda im, mid: (boxes, float(1200 * 800))
+    main.detect_boxes = lambda im, det=None: (boxes, float(1200 * 800))
     try:
         return asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=mode))
     finally:

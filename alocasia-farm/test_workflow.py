@@ -9,8 +9,10 @@
 import os
 os.environ["FARM_DB"] = ""      # 테스트는 파일에 저장하지 않는다
 
-from main import (_extract_workflow_boxes, _workflow_image_area, _workflow_urls,
-                  analyze_metrics, analyze_top)
+from main import analyze_metrics, analyze_top
+from providers.roboflow_workflow import (extract_boxes as _extract_workflow_boxes,
+                                         image_area_px as _workflow_image_area,
+                                         workflow_urls)
 
 
 def _pred(x, y, w, h, cls, conf=0.9):
@@ -122,7 +124,7 @@ def test_top_leaf_pct_never_exceeds_100():
 
 
 def test_url_candidates():
-    urls = _workflow_urls()
+    urls = workflow_urls("s-workspace-br86f", "find-old-leaf-and-others")
     assert len(urls) >= 1
     assert all(u.startswith("http") for u in urls), urls
 

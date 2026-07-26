@@ -238,7 +238,7 @@ def test_scan_endpoint_registers_one_plant_per_pot():
 
     boxes = _farm_boxes()
     orig_detect, orig_plants = main.detect_boxes, dict(main.PLANTS)
-    main.detect_boxes = lambda image, model_id: (boxes, float(2000 * 1500))
+    main.detect_boxes = lambda image, det=None: (boxes, float(2000 * 1500))
     main.PLANTS.clear()
     try:
         res = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None, mode=None))
@@ -291,7 +291,7 @@ def test_scan_labels_varieties_across_pots():
     Image.new("RGB", (1200, 1400), (20, 80, 30)).save(buf, format="JPEG")
 
     orig_detect, orig_plants, orig_feats = main.detect_boxes, dict(main.PLANTS), dict(main.FEATS)
-    main.detect_boxes = lambda image, model_id: (boxes, float(1200 * 1400))
+    main.detect_boxes = lambda image, det=None: (boxes, float(1200 * 1400))
     main.PLANTS.clear(); main.FEATS.clear()
     try:
         res = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None, mode=None))

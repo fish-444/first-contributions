@@ -11,13 +11,45 @@
 ## 📁 폴더 구조
 ```
 alocasia-farm/
-├── main.py              ← FastAPI 백엔드 (분석·추가·제거·이름수정)
+├── main.py              ← FastAPI 백엔드 (그룹화·원근보정·자리·API)
+├── providers/           ← 탐지기 교체 지점
+│   ├── __init__.py         Detector 프로토콜 + 환경변수로 고르기
+│   ├── roboflow_workflow.py
+│   ├── roboflow_model.py
+│   ├── local_yolo.py
+│   └── demo.py
+├── start.bat / start.sh ← 더블클릭 실행
 ├── requirements.txt
 ├── README.md
 └── static/
     ├── index.html       ← 3D 온실 + 업로드 폼 + 리스트 + 모달
     ├── three.min.js     ← 3D 라이브러리 (동봉)
     └── OrbitControls.js
+```
+
+### 탐지기 갈아 끼우기
+앱의 나머지 코드는 **누가 탐지하는지 모릅니다.** 아래 하나만 지키면 됩니다.
+
+```python
+detector.detect(image) -> (boxes_px, img_area_px)
+# boxes_px: [{"cls", "conf", "x1","y1","x2","y2", "area"}]  ← 이미지 픽셀
+```
+
+`providers/` 에 파일 하나 더 넣고 `providers/__init__.py:select()` 에 분기를 추가하면
+로보플로우 없이 로컬 모델(HuggingFace·SAM 등)로 바꿀 수 있고, `main.py` 는 그대로입니다.
+
+### 좌표계
+네 가지가 섞이므로 변수 이름 뒤에 어느 것인지 붙입니다.
+
+| 접미사 | 범위 | 쓰이는 곳 |
+|---|---|---|
+| `_px` | 0~4032 | 탐지 박스, 화면 클릭 |
+| `_uv` | 0~1 | 화분 자리 저장값 (카메라와 무관) |
+| `_canvas` | 0~1000 | 여러 장을 합칠 때의 공통 도화지 |
+| `_cm` | −30~30 | 3D 배치, 조명 위치, 슬롯 중심 |
+
+```
+px ──(원근 변환)──> canvas ──(/CANVAS)──> uv ──(x_W − W/2)──> cm
 ```
 
 ## ▶️ 실행 — 더블클릭 (권장)

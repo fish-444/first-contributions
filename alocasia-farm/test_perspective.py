@@ -110,7 +110,7 @@ def _run_multi(per_image_boxes, regions, quads=None):
     n = len(per_image_boxes)
     calls = {"i": 0}
 
-    def fake_detect(image, model_id):
+    def fake_detect(image, detector=None):
         b = per_image_boxes[calls["i"]]
         calls["i"] += 1
         return b, float(1200 * 900)
