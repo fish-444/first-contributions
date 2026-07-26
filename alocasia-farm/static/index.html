@@ -84,6 +84,16 @@
     <button class="btn" id="addBtn" disabled>🌱 온실에 추가</button>
     <div id="status"></div>
   </div>
+  <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
+    <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">🏡 <b>농장 전체 사진</b>으로 한 번에</div>
+    <label class="mbtn" style="display:block;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#24382c;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
+      📸 탑뷰 사진 스캔<input type="file" id="scanFile" accept="image/*" style="display:none">
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#9fb4a6;margin-top:7px">
+      <input type="checkbox" id="scanReplace" style="accent-color:#4fa85a"> 기존 식물 지우고 새로 채우기
+    </label>
+    <div id="scanStatus" style="margin-top:6px;font-size:12px;color:#9fb4a6;min-height:1.2em"></div>
+  </div>
   <div id="mapWrap">
     <h2>🗺️ 온실 자리 지도</h2>
     <div id="map"></div>
@@ -272,6 +282,24 @@ addBtn.addEventListener('click',async()=>{
     const p=await r.json(); buildObj(p); refreshList(); await refreshSlots(); openModal(p);
     statusEl.textContent='✅ 자리 '+p.pos+' 에 '+p.name+' 추가됨'; nameEl.value=''; fileEl.value=''; chkForm();
   }catch(e){statusEl.textContent='⚠️ '+e.message; addBtn.disabled=false;}
+});
+
+// ===== 농장 전체 사진 스캔 =====
+const scanStatus=document.getElementById('scanStatus');
+document.getElementById('scanFile').addEventListener('change',async(e)=>{
+  const f=e.target.files[0]; if(!f)return;
+  scanStatus.textContent='분석 중… (여러 개체를 묶는 중)';
+  const fd=new FormData(); fd.append('file',f);
+  if(document.getElementById('scanReplace').checked) fd.append('replace','1');
+  try{
+    const r=await fetch('/api/scan',{method:'POST',body:fd});
+    if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
+    const d=await r.json();
+    await loadAll();
+    const how=d.grouped_by==='pot'?'화분 기준':'거리 기준';
+    scanStatus.textContent=`✅ ${d.count}개 개체 인식 (${how})`;
+  }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
+  e.target.value='';
 });
 
 // ===== 제거 =====

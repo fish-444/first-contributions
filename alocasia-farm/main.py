@@ -23,6 +23,7 @@
 
 import base64
 import io
+import math
 import os
 import time
 import uuid
@@ -289,14 +290,96 @@ def _stage(cls: str) -> str:
     return "mature"           # 성엽(성숙잎) — 'leaf','matureleaf','mature'
 
 
-def analyze_top(boxes: List[dict], img_area: float) -> dict:
-    """모델1: 식물의 '맨 위 잎'(광합성 주력) 크기 → 3D 온실 반영용."""
+# --------------------------------------------------------------------------- 잎 → 식물 그룹화
+# 탑뷰 사진 한 장에 여러 화분이 들어올 때, 어느 잎이 어느 식물인지 묶는다.
+GROUP_GAP = float(os.environ.get("GROUP_GAP", "0.6"))   # 잎 크기 대비 '같은 무리' 인정 거리
+
+
+def _center(b):
+    return ((b["x1"] + b["x2"]) / 2, (b["y1"] + b["y2"]) / 2)
+
+
+def _span(b):
+    """잎 박스의 대표 크기(대각선 길이)."""
+    return math.hypot(b["x2"] - b["x1"], b["y2"] - b["y1"])
+
+
+def _contains(outer, px, py) -> bool:
+    return outer["x1"] <= px <= outer["x2"] and outer["y1"] <= py <= outer["y2"]
+
+
+def group_by_pots(leaves: List[dict], pots: List[dict]) -> List[List[dict]]:
+    """화분 기준 그룹화 — 1화분 = 1식물. 잎은 자기가 속한(없으면 가장 가까운) 화분에 붙는다.
+
+    화분은 서로 겹치지 않아서 잎끼리의 거리보다 훨씬 믿을 만한 신호다.
+    """
+    groups = [[] for _ in pots]
+    for lf in leaves:
+        lx, ly = _center(lf)
+        inside = [i for i, p in enumerate(pots) if _contains(p, lx, ly)]
+        if inside:                     # 화분 박스 안에 잎 중심이 있으면 그 화분
+            best = min(inside, key=lambda i: math.dist(_center(pots[i]), (lx, ly)))
+        else:                          # 아니면 가장 가까운 화분
+            best = min(range(len(pots)), key=lambda i: math.dist(_center(pots[i]), (lx, ly)))
+        groups[best].append(lf)
+    return [g for g in groups if g]
+
+
+def group_by_distance(leaves: List[dict], gap: float = None) -> List[List[dict]]:
+    """거리 클러스터링 — 화분이 안 잡힐 때의 대비책.
+
+    잎 중심이 서로 (평균 잎 크기 x GROUP_GAP) 안쪽이거나 서로 겹치면 같은 무리로 본다.
+    캐노피가 맞닿은 개체끼리는 하나로 합쳐질 수 있다 (화분 방식이 더 정확한 이유).
+    """
+    gap = GROUP_GAP if gap is None else gap
+    n = len(leaves)
+    parent = list(range(n))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            reach = (_span(leaves[i]) + _span(leaves[j])) / 2 * gap
+            near = math.dist(_center(leaves[i]), _center(leaves[j])) <= reach
+            if near or _iou(leaves[i], leaves[j]) > 0.05:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[rj] = ri
+
+    buckets: Dict[int, List[dict]] = {}
+    for i in range(n):
+        buckets.setdefault(find(i), []).append(leaves[i])
+    return list(buckets.values())
+
+
+def group_leaves(boxes: List[dict]) -> List[List[dict]]:
+    """탐지 박스 전체 → 식물별 잎 묶음. 화분이 잡히면 화분 기준, 아니면 거리 기준."""
+    leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
+    pots = [b for b in boxes if b["cls"].lower() in NON_LEAF]
+    if not leaves:
+        return []
+    if pots:
+        return group_by_pots(leaves, pots)
+    return group_by_distance(leaves)
+
+
+def analyze_top(boxes: List[dict], img_area: float, ref_area: float = None) -> dict:
+    """모델1: 식물의 '맨 위 잎'(광합성 주력) 크기 → 3D 온실 반영용.
+
+    ref_area: 잎 크기를 재는 기준 면적. 기본은 사진 전체(=식물 1개를 찍은 사진).
+    농장 전체를 한 장에 담은 경우엔 식물 1개 몫의 면적을 넘겨야 대/중/소엽이 맞는다.
+    """
     leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     if not leaves:
         return {"top_leaf_size": "없음", "top_leaf_pct": 0.0}
+    ref = ref_area or img_area
     top = min(leaves, key=lambda b: b["y1"])          # 사진에서 가장 위쪽 잎
     # 좌표계가 어긋나도 100%를 넘지 않게 (워크플로 리사이즈 등)
-    pct = min(round(top["area"] / img_area * 100, 1), 100.0) if img_area else 0.0
+    pct = min(round(top["area"] / ref * 100, 1), 100.0) if ref else 0.0
     size = "대엽" if pct > 18 else ("중엽" if pct > 8 else "소엽")
     return {"top_leaf_size": size, "top_leaf_pct": pct}
 
@@ -397,6 +480,107 @@ async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: st
              "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
     PLANTS[pid] = plant
     return plant
+
+
+def _nearest_slot(x: float, z: float, blocked: set):
+    """3D 좌표에 가장 가까운, 아직 안 쓴 자리."""
+    free = [s for s in SLOTS if s["label"] not in blocked]
+    if not free:
+        return None
+    return min(free, key=lambda s: math.dist((s["x"], s["z"]), (x, z)))
+
+
+def _crop_thumb(image: Image.Image, group: List[dict], scale: float) -> str:
+    """식물 무리의 바운딩 박스를 잘라 썸네일로. 모달에서 그 개체만 보이게."""
+    x1 = min(b["x1"] for b in group) * scale
+    y1 = min(b["y1"] for b in group) * scale
+    x2 = max(b["x2"] for b in group) * scale
+    y2 = max(b["y2"] for b in group) * scale
+    pad = 0.06 * max(x2 - x1, y2 - y1)
+    box = (max(0, int(x1 - pad)), max(0, int(y1 - pad)),
+           min(image.width, int(x2 + pad)), min(image.height, int(y2 + pad)))
+    if box[2] <= box[0] or box[3] <= box[1]:
+        box = (0, 0, image.width, image.height)
+    crop = image.crop(box); crop.thumbnail((260, 260))
+    tb = io.BytesIO(); crop.save(tb, format="JPEG", quality=72)
+    return "data:image/jpeg;base64," + base64.b64encode(tb.getvalue()).decode()
+
+
+@app.post("/api/scan")
+async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
+    """농장 전체를 찍은 탑뷰 사진 1장 → 잎을 식물별로 묶어 여러 개체를 한 번에 등록.
+
+    사진 속 위치가 그대로 3D 온실 자리로 이어진다(사진 위쪽 = 온실 안쪽 A줄).
+    같은 자리에 이미 식물이 있으면 이름·방향을 유지한 채 상태만 갱신한다.
+    """
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "이미지 파일만 업로드할 수 있어요.")
+    raw = await file.read()
+    try:
+        image = Image.open(io.BytesIO(raw)).convert("RGB")
+    except Exception:
+        raise HTTPException(400, "이미지를 읽을 수 없어요.")
+
+    boxes, img_area = detect_boxes(image, ROBOFLOW_MODEL_TOP)
+    groups = group_leaves(boxes)
+    if not groups:
+        raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
+
+    # 박스 좌표계의 폭·높이 (워크플로가 리사이즈했어도 비율은 유지된다고 본다)
+    aspect = image.width / image.height
+    cw = math.sqrt(img_area * aspect)
+    ch = math.sqrt(img_area / aspect) if aspect else float(image.height)
+    scale = image.width / cw if cw else 1.0
+
+    if replace:
+        PLANTS.clear()
+
+    # 사진 위쪽(안쪽 줄)부터 처리해야 자리 배정이 안정적
+    groups.sort(key=lambda g: sum(_center(b)[1] for b in g) / len(g))
+    per_plant_area = img_area / len(groups)          # 식물 1개 몫 — 대/중/소엽 기준
+
+    occupied = {p["pos"] for p in PLANTS.values()}   # 기존 식물이 이미 쓰는 자리
+    claimed = set()                                  # 이번 스캔에서 배정한 자리
+    by_slot = {p["pos"]: p for p in PLANTS.values()}
+    result = []
+    for g in groups:
+        cx = sum(_center(b)[0] for b in g) / len(g)
+        cy = sum(_center(b)[1] for b in g) / len(g)
+        u = min(max(cx / cw, 0.0), 1.0) if cw else 0.5
+        v = min(max(cy / ch, 0.0), 1.0) if ch else 0.5
+        x, z = (u - 0.5) * _W, (v - 0.5) * _D
+
+        # 이미 그 근처에 등록된 식물이 있으면 그걸 갱신(이름·방향 유지)
+        existing = None
+        cand = min((p for p in by_slot.values() if p["pos"] not in claimed),
+                   key=lambda p: math.dist((p["x"], p["z"]), (x, z)), default=None)
+        if cand is not None and math.dist((cand["x"], cand["z"]), (x, z)) <= max(_CW, _CD):
+            existing = cand
+        slot = _slot_by_label(existing["pos"]) if existing else _nearest_slot(x, z, occupied | claimed)
+        if slot is None:
+            break                                    # 자리가 다 찼으면 중단
+        claimed.add(slot["label"])
+
+        metrics = {}
+        metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
+        metrics.update(analyze_metrics(g, img_area))
+        metrics["thumb"] = _crop_thumb(image, g, scale)
+
+        if existing:
+            existing.update(metrics)
+            existing["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            result.append(existing)
+        else:
+            pid = uuid.uuid4().hex[:8]
+            plant = {"id": pid, "name": f"식물 {slot['label']}", "pos": slot["label"],
+                     "x": slot["x"], "z": slot["z"], "rot": 0,
+                     "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
+            PLANTS[pid] = plant
+            by_slot[slot["label"]] = plant
+            result.append(plant)
+
+    return {"count": len(result), "grouped_by": "pot" if any(
+        b["cls"].lower() in NON_LEAF for b in boxes) else "distance", "plants": result}
 
 
 @app.post("/api/plants/{pid}/reanalyze")
