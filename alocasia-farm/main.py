@@ -969,6 +969,34 @@ def _merge_keep(old: dict, new: dict) -> tuple:
     return out, added
 
 
+def _ensure_pot_slots(result: List[dict]) -> None:
+    """지정해 둔 화분은 잎이 안 잡혀도 자리를 지킨다.
+
+    잎이 하나도 탐지되지 않은 화분은 그룹이 안 만들어져 사라졌고, 그래서 등록된
+    개체 수가 실제 화분 수보다 적게 나왔다. 빈 화분(흙만)이거나 큰 잎에 완전히
+    가린 화분이 그런 경우다. 자리는 남겨 두고 '잎 0장'으로 표시한다.
+    """
+    if not POTS:
+        return
+    by_slot = {p["pos"] for p in PLANTS.values()}
+    for pot in POTS:
+        if pot["slot"] in by_slot:
+            continue
+        slot = _slot_by_label(pot["slot"])
+        if slot is None:
+            continue
+        pid = uuid.uuid4().hex[:8]
+        plant = {"id": pid, "name": f"식물 {slot['label']}", "pos": slot["label"],
+                 "x": slot["x"], "z": slot["z"], "rot": 0,
+                 "size_class": "소품", "leaf_count": 0, "shoot_count": 0,
+                 "mature_count": 0, "old_count": 0,
+                 "top_leaf_size": "없음", "top_leaf_pct": 0.0,
+                 "overlap_count": 0, "overlap_density": 0, "empty": True,
+                 "updated": time.strftime("%Y-%m-%d %H:%M:%S")}
+        PLANTS[pid] = plant
+        result.append(plant)
+
+
 def _grouped_by(boxes: List[dict], slots: dict) -> str:
     """어떤 신호로 묶었는지 — UI 에 그대로 보여 준다."""
     if slots:
@@ -1033,6 +1061,7 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
                     existing["new_leaves"] = 0
             else:
                 existing.pop("manual", None)           # 새 탐지값으로 덮어씀
+            existing.pop("empty", None)                # 잎이 잡혔으니 빈 화분 아님
             existing.update(metrics)
             existing["updated"] = now
             FEATS[existing["id"]] = feat
@@ -1046,6 +1075,7 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
             FEATS[pid] = feat
             by_slot[slot["label"]] = plant
             result.append(plant)
+    _ensure_pot_slots(result)
     _recompute_shape_groups()
     save_state()
     return result

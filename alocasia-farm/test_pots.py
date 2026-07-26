@@ -222,6 +222,56 @@ def test_pot_refs_recover_a_tilted_shot():
         _reset()
 
 
+def test_every_marked_pot_shows_up_even_with_no_leaves():
+    """지정한 화분 수 = 등록되는 개체 수.
+
+    잎이 하나도 안 잡힌 화분(빈 화분이거나 완전히 가려짐)이 빠지면서
+    개체 수가 실제 화분 수보다 적게 나왔다.
+    """
+    _reset()
+    _set_pots([[0.25, 0.5], [0.75, 0.5], [0.4, 0.8]])     # 화분 3개
+    orig = main.detect_boxes
+    # 잎은 첫 두 화분 근처에만 잡힌다
+    main.detect_boxes = lambda im, mid: (
+        [box(300, 400, 90, 90, "mature leaf"), box(900, 400, 90, 90, "shoot")],
+        float(1200 * 800))
+    try:
+        res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
+        assert res["count"] == 3, f"화분 3개인데 개체 {res['count']}개"
+        assert sorted(p["pos"] for p in res["plants"]) == sorted(p["slot"] for p in main.POTS)
+        empties = [p for p in res["plants"] if p.get("empty")]
+        assert len(empties) == 1 and empties[0]["leaf_count"] == 0, empties
+    finally:
+        main.detect_boxes = orig
+        _reset()
+
+
+def test_empty_flag_clears_once_leaves_appear():
+    """빈 화분에 잎이 잡히면 '빈 화분' 표시가 사라져야 한다."""
+    _reset()
+    _set_pots([[0.5, 0.5]])
+    orig = main.detect_boxes
+    try:
+        main.detect_boxes = lambda im, mid: ([], float(1200 * 800))
+        try:
+            asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
+        except HTTPException:
+            pass                       # 잎이 하나도 없으면 스캔 자체는 거부됨
+        main.PLANTS.clear()
+        main._ensure_pot_slots([])     # 빈 화분 자리만 만들어 둔다
+        pid = list(main.PLANTS)[0]
+        assert main.PLANTS[pid].get("empty") is True
+
+        main.detect_boxes = lambda im, mid: (
+            [box(600, 400, 90, 90, "mature leaf")], float(1200 * 800))
+        asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode="keep"))
+        assert "empty" not in main.PLANTS[pid], main.PLANTS[pid]
+        assert main.PLANTS[pid]["leaf_count"] == 1
+    finally:
+        main.detect_boxes = orig
+        _reset()
+
+
 def test_pot_refs_need_four_points():
     _reset()
     _set_pots([[0.2, 0.2], [0.8, 0.2], [0.8, 0.8]])
