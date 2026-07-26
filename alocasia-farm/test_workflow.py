@@ -6,6 +6,9 @@
 어떤 모양으로 와도 잎 박스를 뽑아낼 수 있는지 확인한다.
 """
 
+import os
+os.environ["FARM_DB"] = ""      # 테스트는 파일에 저장하지 않는다
+
 from main import (_extract_workflow_boxes, _workflow_image_area, _workflow_urls,
                   analyze_metrics, analyze_top)
 

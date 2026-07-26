@@ -5,6 +5,9 @@
 탑뷰 사진 한 장에 여러 화분이 들어올 때, 어느 잎이 어느 식물인지 묶는 로직을 검증한다.
 """
 
+import os
+os.environ["FARM_DB"] = ""      # 테스트는 파일에 저장하지 않는다
+
 from main import (analyze_metrics, analyze_top, group_by_pots_and_shape, group_leaves,
                   leaf_features, shape_similarity, _label_shape_groups)
 

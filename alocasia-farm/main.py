@@ -95,6 +95,55 @@ SLOTS = [{"label": f"{r}{c + 1}",
          for ri, r in enumerate(_ROWS) for c in range(_COLS)]
 
 
+# --------------------------------------------------------------------------- 저장
+# 식물·화분 자리를 파일에 남긴다. 안 그러면 서버를 끌 때마다 손으로 고친 값과
+# 새 잎 기록이 통째로 날아간다. FARM_DB="" 로 두면 저장하지 않는다(테스트용).
+FARM_DB = os.environ.get("FARM_DB", "farm.db")
+
+
+def _db():
+    import sqlite3
+    con = sqlite3.connect(FARM_DB)
+    con.execute("CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT)")
+    return con
+
+
+def save_state() -> None:
+    """지금 상태를 저장. 바뀔 때마다 부른다 (개체 수가 적어 통째로 써도 싸다)."""
+    if not FARM_DB:
+        return
+    import json
+    try:
+        with _db() as con:
+            for key, val in (("plants", PLANTS), ("feats", FEATS), ("pots", POTS)):
+                con.execute(
+                    "INSERT INTO state(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, json.dumps(val, ensure_ascii=False)))
+    except Exception as e:                      # 저장이 실패해도 서비스는 계속
+        print(f"[경고] 저장 실패: {e}")
+
+
+def load_state() -> None:
+    """서버 시작 때 이전 상태를 되살린다."""
+    if not FARM_DB or not os.path.exists(FARM_DB):
+        return
+    import json
+    try:
+        with _db() as con:
+            rows = dict(con.execute("SELECT key, value FROM state").fetchall())
+        PLANTS.update(json.loads(rows.get("plants", "{}")))
+        FEATS.update(json.loads(rows.get("feats", "{}")))
+        POTS.extend(json.loads(rows.get("pots", "[]")))
+        if PLANTS or POTS:
+            print(f"[저장소] 식물 {len(PLANTS)}개 · 화분자리 {len(POTS)}개 불러옴 ({FARM_DB})")
+    except Exception as e:
+        print(f"[경고] 불러오기 실패({e}) — 빈 상태로 시작합니다")
+
+
+load_state()
+
+
 def _slot_by_label(label: str):
     return next((s for s in SLOTS if s["label"] == label), None)
 
@@ -778,12 +827,14 @@ async def set_pots(points: str = Form(None), points_px: str = Form(None),
             raise HTTPException(400, "자리가 모자라요. 화분 수를 줄여 주세요.")
         taken.add(slot["label"])
         POTS.append({"i": i, "u": round(u, 4), "v": round(v, 4), "slot": slot["label"]})
+    save_state()
     return {"count": len(POTS), "pots": POTS}
 
 
 @app.delete("/api/pots")
 def clear_pots():
     POTS.clear()
+    save_state()
     return {"ok": True}
 
 
@@ -807,6 +858,7 @@ async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: st
     PLANTS[pid] = plant
     FEATS[pid] = feat
     _recompute_shape_groups()
+    save_state()
     return plant
 
 
@@ -995,6 +1047,7 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
             by_slot[slot["label"]] = plant
             result.append(plant)
     _recompute_shape_groups()
+    save_state()
     return result
 
 
@@ -1148,6 +1201,7 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
     PLANTS[pid]["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     FEATS[pid] = feat
     _recompute_shape_groups()
+    save_state()
     return PLANTS[pid]
 
 
@@ -1190,6 +1244,7 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
                               ("shoot_count", "mature_count", "old_count"))
         p["manual"] = True
         p["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    save_state()
     return p
 
 
@@ -1201,6 +1256,7 @@ def remove_plant(pid: str):
     del PLANTS[pid]
     FEATS.pop(pid, None)
     _recompute_shape_groups()
+    save_state()
     return {"ok": True, "id": pid}
 
 

@@ -14,6 +14,9 @@ import math
 from PIL import Image
 from fastapi import HTTPException
 
+import os
+os.environ["FARM_DB"] = ""      # 테스트는 파일에 저장하지 않는다
+
 import main
 from main import apply_h, homography, warp_box
 
