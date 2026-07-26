@@ -119,7 +119,7 @@
       ☀️ <b style="color:#8fe36a">광합성 잎 (모델1 · 3D 반영)</b> — 맨 위 잎 <b id="mTopSize">–</b> <span id="mTopPct" style="color:#9fb4a6"></span>
     </div>
     <div style="font-size:11px;color:#9fb4a6;margin-bottom:6px">개체 특징 (모델2 · 잎 단계)</div>
-    <div class="chips"><span class="chip" id="mSize"></span></div>
+    <div class="chips"><span class="chip" id="mSize"></span><span class="chip" id="mShape" style="display:none"></span></div>
     <div class="grid">
       <div class="stat"><div class="k">🌱 새순 Shoot</div><div class="v" id="mShootN">–</div></div>
       <div class="stat"><div class="k">🍃 성엽 Mature</div><div class="v" id="mMatN">–</div></div>
@@ -207,6 +207,13 @@ function nameSprite(text){const cv=document.createElement('canvas');cv.width=320
   const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),depthTest:false}));
   s.scale.set(13,3.3,1);return s;}
 
+// 모양 그룹(A,B,C…) 딱지 색 — 같은 품종끼리 한눈에 보이게
+const SHAPE_COLS=['#3f7bd6','#b3529f','#c07a2a','#2f8f86','#8a5cd6','#a8452f'];
+function shapeColor(tag){
+  const i=(tag&&tag.length===1)?tag.charCodeAt(0)-65:parseInt(String(tag).slice(1),10)||0;
+  return SHAPE_COLS[((i%SHAPE_COLS.length)+SHAPE_COLS.length)%SHAPE_COLS.length];
+}
+
 // ===== 식물 오브젝트 관리 =====
 const objs={}; // id -> {group,data,label}
 const ray=new THREE.Raycaster(),ptr=new THREE.Vector2();
@@ -240,8 +247,11 @@ function refreshList(){
   items.sort((a,b)=>(a.pos||'').localeCompare(b.pos||''));
   items.forEach(p=>{
     const el=document.createElement('div'); el.className='item';
-    el.innerHTML=`<span class="nm"></span><span class="sz"></span><span class="x">×</span>`;
+    el.innerHTML=`<span class="nm"></span><span class="sg"></span><span class="sz"></span><span class="x">×</span>`;
     el.querySelector('.nm').textContent=(p.pos?p.pos+' · ':'')+p.name; el.querySelector('.sz').textContent=p.size_class;
+    const sg=el.querySelector('.sg');
+    if(p.shape_group){ sg.textContent=p.shape_group; sg.style.cssText=
+      `font-size:10px;font-weight:800;color:#fff;background:${shapeColor(p.shape_group)};border-radius:20px;padding:1px 7px;flex:none`; }
     el.addEventListener('click',ev=>{ if(ev.target.classList.contains('x')){delPlant(p.id);ev.stopPropagation();return;} openModal(p); });
     list.appendChild(el);
   });
@@ -296,8 +306,8 @@ document.getElementById('scanFile').addEventListener('change',async(e)=>{
     if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
     const d=await r.json();
     await loadAll();
-    const how=d.grouped_by==='pot'?'화분 기준':'거리 기준';
-    scanStatus.textContent=`✅ ${d.count}개 개체 인식 (${how})`;
+    const how=d.grouped_by==='pot'?'화분+생김새':'거리+생김새';
+    scanStatus.textContent=`✅ ${d.count}개 개체 · 모양 ${d.shape_groups}종 (${how})`;
   }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
   e.target.value='';
 });
@@ -329,6 +339,10 @@ function openModal(p){
   document.getElementById('mTopSize').textContent=p.top_leaf_size||'–';
   document.getElementById('mTopPct').textContent=(p.top_leaf_pct?('· 화면의 '+p.top_leaf_pct+'%'):'');
   const sz=document.getElementById('mSize'); sz.textContent=p.size_class; sz.style.background='#2e7d32';
+  const sh=document.getElementById('mShape');
+  if(p.shape_group){ sh.style.display='inline-block'; sh.style.background=shapeColor(p.shape_group);
+    sh.textContent='모양 '+p.shape_group+(p.shape_group_size>1?` · 같은 모양 ${p.shape_group_size}개`:' · 단독'); }
+  else sh.style.display='none';
   document.getElementById('mShootN').textContent=(p.shoot_count!=null?p.shoot_count:'–');
   document.getElementById('mMatN').textContent=(p.mature_count!=null?p.mature_count:'–');
   document.getElementById('mOldN').textContent=(p.old_count!=null?p.old_count:'–');

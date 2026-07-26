@@ -78,6 +78,7 @@ app = FastAPI(title="Alocasia Smart Farm")
 
 # --------------------------------------------------------------------------- 상태
 PLANTS: Dict[str, dict] = {}          # id -> 식물 상태
+FEATS: Dict[str, dict] = {}           # id -> 생김새 특징(모양 그룹 계산용, 응답에는 안 나감)
 # 번호 붙은 자리(슬롯): 온실 60x40cm 을 촘촘한 격자로 분할
 # 기본 A1~E10 (5줄 x 10칸 = 50자리)
 _ROWS = ["A", "B", "C", "D", "E"]
@@ -308,28 +309,149 @@ def _contains(outer, px, py) -> bool:
     return outer["x1"] <= px <= outer["x2"] and outer["y1"] <= py <= outer["y2"]
 
 
-def group_by_pots(leaves: List[dict], pots: List[dict]) -> List[List[dict]]:
-    """화분 기준 그룹화 — 1화분 = 1식물. 잎은 자기가 속한(없으면 가장 가까운) 화분에 붙는다.
+# --- 잎 생김새(모양·색) 특징 ------------------------------------------------
+# 품종마다 잎 모양·무늬·색이 뚜렷이 달라서, 같은 식물의 잎끼리는 서로 닮는다.
+# 외부 API 없이 박스 비율 + 잘라낸 잎의 색으로 계산한다.
+SHAPE_SIM = float(os.environ.get("SHAPE_SIM", "0.55"))   # 같은 모양으로 볼 최소 유사도(0~1)
 
-    화분은 서로 겹치지 않아서 잎끼리의 거리보다 훨씬 믿을 만한 신호다.
+
+def leaf_features(image: Image.Image, box: dict, scale: float = 1.0) -> dict:
+    """잎 하나의 생김새 특징. 이미지가 없으면 박스 비율만으로 만든다."""
+    w, h = box["x2"] - box["x1"], box["y2"] - box["y1"]
+    if w <= 0 or h <= 0:
+        return {"aspect": 1.0, "size": 1.0, "h": 0.0, "s": 0.0, "v": 0.0, "has_color": False}
+    # 잎이 어느 방향으로 눕든 같은 값이 나오도록 긴 변/짧은 변
+    feat = {"aspect": max(w, h) / min(w, h), "size": math.sqrt(w * h),
+            "h": 0.0, "s": 0.0, "v": 0.0, "has_color": False}
+    if image is None:
+        return feat
+    # 박스 가운데 60%만 봐서 가장자리 배경이 섞이는 걸 줄인다
+    cx, cy = _center(box)
+    hw, hh = w * 0.3, h * 0.3
+    crop_box = (max(0, int((cx - hw) * scale)), max(0, int((cy - hh) * scale)),
+                min(image.width, int((cx + hw) * scale)), min(image.height, int((cy + hh) * scale)))
+    if crop_box[2] <= crop_box[0] or crop_box[3] <= crop_box[1]:
+        return feat
+    px = list(image.crop(crop_box).resize((8, 8)).convert("HSV").getdata())
+    if not px:
+        return feat
+    n = len(px)
+    feat.update({"h": sum(p[0] for p in px) / n, "s": sum(p[1] for p in px) / n,
+                 "v": sum(p[2] for p in px) / n, "has_color": True})
+    return feat
+
+
+def shape_similarity(a: dict, b: dict, size_ref: float = None) -> float:
+    """잎 두 장이 얼마나 닮았는지 0(전혀)~1(똑같이).
+
+    모양(긴변/짧은변 비율)·크기·색을 함께 본다. 색 정보가 없으면 모양·크기만.
     """
-    groups = [[] for _ in pots]
-    for lf in leaves:
+    d = (abs(a["aspect"] - b["aspect"]) / 1.2) ** 2
+    ratio = a["size"] / b["size"] if b["size"] else 1.0
+    d += (math.log(max(ratio, 1e-6)) / 0.9) ** 2
+    if a.get("has_color") and b.get("has_color"):
+        dh = abs(a["h"] - b["h"]); dh = min(dh, 256 - dh)      # 색상은 원형이라 최단거리
+        d += (dh / 26.0) ** 2 + (abs(a["s"] - b["s"]) / 70.0) ** 2 + (abs(a["v"] - b["v"]) / 70.0) ** 2
+    return math.exp(-math.sqrt(d))
+
+
+def _label_shape_groups(items: List[dict], feats: List[dict]) -> None:
+    """식물들을 생김새로 묶어 '모양 그룹' 딱지(A, B, C…)를 붙인다.
+
+    같은 품종이면 다른 화분에 있어도 같은 딱지가 붙는다.
+    """
+    n = len(items)
+    parent = list(range(n))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if shape_similarity(feats[i], feats[j]) >= SHAPE_SIM:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[rj] = ri
+
+    # 큰 무리부터 A, B, C … 순서로
+    buckets: Dict[int, List[int]] = {}
+    for i in range(n):
+        buckets.setdefault(find(i), []).append(i)
+    order = sorted(buckets.values(), key=len, reverse=True)
+    for gi, members in enumerate(order):
+        tag = chr(ord("A") + gi) if gi < 26 else f"G{gi + 1}"
+        for i in members:
+            items[i]["shape_group"] = tag
+            items[i]["shape_group_size"] = len(members)
+
+
+def _mean_features(feats: List[dict]) -> dict:
+    """잎 여러 장의 특징 평균 = 그 식물의 생김새."""
+    if not feats:
+        return {"aspect": 1.0, "size": 1.0, "h": 0.0, "s": 0.0, "v": 0.0, "has_color": False}
+    n = len(feats)
+    colored = [f for f in feats if f.get("has_color")]
+    out = {k: sum(f[k] for f in feats) / n for k in ("aspect", "size")}
+    if colored:
+        m = len(colored)
+        out.update({k: sum(f[k] for f in colored) / m for k in ("h", "s", "v")})
+        out["has_color"] = True
+    else:
+        out.update({"h": 0.0, "s": 0.0, "v": 0.0, "has_color": False})
+    return out
+
+
+def group_by_pots_and_shape(leaves: List[dict], pots: List[dict], feats: List[dict]) -> List[List[dict]]:
+    """화분 + 생김새를 함께 쓰는 그룹화.
+
+    · 화분 박스 '안'에 있는 잎 → 그 화분으로 확정 (씨앗)
+    · 화분 밖으로 뻗은 잎 → 가까움 + 씨앗 잎과의 닮은 정도를 함께 보고 배정
+
+    알로카시아는 잎이 화분 밖으로 멀리 뻗어서, 거리만 보면 옆 화분에 잘못 붙는다.
+    이때 '같은 식물 잎끼리는 닮았다'는 성질이 교정해 준다.
+    """
+    groups: List[List[dict]] = [[] for _ in pots]
+    seed_feats: List[List[dict]] = [[] for _ in pots]
+    strays = []
+    for idx, lf in enumerate(leaves):
         lx, ly = _center(lf)
         inside = [i for i, p in enumerate(pots) if _contains(p, lx, ly)]
-        if inside:                     # 화분 박스 안에 잎 중심이 있으면 그 화분
+        if inside:
             best = min(inside, key=lambda i: math.dist(_center(pots[i]), (lx, ly)))
-        else:                          # 아니면 가장 가까운 화분
-            best = min(range(len(pots)), key=lambda i: math.dist(_center(pots[i]), (lx, ly)))
+            groups[best].append(lf)
+            seed_feats[best].append(feats[idx])
+        else:
+            strays.append(idx)
+
+    ref = sum(_span(p) for p in pots) / len(pots)      # 화분 크기 = 거리 기준자
+    for idx in strays:
+        lf, lx_ly = leaves[idx], _center(leaves[idx])
+
+        def score(i):
+            dist = math.dist(_center(pots[i]), lx_ly)
+            near = ref / (ref + dist)                   # 0~1, 가까울수록 큼
+            if seed_feats[i]:
+                sim = shape_similarity(feats[idx], _mean_features(seed_feats[i]))
+            else:
+                sim = 0.5                               # 씨앗이 없으면 중립
+            # 곱으로 본다 — 더하면 '아주 가깝다'가 '전혀 안 닮았다'를 덮어써서
+            # 멀리 뻗은 잎이 옆 화분에 붙어 버린다. 곱이면 둘 다 맞아야 이긴다.
+            return near * sim
+
+        best = max(range(len(pots)), key=score)
         groups[best].append(lf)
     return [g for g in groups if g]
 
 
-def group_by_distance(leaves: List[dict], gap: float = None) -> List[List[dict]]:
-    """거리 클러스터링 — 화분이 안 잡힐 때의 대비책.
+def group_by_distance_and_shape(leaves: List[dict], feats: List[dict],
+                                gap: float = None) -> List[List[dict]]:
+    """화분이 없을 때: 거리 + 생김새를 함께 본다.
 
-    잎 중심이 서로 (평균 잎 크기 x GROUP_GAP) 안쪽이거나 서로 겹치면 같은 무리로 본다.
-    캐노피가 맞닿은 개체끼리는 하나로 합쳐질 수 있다 (화분 방식이 더 정확한 이유).
+    거리만 쓰면 뻗은 잎이 끊겨 과분할되는데, '닮았으면 조금 멀어도 같은 식물'로
+    이어 줘서 이를 줄인다. 대신 안 닮은 잎끼리는 가까워도 잇지 않는다.
     """
     gap = GROUP_GAP if gap is None else gap
     n = len(leaves)
@@ -343,9 +465,14 @@ def group_by_distance(leaves: List[dict], gap: float = None) -> List[List[dict]]
 
     for i in range(n):
         for j in range(i + 1, n):
-            reach = (_span(leaves[i]) + _span(leaves[j])) / 2 * gap
-            near = math.dist(_center(leaves[i]), _center(leaves[j])) <= reach
-            if near or _iou(leaves[i], leaves[j]) > 0.05:
+            base = (_span(leaves[i]) + _span(leaves[j])) / 2 * gap
+            dist = math.dist(_center(leaves[i]), _center(leaves[j]))
+            sim = shape_similarity(feats[i], feats[j])
+            close = dist <= base or _iou(leaves[i], leaves[j]) > 0.05
+            # 가깝다는 것만으로는 부족하다 — 겹친 잎이 옆 식물 것일 수 있어서
+            # 최소한의 생김새 일치를 요구하고, 확실히 닮았으면 더 멀리까지 이어 준다.
+            link = (close and sim >= SHAPE_SIM * 0.6) or (sim >= SHAPE_SIM and dist <= base * 4)
+            if link:
                 ri, rj = find(i), find(j)
                 if ri != rj:
                     parent[rj] = ri
@@ -356,15 +483,21 @@ def group_by_distance(leaves: List[dict], gap: float = None) -> List[List[dict]]
     return list(buckets.values())
 
 
-def group_leaves(boxes: List[dict]) -> List[List[dict]]:
-    """탐지 박스 전체 → 식물별 잎 묶음. 화분이 잡히면 화분 기준, 아니면 거리 기준."""
+def group_leaves(boxes: List[dict], image: Image.Image = None,
+                 scale: float = 1.0) -> List[List[dict]]:
+    """탐지 박스 전체 → 식물별 잎 묶음.
+
+    화분이 잡히면 화분+생김새, 아니면 거리+생김새로 묶는다.
+    image 를 주면 잎을 잘라 색까지 보고, 없으면 박스 비율·크기만으로 판단한다.
+    """
     leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     pots = [b for b in boxes if b["cls"].lower() in NON_LEAF]
     if not leaves:
         return []
+    feats = [leaf_features(image, b, scale) for b in leaves]
     if pots:
-        return group_by_pots(leaves, pots)
-    return group_by_distance(leaves)
+        return group_by_pots_and_shape(leaves, pots, feats)
+    return group_by_distance_and_shape(leaves, feats)
 
 
 def analyze_top(boxes: List[dict], img_area: float, ref_area: float = None) -> dict:
@@ -418,6 +551,13 @@ def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
             "overlap_density": overlap_density}
 
 
+def _recompute_shape_groups() -> None:
+    """등록된 식물 전체를 생김새로 다시 묶어 '모양 그룹' 딱지를 갱신한다."""
+    ids = [pid for pid in PLANTS if pid in FEATS]
+    if ids:
+        _label_shape_groups([PLANTS[pid] for pid in ids], [FEATS[pid] for pid in ids])
+
+
 def _analyze_file(raw: bytes) -> dict:
     try:
         image = Image.open(io.BytesIO(raw)).convert("RGB")
@@ -439,7 +579,12 @@ def _analyze_file(raw: bytes) -> dict:
     thumb = image.copy(); thumb.thumbnail((260, 260))
     tb = io.BytesIO(); thumb.save(tb, format="JPEG", quality=72)
     metrics["thumb"] = "data:image/jpeg;base64," + base64.b64encode(tb.getvalue()).decode()
-    return metrics
+
+    # 이 식물의 생김새 = 잎들의 특징 평균 (모양 그룹 딱지 계산에 쓰임)
+    leaves = [b for b in boxes_top if b["cls"].lower() not in NON_LEAF]
+    scale = image.width / math.sqrt(img_area * (image.width / image.height)) if img_area else 1.0
+    feat = _mean_features([leaf_features(image, b, scale) for b in leaves])
+    return metrics, feat
 
 
 # --------------------------------------------------------------------------- 엔드포인트
@@ -473,12 +618,14 @@ async def add_plant(name: str = Form(...), file: UploadFile = File(...), pos: st
         raise HTTPException(400, "빈 자리가 없어요. 식물을 제거해 자리를 비워 주세요.")
 
     raw = await file.read()
-    metrics = _analyze_file(raw)
+    metrics, feat = _analyze_file(raw)
 
     pid = uuid.uuid4().hex[:8]
     plant = {"id": pid, "name": name, "pos": slot["label"], "x": slot["x"], "z": slot["z"], "rot": 0,
              "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
     PLANTS[pid] = plant
+    FEATS[pid] = feat
+    _recompute_shape_groups()
     return plant
 
 
@@ -522,9 +669,6 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
         raise HTTPException(400, "이미지를 읽을 수 없어요.")
 
     boxes, img_area = detect_boxes(image, ROBOFLOW_MODEL_TOP)
-    groups = group_leaves(boxes)
-    if not groups:
-        raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
 
     # 박스 좌표계의 폭·높이 (워크플로가 리사이즈했어도 비율은 유지된다고 본다)
     aspect = image.width / image.height
@@ -532,8 +676,13 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
     ch = math.sqrt(img_area / aspect) if aspect else float(image.height)
     scale = image.width / cw if cw else 1.0
 
+    groups = group_leaves(boxes, image, scale)
+    if not groups:
+        raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
+
     if replace:
         PLANTS.clear()
+        FEATS.clear()
 
     # 사진 위쪽(안쪽 줄)부터 처리해야 자리 배정이 안정적
     groups.sort(key=lambda g: sum(_center(b)[1] for b in g) / len(g))
@@ -565,10 +714,12 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
         metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
         metrics.update(analyze_metrics(g, img_area))
         metrics["thumb"] = _crop_thumb(image, g, scale)
+        feat = _mean_features([leaf_features(image, b, scale) for b in g])
 
         if existing:
             existing.update(metrics)
             existing["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            FEATS[existing["id"]] = feat
             result.append(existing)
         else:
             pid = uuid.uuid4().hex[:8]
@@ -576,11 +727,15 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None)):
                      "x": slot["x"], "z": slot["z"], "rot": 0,
                      "updated": time.strftime("%Y-%m-%d %H:%M:%S"), **metrics}
             PLANTS[pid] = plant
+            FEATS[pid] = feat
             by_slot[slot["label"]] = plant
             result.append(plant)
 
+    _recompute_shape_groups()                 # 생김새가 닮은 개체끼리 A/B/C 딱지
+    shapes = sorted({p.get("shape_group") for p in result if p.get("shape_group")})
     return {"count": len(result), "grouped_by": "pot" if any(
-        b["cls"].lower() in NON_LEAF for b in boxes) else "distance", "plants": result}
+        b["cls"].lower() in NON_LEAF for b in boxes) else "distance",
+        "shape_groups": len(shapes), "plants": result}
 
 
 @app.post("/api/plants/{pid}/reanalyze")
@@ -589,9 +744,11 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
     raw = await file.read()
-    metrics = _analyze_file(raw)
+    metrics, feat = _analyze_file(raw)
     PLANTS[pid].update(metrics)
     PLANTS[pid]["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    FEATS[pid] = feat
+    _recompute_shape_groups()
     return PLANTS[pid]
 
 
@@ -613,6 +770,8 @@ def remove_plant(pid: str):
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
     del PLANTS[pid]
+    FEATS.pop(pid, None)
+    _recompute_shape_groups()
     return {"ok": True, "id": pid}
 
 
