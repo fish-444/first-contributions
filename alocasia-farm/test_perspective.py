@@ -122,7 +122,8 @@ def _run_multi(per_image_boxes, regions, quads=None):
     try:
         return asyncio.run(main.scan_multi(
             files=[_Upload(_jpeg()) for _ in range(n)],
-            corners=json.dumps(quads), regions=json.dumps(regions), replace=None))
+            corners=json.dumps(quads), regions=json.dumps(regions),
+            replace=None, pot_refs=None))
     finally:
         main.detect_boxes = orig_detect
         main.PLANTS.clear(); main.PLANTS.update(orig_plants)
@@ -172,7 +173,7 @@ def test_corner_count_must_match_photo_count():
     try:
         asyncio.run(main.scan_multi(files=[_Upload(_jpeg())],
                                     corners=json.dumps([[[0, 0], [1, 0], [1, 1], [0, 1]]] * 2),
-                                    regions=None, replace=None))
+                                    regions=None, replace=None, pot_refs=None))
     except HTTPException as e:
         assert e.status_code == 400 and "모서리" in e.detail
     else:
@@ -182,7 +183,7 @@ def test_corner_count_must_match_photo_count():
 def test_bad_corner_json_rejected():
     try:
         asyncio.run(main.scan_multi(files=[_Upload(_jpeg())], corners="{망가진",
-                                    regions=None, replace=None))
+                                    regions=None, replace=None, pot_refs=None))
     except HTTPException as e:
         assert e.status_code == 400
     else:

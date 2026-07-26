@@ -103,6 +103,12 @@
     <div id="potInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px">
       화분 위치를 한 번 찍어 두면 pot 라벨링 없이 개체가 갈립니다
     </div>
+    <label class="mbtn" id="refBtnWrap" style="display:none;margin-top:7px;padding:10px;border-radius:9px;border:1px solid rgba(180,150,90,.35);background:#2b2718;color:#e8ddc0;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
+      🎯 화분 기준으로 스캔<input type="file" id="refFile" accept="image/*" multiple style="display:none">
+    </label>
+    <div id="refHint" style="display:none;font-size:10.5px;color:#6f8073;margin-top:5px">
+      모서리가 안 보일 때 · 아는 화분 4개 이상만 찍으면 됩니다
+    </div>
   </div>
   <div id="mapWrap">
     <h2>🗺️ 온실 자리 지도</h2>
@@ -162,8 +168,14 @@
     <img id="calImg" style="max-width:88vw;max-height:62vh;display:block;border-radius:8px">
     <canvas id="calCv" style="position:absolute;inset:0;cursor:crosshair"></canvas>
   </div>
+  <div id="refPick" style="display:none;gap:8px;align-items:center;background:#1d2b23;padding:8px 12px;border-radius:9px">
+    <span style="color:#cfe0d4;font-size:12px">방금 찍은 곳은 몇 번 화분인가요?</span>
+    <select id="refSel" style="background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:7px;padding:6px"></select>
+    <button class="mbtn" id="refOk" style="padding:6px 12px;background:#2e7d32;color:#fff;border:none">확인</button>
+    <button class="mbtn" id="refSkip" style="padding:6px 12px">취소</button>
+  </div>
   <div style="display:flex;gap:8px;align-items:center">
-    <label style="color:#cfe0d4;font-size:12px">이 사진이 덮는 구역
+    <label id="regionLbl" style="color:#cfe0d4;font-size:12px">이 사진이 덮는 구역
       <select id="calRegion" style="margin-left:6px;background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:7px;padding:6px">
         <option value="0,0,1,1">전체</option>
         <option value="0,0,0.55,1">왼쪽 절반</option>
@@ -356,10 +368,33 @@ document.getElementById('scanFile').addEventListener('change',async(e)=>{
 // ===== 여러 장 + 원근 보정 =====
 // 사진을 이어 붙이지 않는다. 사진마다 네 모서리로 원근 변환을 구해
 // '탐지 좌표'만 하나의 선반 좌표계로 옮기고 겹침 중복을 지운다.
-const CAL={files:[],i:0,quads:[],regions:[],pts:[],pots:[],mode:'multi',url:null};
+const CAL={files:[],i:0,quads:[],regions:[],pts:[],pots:[],refs:[],allRefs:[],
+           potList:[],pending:null,mode:'multi',url:null};
 const calWrap=document.getElementById('calWrap'),calImg=document.getElementById('calImg'),
       calCv=document.getElementById('calCv'),calNext=document.getElementById('calNext');
 const DEF_REGION=['0,0,1,1','0,0,0.55,1','0.45,0,1,1','0,0,1,0.55','0,0.45,1,1'];
+
+// 기준 화분 지정 확인/취소
+document.getElementById('refOk').addEventListener('click',()=>{
+  const sel=document.getElementById('refSel'); if(!CAL.pending||!sel.value)return;
+  const i=+sel.value, pot=CAL.potList.find(p=>p.i===i);
+  CAL.refs.push({...CAL.pending,i,label:pot.slot});
+  CAL.pending=null; document.getElementById('refPick').style.display='none';
+  drawCal(); updCalStep(); calNext.disabled=CAL.refs.length<4;
+});
+document.getElementById('refSkip').addEventListener('click',()=>{
+  CAL.pending=null; document.getElementById('refPick').style.display='none'; drawCal();
+});
+
+// 화분 기준으로 스캔: 아는 화분 4개 이상만 찍으면 모서리가 없어도 원근이 펴진다
+document.getElementById('refFile').addEventListener('change',async e=>{
+  const fs=[...e.target.files]; e.target.value='';
+  if(!fs.length)return;
+  const d=await(await fetch('/api/pots')).json();
+  if(!d.count){ scanStatus.textContent='⚠️ 먼저 🪴 화분 자리를 지정해 주세요'; return; }
+  CAL.potList=d.pots; CAL.mode='ref'; CAL.files=fs; CAL.i=0; CAL.allRefs=[];
+  calWrap.style.display='flex'; showCal();
+});
 
 // 화분 자리 지정: 네 모서리 → 화분 중심들 (한 번만 해 두면 계속 재사용)
 document.getElementById('potFile').addEventListener('change',e=>{
@@ -373,13 +408,20 @@ function bindPotClear(){
   a.addEventListener('click',async ev=>{ ev.preventDefault();
     await fetch('/api/pots',{method:'DELETE'});
     document.getElementById('potInfo').textContent='화분 자리를 지웠습니다. 다시 지정할 수 있어요.';
+    showRefBtn(false);
   });
 }
 async function loadPots(){
   try{ const d=await(await fetch('/api/pots')).json();
     if(d.count){ document.getElementById('potInfo').innerHTML=
       `✅ 화분 ${d.count}개 지정됨 <a href="#" id="potClear" style="color:#c98">지우기</a>`; bindPotClear(); }
+    showRefBtn(d.count>=4);
   }catch(e){}
+}
+// 화분이 4개 이상 지정돼 있어야 '화분 기준 보정'을 쓸 수 있다
+function showRefBtn(on){
+  document.getElementById('refBtnWrap').style.display=on?'block':'none';
+  document.getElementById('refHint').style.display=on?'block':'none';
 }
 
 document.getElementById('multiFile').addEventListener('change',e=>{
@@ -391,12 +433,14 @@ document.getElementById('multiFile').addEventListener('change',e=>{
 });
 
 function showCal(){
-  CAL.pts=[]; CAL.pots=[]; calNext.disabled=true;
+  CAL.pts=[]; CAL.pots=[]; CAL.refs=[]; CAL.pending=null; calNext.disabled=true;
+  document.getElementById('refPick').style.display='none';
   const f=CAL.files[CAL.i];
-  document.getElementById('calRegion').parentElement.style.display=(CAL.mode==='pot')?'none':'';
-  calNext.textContent=(CAL.mode==='pot')?'저장':'다음 →';
-  document.getElementById('calTitle').textContent=(CAL.mode==='pot')
-    ? '🪴 화분 자리 지정'
+  document.getElementById('regionLbl').style.display=(CAL.mode==='multi')?'':'none';
+  calNext.textContent=(CAL.mode==='pot')?'저장':(CAL.i===CAL.files.length-1?'완료':'다음 →');
+  document.getElementById('calTitle').textContent=
+    CAL.mode==='pot' ? '🪴 화분 자리 지정'
+    : CAL.mode==='ref' ? `🎯 화분 기준 — 사진 ${CAL.i+1} / ${CAL.files.length}`
     : `사진 ${CAL.i+1} / ${CAL.files.length} — ${f.name}`;
   // 2장이면 좌/우, 3장 이상이면 전체를 기본값으로 (사용자가 바꿀 수 있음)
   const sel=document.getElementById('calRegion');
@@ -411,6 +455,12 @@ function showCal(){
 function updCalStep(){
   const names=['좌상','우상','우하','좌하'];
   const el=document.getElementById('calStep');
+  if(CAL.mode==='ref'){
+    el.textContent=CAL.refs.length<4
+      ? `아는 화분을 클릭하세요 — ${CAL.refs.length}/4 (많이 찍을수록 정확해집니다)`
+      : `기준점 ${CAL.refs.length}개 — 더 찍어도 되고, [${calNext.textContent}] 눌러도 됩니다`;
+    return;
+  }
   if(CAL.pts.length<4){ el.textContent=`${CAL.pts.length+1}번째: ${names[CAL.pts.length]} 모서리`; return; }
   el.textContent=(CAL.mode==='pot')
     ? `이제 화분 중심을 하나씩 클릭 — 현재 ${CAL.pots.length}개 (빈 화분도 찍어 두면 나중에 심었을 때 바로 잡힙니다)`
@@ -428,12 +478,27 @@ function drawCal(){
   CAL.pots.forEach((p,i)=>{ g.fillStyle='#e8c96a'; g.beginPath(); g.arc(p.dx,p.dy,11,0,7); g.fill();
     g.fillStyle='#2b2718'; g.font='bold 12px sans-serif'; g.textAlign='center'; g.textBaseline='middle';
     g.fillText(i+1,p.dx,p.dy); });
+  CAL.refs.forEach(p=>{ g.fillStyle='#e8a64a'; g.beginPath(); g.arc(p.dx,p.dy,13,0,7); g.fill();
+    g.fillStyle='#2b2718'; g.font='bold 11px sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(p.label,p.dx,p.dy); });
+  if(CAL.pending){ g.strokeStyle='#e8a64a'; g.lineWidth=3; g.beginPath();
+    g.arc(CAL.pending.dx,CAL.pending.dy,13,0,7); g.stroke(); }
 }
 calCv.addEventListener('click',e=>{
   const r=calCv.getBoundingClientRect();
   const dx=e.clientX-r.left, dy=e.clientY-r.top;
   // 화면 좌표 → 원본 픽셀 좌표 (백엔드는 원본 기준으로 받는다)
   const sx=calImg.naturalWidth/calImg.clientWidth, sy=calImg.naturalHeight/calImg.clientHeight;
+  if(CAL.mode==='ref'){
+    // 찍은 지점이 몇 번 화분인지 물어본다
+    CAL.pending={dx,dy,x:dx*sx,y:dy*sy}; drawCal();
+    const sel=document.getElementById('refSel'); sel.innerHTML='';
+    const used=new Set(CAL.refs.map(r=>r.i));
+    CAL.potList.filter(p=>!used.has(p.i)).forEach(p=>{
+      const o=document.createElement('option'); o.value=p.i; o.textContent='화분 '+p.slot; sel.appendChild(o); });
+    document.getElementById('refPick').style.display=sel.options.length?'flex':'none';
+    return;
+  }
   if(CAL.mode==='pot'&&CAL.pts.length>=4){ CAL.pots.push({dx,dy,x:dx*sx,y:dy*sy});
     drawCal(); updCalStep(); calNext.disabled=CAL.pots.length<1; return; }
   if(CAL.pts.length>=4)return;
@@ -442,7 +507,9 @@ calCv.addEventListener('click',e=>{
   calNext.disabled=(CAL.mode==='pot')?true:CAL.pts.length<4;
 });
 document.getElementById('calUndo').addEventListener('click',()=>{
-  if(CAL.mode==='pot'&&CAL.pots.length){ CAL.pots.pop(); calNext.disabled=!CAL.pots.length; }
+  CAL.pending=null; document.getElementById('refPick').style.display='none';
+  if(CAL.mode==='ref'){ CAL.refs.pop(); calNext.disabled=CAL.refs.length<4; }
+  else if(CAL.mode==='pot'&&CAL.pots.length){ CAL.pots.pop(); calNext.disabled=!CAL.pots.length; }
   else { CAL.pts=[]; CAL.pots=[]; calNext.disabled=true; }
   drawCal(); updCalStep();
 });
@@ -450,6 +517,27 @@ document.getElementById('calCancel').addEventListener('click',()=>{
   calWrap.style.display='none'; if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;} CAL.files=[];
 });
 calNext.addEventListener('click',async()=>{
+  if(CAL.mode==='ref'){
+    CAL.allRefs.push(CAL.refs.map(r=>[r.i,r.x,r.y]));
+    CAL.i++;
+    if(CAL.i<CAL.files.length){ showCal(); return; }
+    calWrap.style.display='none';
+    if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;}
+    scanStatus.textContent=`분석 중… (화분 기준 보정 ${CAL.files.length}장)`;
+    const fd=new FormData();
+    CAL.files.forEach(f=>fd.append('files',f));
+    fd.append('pot_refs',JSON.stringify(CAL.allRefs));
+    if(document.getElementById('scanReplace').checked) fd.append('replace','1');
+    try{
+      const r=await fetch('/api/scan-multi',{method:'POST',body:fd});
+      if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
+      const d=await r.json();
+      await loadAll();
+      scanStatus.textContent=`✅ ${d.photos}장 → ${d.count}개 개체 · 모양 ${d.shape_groups}종 (중복 ${d.deduped}개 제거)`;
+    }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
+    CAL.files=[]; CAL.mode='multi';
+    return;
+  }
   if(CAL.mode==='pot'){
     calWrap.style.display='none';
     if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;}
@@ -462,7 +550,7 @@ calNext.addEventListener('click',async()=>{
       const d=await r.json();
       document.getElementById('potInfo').innerHTML=
         `✅ 화분 ${d.count}개 지정됨 — 이제 스캔하면 이 자리로 갈립니다 <a href="#" id="potClear" style="color:#c98">지우기</a>`;
-      bindPotClear();
+      bindPotClear(); showRefBtn(d.count>=4);
     }catch(e){ document.getElementById('potInfo').textContent='⚠️ '+e.message; }
     CAL.files=[]; CAL.mode='multi';
     return;

@@ -332,6 +332,26 @@ def homography(src: List[tuple], dst: List[tuple]) -> List[List[float]]:
     return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1.0]]
 
 
+def homography_lstsq(src: List[tuple], dst: List[tuple]) -> List[List[float]]:
+    """대응점 4쌍 이상 → 최소제곱 원근 변환.
+
+    모서리 대신 '이미 위치를 아는 화분'을 기준점으로 쓸 때 필요하다.
+    점을 4개보다 많이 찍으면 클릭 오차가 평균돼 더 정확해진다.
+    """
+    if len(src) != len(dst) or len(src) < 4:
+        raise HTTPException(400, "기준점이 4개 이상이어야 해요.")
+    rows, b = [], []
+    for (x, y), (u, v) in zip(src, dst):
+        rows.append([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.append(u)
+        rows.append([0, 0, 0, x, y, 1, -v * x, -v * y]); b.append(v)
+    # 정규방정식 AᵀA h = Aᵀb (8x8) 로 줄여서 푼다
+    n = 8
+    ata = [[sum(r[i] * r[j] for r in rows) for j in range(n)] for i in range(n)]
+    atb = [sum(rows[k][i] * b[k] for k in range(len(rows))) for i in range(n)]
+    h = _solve_linear(ata, atb)
+    return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1.0]]
+
+
 def apply_h(H: List[List[float]], x: float, y: float) -> tuple:
     """점 하나를 원근 변환."""
     d = H[2][0] * x + H[2][1] * y + H[2][2]
@@ -927,24 +947,43 @@ def _register_groups(groups: List[List[dict]], canvas_w: float, canvas_h: float,
 
 
 @app.post("/api/scan-multi")
-async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(...),
-                     regions: str = Form(None), replace: str = Form(None)):
+async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(None),
+                     regions: str = Form(None), replace: str = Form(None),
+                     pot_refs: str = Form(None)):
     """여러 장을 원근 보정해 하나의 선반 좌표계로 합친 뒤 식물을 등록.
 
     사진을 이어 붙이지 않는다. 사진마다 네 모서리로 원근 변환을 구해
     '탐지 결과'만 선반 좌표로 옮기고, 겹치는 구역의 중복 탐지를 지운다.
     잎이 촬영 사이에 움직여도 안전하고 특징점 매칭이 필요 없다.
 
-    corners: 사진별 [좌상, 우상, 우하, 좌하] 픽셀 좌표. 예 [[[x,y],[x,y],[x,y],[x,y]], …]
-    regions: 사진별 선반 구역 [u0,v0,u1,v1] (0~1). 생략하면 전체([0,0,1,1]).
+    기준점은 둘 중 하나로 준다:
+    · corners  사진별 [좌상, 우상, 우하, 좌하] 픽셀 좌표 + regions(그 사진이 덮는 구역)
+    · pot_refs 사진별 [[화분번호, x, y], …] — 이미 위치를 아는 화분 4개 이상을 찍는다.
+               케이지가 좁아 트레이 모서리가 프레임에 안 들어올 때 쓴다. 화분은 항상
+               잘 보이고 안 움직이며, 프레임 안쪽에 퍼져 있어 외삽이 아니라 내삽이 된다.
     """
     import json
-    try:
-        quads = json.loads(corners)
-    except ValueError:
-        raise HTTPException(400, "corners 를 읽을 수 없어요 (JSON 형식).")
-    if len(quads) != len(files):
-        raise HTTPException(400, f"사진 {len(files)}장인데 모서리는 {len(quads)}장분이에요.")
+    refs = None
+    if pot_refs:
+        if not POTS:
+            raise HTTPException(400, "화분 자리를 먼저 지정해 주세요 (🪴 화분 자리 지정).")
+        try:
+            refs = json.loads(pot_refs)
+        except ValueError:
+            raise HTTPException(400, "pot_refs 를 읽을 수 없어요 (JSON 형식).")
+        if len(refs) != len(files):
+            raise HTTPException(400, f"사진 {len(files)}장인데 기준점은 {len(refs)}장분이에요.")
+    if corners:
+        try:
+            quads = json.loads(corners)
+        except ValueError:
+            raise HTTPException(400, "corners 를 읽을 수 없어요 (JSON 형식).")
+        if len(quads) != len(files):
+            raise HTTPException(400, f"사진 {len(files)}장인데 모서리는 {len(quads)}장분이에요.")
+    elif refs:
+        quads = [None] * len(files)
+    else:
+        raise HTTPException(400, "corners 또는 pot_refs 가 필요해요.")
     if regions:
         try:
             rects = json.loads(regions)
@@ -974,11 +1013,25 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(..
         cw = math.sqrt(img_area * aspect)
         scale = image.width / cw if cw else 1.0
 
-        u0, v0, u1, v1 = rects[i]
-        dst = [(u0 * CANVAS, v0 * canvas_h), (u1 * CANVAS, v0 * canvas_h),
-               (u1 * CANVAS, v1 * canvas_h), (u0 * CANVAS, v1 * canvas_h)]
-        src = [(p[0] / scale, p[1] / scale) for p in quads[i]]   # 클릭은 원본 픽셀 기준
-        H = homography(src, dst)
+        if refs and refs[i]:
+            # 이미 위치를 아는 화분들을 기준점으로 (모서리가 안 보일 때)
+            src, dst = [], []
+            for ref in refs[i]:
+                try:
+                    pi, px, py = int(ref[0]), float(ref[1]), float(ref[2])
+                except (TypeError, ValueError, IndexError):
+                    raise HTTPException(400, f"{i + 1}번째 사진의 기준점 형식이 이상해요.")
+                if not 0 <= pi < len(POTS):
+                    raise HTTPException(400, f"{pi}번 화분이 없어요.")
+                src.append((px / scale, py / scale))
+                dst.append((POTS[pi]["u"] * CANVAS, POTS[pi]["v"] * canvas_h))
+            H = homography_lstsq(src, dst)
+        else:
+            u0, v0, u1, v1 = rects[i]
+            dst = [(u0 * CANVAS, v0 * canvas_h), (u1 * CANVAS, v0 * canvas_h),
+                   (u1 * CANVAS, v1 * canvas_h), (u0 * CANVAS, v1 * canvas_h)]
+            src = [(p[0] / scale, p[1] / scale) for p in quads[i]]   # 클릭은 원본 픽셀 기준
+            H = homography(src, dst)
 
         for b in boxes:
             merged.append(warp_box(H, b))

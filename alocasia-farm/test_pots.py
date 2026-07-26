@@ -9,6 +9,7 @@
 import asyncio
 import io
 import json
+import math
 
 from PIL import Image
 from fastapi import HTTPException
@@ -183,6 +184,105 @@ def test_scan_without_preset_still_works():
     finally:
         main.detect_boxes = orig_detect
         _reset()
+
+
+def test_pot_refs_recover_a_tilted_shot():
+    """모서리가 안 보여도, 이미 아는 화분 4개만 찍으면 원근이 펴진다.
+
+    케이지가 좁아 트레이 모서리를 프레임에 못 담는 실제 상황을 위한 경로.
+    """
+    _reset()
+    # 화분 4개를 선반 네 귀퉁이 쪽에 지정해 둔다
+    _set_pots([[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]])
+    CANVAS, ch = 1000.0, 1000.0 * (main._D / main._W)
+
+    # 그 화분들이 비스듬한 사진에서 이렇게 찍혔다고 하자 (사다리꼴)
+    seen = [(400, 200), (800, 200), (950, 700), (250, 700)]
+    refs = [[i, x, y] for i, (x, y) in enumerate(seen)]
+
+    def fake_detect(image, mid):
+        # 각 화분 위치에 잎 하나씩
+        return [box(x, y, 60, 60) for x, y in seen], float(1200 * 800)
+
+    orig = main.detect_boxes
+    main.detect_boxes = fake_detect
+    try:
+        res = asyncio.run(main.scan_multi(
+            files=[_Upload(_jpeg())], corners=None, regions=None,
+            replace=None, pot_refs=json.dumps([refs])))
+        assert res["count"] == 4, res["count"]
+        assert res["grouped_by"] == "pot_preset", res["grouped_by"]
+        # 지정해 둔 화분의 자리에 정확히 들어가야 한다
+        assert sorted(p["pos"] for p in res["plants"]) == sorted(p["slot"] for p in main.POTS)
+    finally:
+        main.detect_boxes = orig
+        _reset()
+
+
+def test_pot_refs_need_four_points():
+    _reset()
+    _set_pots([[0.2, 0.2], [0.8, 0.2], [0.8, 0.8]])
+    try:
+        asyncio.run(main.scan_multi(files=[_Upload(_jpeg())], corners=None, regions=None,
+                                    replace=None,
+                                    pot_refs=json.dumps([[[0, 10, 10], [1, 90, 10]]])))
+    except HTTPException as e:
+        assert e.status_code == 400 and "4개" in e.detail, e.detail
+    else:
+        raise AssertionError("기준점이 모자라면 거부해야 한다")
+    _reset()
+
+
+def test_pot_refs_require_defined_pots():
+    _reset()
+    try:
+        asyncio.run(main.scan_multi(files=[_Upload(_jpeg())], corners=None, regions=None,
+                                    replace=None, pot_refs=json.dumps([[[0, 1, 1]]])))
+    except HTTPException as e:
+        assert e.status_code == 400 and "화분 자리" in e.detail
+    else:
+        raise AssertionError("화분 자리가 없으면 거부해야 한다")
+    _reset()
+
+
+def test_unknown_pot_index_rejected():
+    _reset()
+    _set_pots([[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]])
+    bad = [[0, 10, 10], [1, 90, 10], [2, 90, 90], [9, 10, 90]]     # 9번 화분은 없음
+    try:
+        asyncio.run(main.scan_multi(files=[_Upload(_jpeg())], corners=None, regions=None,
+                                    replace=None, pot_refs=json.dumps([bad])))
+    except HTTPException as e:
+        assert e.status_code == 400 and "9번" in e.detail, e.detail
+    else:
+        raise AssertionError("없는 화분 번호를 거부해야 한다")
+    _reset()
+
+
+def test_neither_corners_nor_pot_refs_rejected():
+    _reset()
+    try:
+        asyncio.run(main.scan_multi(files=[_Upload(_jpeg())], corners=None, regions=None,
+                                    replace=None, pot_refs=None))
+    except HTTPException as e:
+        assert e.status_code == 400
+    else:
+        raise AssertionError("기준이 아무것도 없으면 거부해야 한다")
+    _reset()
+
+
+def test_extra_pot_refs_average_out_click_error():
+    """4개보다 많이 찍으면 최소제곱으로 클릭 오차가 줄어든다."""
+    from main import homography_lstsq, apply_h
+    true_src = [(100, 100), (900, 120), (920, 700), (80, 680), (500, 400), (300, 200)]
+    dst = [(0, 0), (1000, 0), (1000, 667), (0, 667), (500, 333), (250, 111)]
+    # 손떨림처럼 몇 px 씩 어긋나게 찍었다고 하자
+    noisy = [(x + d, y - d) for (x, y), d in zip(true_src, [6, -5, 4, -6, 5, -4])]
+
+    four = homography_lstsq(noisy[:4], dst[:4])
+    six = homography_lstsq(noisy, dst)
+    err = lambda H: sum(math.dist(apply_h(H, *s), d) for s, d in zip(true_src, dst))
+    assert err(six) < err(four), (err(six), err(four))
 
 
 if __name__ == "__main__":
