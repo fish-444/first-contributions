@@ -58,9 +58,12 @@ python3 -m uvicorn main:app --reload           # 서버 실행
 ## 분석 엔진 (자동 선택)
 | 우선순위 | 조건 | 방식 |
 |---|---|---|
-| 1 | `ROBOFLOW_API_KEY` 있음 | 로보플로우(YOLO) 실제 분석 |
-| 2 | `.pt` 파일 있음 | 로컬 ultralytics |
-| 3 | 둘 다 없음 | 데모(모델 없이 체험) |
+| 1 | `ROBOFLOW_API_KEY` + 워크플로 지정 | **로보플로우 워크플로** |
+| 2 | `ROBOFLOW_API_KEY` 만 | 로보플로우 모델(YOLO) |
+| 3 | `.pt` 파일 있음 | 로컬 ultralytics |
+| 4 | 아무것도 없음 | 데모(모델 없이 체험) |
+
+현재 어떤 엔진이 도는지는 화면 왼쪽 위 **`분석 엔진:`** 에 표시됩니다.
 
 ### 로보플로우로 실제 분석
 ```bash
@@ -84,6 +87,43 @@ python3 -m uvicorn main:app --reload
 ```
 > 두 모델을 **다르게** 지정하면 사진 1장당 추론이 2번 돌아 크레딧도 2배예요.
 > 같게 두거나 하나만 지정하면 1번만 호출(재사용)해서 절약합니다.
+
+### 🔗 로보플로우 워크플로 연동
+로보플로우에서 만든 **워크플로(Workflow)** 를 통째로 호출할 수도 있어요.
+모델 여러 개·전처리·필터를 로보플로우 쪽에서 조립해 두고, 이 앱은 결과만 받아 씁니다.
+
+```bash
+ROBOFLOW_API_KEY="개인키" \
+ROBOFLOW_WORKSPACE="s-workspace-br86f" \
+ROBOFLOW_WORKFLOW_ID="find-old-leaf-and-others" \
+python3 -m uvicorn main:app --reload
+```
+
+| 환경변수 | 설명 |
+|---|---|
+| `ROBOFLOW_WORKSPACE` | 워크스페이스 이름 |
+| `ROBOFLOW_WORKFLOW_ID` | 워크플로 ID |
+| `ROBOFLOW_WORKFLOW_URL` | (선택) 전체 URL 직접 지정 — 위 두 개 대신 |
+| `ROBOFLOW_WORKFLOW_IMAGE_INPUT` | (선택) 워크플로 이미지 입력 이름, 기본 `image` |
+
+동작 방식:
+- 호출 경로는 `/infer/workflows/{워크스페이스}/{워크플로}` 를 먼저 시도하고,
+  404 면 `/{워크스페이스}/workflows/{워크플로}` 형식으로 한 번 더 시도합니다.
+- 워크플로마다 **출력 블록 이름이 달라서** 응답 구조를 고정할 수 없어요.
+  그래서 응답 전체를 훑어 박스 형태의 `predictions` 를 모두 찾아 씁니다 (중복은 1회만 계산).
+- 워크플로에 **리사이즈**가 들어 있으면 좌표계가 원본과 달라지므로,
+  응답에 이미지 크기가 실려 있으면 그 크기를 기준으로 잎 비율을 계산합니다.
+- 워크플로는 `confidence` 파라미터를 안 받는 경우가 있어 **결과를 받은 뒤 앱에서 걸러 냅니다**
+  (`CONFIDENCE`, 기본 25%).
+
+> 워크플로 모드에서는 사진 1장당 **호출 1번**이고, 그 결과를 3D(모델1 역할)와
+> 모달(모델2 역할)에 함께 씁니다. 단계 구분은 클래스 이름으로 하므로
+> 워크플로가 `shoot` / `mature leaf` / `old leaf` 계열 이름을 내보내면 색이 바로 반영돼요.
+
+#### 테스트
+```bash
+python3 test_workflow.py     # 네트워크 없이 응답 파싱만 검증
+```
 
 ## API
 | 메서드 | 경로 | 설명 |

@@ -41,10 +41,18 @@ ROBOFLOW_MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "find-leaf-and-object/1"
 ROBOFLOW_MODEL_TOP = os.environ.get("ROBOFLOW_MODEL_TOP", ROBOFLOW_MODEL_ID)      # 모델1: 맨 위 잎(광합성) → 3D
 ROBOFLOW_MODEL_STAGE = os.environ.get("ROBOFLOW_MODEL_STAGE", ROBOFLOW_MODEL_ID)  # 모델2: 새순/성숙/노령 → 모달
 ROBOFLOW_API_URL = os.environ.get("ROBOFLOW_API_URL", "https://serverless.roboflow.com")
+# 워크플로(Workflow) 방식 — 모델 대신 로보플로우에서 구성한 파이프라인을 통째로 호출
+ROBOFLOW_WORKSPACE = os.environ.get("ROBOFLOW_WORKSPACE", "")
+ROBOFLOW_WORKFLOW_ID = os.environ.get("ROBOFLOW_WORKFLOW_ID", "")
+ROBOFLOW_WORKFLOW_URL = os.environ.get("ROBOFLOW_WORKFLOW_URL", "")   # 전체 URL 직접 지정(선택)
+WORKFLOW_IMAGE_INPUT = os.environ.get("ROBOFLOW_WORKFLOW_IMAGE_INPUT", "image")
 MODEL_PATH = os.environ.get("MODEL_PATH", "yolov8n.pt")
 CONFIDENCE = float(os.environ.get("CONFIDENCE", "25"))
 
-if ROBOFLOW_API_KEY:
+_HAS_WORKFLOW = bool(ROBOFLOW_WORKFLOW_URL or (ROBOFLOW_WORKSPACE and ROBOFLOW_WORKFLOW_ID))
+if ROBOFLOW_API_KEY and _HAS_WORKFLOW:
+    ENGINE = "workflow"
+elif ROBOFLOW_API_KEY:
     ENGINE = "roboflow"
 elif os.path.exists(MODEL_PATH) or os.environ.get("USE_LOCAL"):
     ENGINE = "local"
@@ -60,14 +68,17 @@ if ENGINE == "local":
     except Exception as e:
         print(f"[경고] 로컬 모델 로딩 실패({e}) → 데모 모드")
         ENGINE = "demo"
-print(f"[분석 엔진] {ENGINE}")
+
+# UI 에 표시할 이름 (어느 워크플로가 도는지 눈으로 확인) — 엔진 확정 후에 계산
+ENGINE_LABEL = f"workflow · {ROBOFLOW_WORKFLOW_ID}" if ENGINE == "workflow" and ROBOFLOW_WORKFLOW_ID else ENGINE
+print(f"[분석 엔진] {ENGINE_LABEL}")
 
 app = FastAPI(title="Alocasia Smart Farm")
 
 # --------------------------------------------------------------------------- 상태
 PLANTS: Dict[str, dict] = {}          # id -> 식물 상태
 # 번호 붙은 자리(슬롯): 온실 60x40cm 을 촘촘한 격자로 분할
-# 기본 A1~E10 (5줄 x 10칸 = 50자리), 한 칸 = 12 x 8 cm
+# 기본 A1~E10 (5줄 x 10칸 = 50자리)
 _ROWS = ["A", "B", "C", "D", "E"]
 _COLS = 10
 _W, _D = 60.0, 40.0
@@ -93,6 +104,8 @@ def _free_slot(prefer: str = None):
 
 # --------------------------------------------------------------------------- YOLO 탐지
 def detect_boxes(image: Image.Image, model_id: str):
+    if ENGINE == "workflow":
+        return _detect_workflow(image)
     if ENGINE == "roboflow":
         return _detect_roboflow(image, model_id)
     if ENGINE == "local":
@@ -100,15 +113,35 @@ def detect_boxes(image: Image.Image, model_id: str):
     return _detect_demo(image)
 
 
+def _jpeg_b64(image: Image.Image) -> str:
+    buf = io.BytesIO(); image.save(buf, format="JPEG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _boxes_from_predictions(preds: List[dict]) -> List[dict]:
+    """로보플로우 predictions(중심좌표 x,y + width,height) → 내부 박스 형식."""
+    boxes = []
+    for p in preds:
+        try:
+            w, h = float(p["width"]), float(p["height"])
+            cx, cy = float(p["x"]), float(p["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        boxes.append({"cls": p.get("class") or p.get("class_name") or "leaf",
+                      "conf": float(p.get("confidence", 0) or 0),
+                      "x1": cx - w / 2, "y1": cy - h / 2,
+                      "x2": cx + w / 2, "y2": cy + h / 2, "area": w * h})
+    return boxes
+
+
 def _detect_roboflow(image: Image.Image, model_id: str):
     import requests
-    buf = io.BytesIO(); image.save(buf, format="JPEG")
-    img_b64 = base64.b64encode(buf.getvalue()).decode()
     try:
         resp = requests.post(
             f"{ROBOFLOW_API_URL}/{model_id}",
             params={"api_key": ROBOFLOW_API_KEY, "confidence": CONFIDENCE},
-            data=img_b64, headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=60,
+            data=_jpeg_b64(image),
+            headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=60,
         )
     except requests.RequestException:
         raise HTTPException(502, "로보플로우 서버 연결 실패 (인터넷 확인)")
@@ -116,13 +149,99 @@ def _detect_roboflow(image: Image.Image, model_id: str):
         raise HTTPException(401, "로보플로우 개인(Private) API 키를 확인하세요.")
     if not resp.ok:
         raise HTTPException(502, f"로보플로우 오류: {resp.text[:150]}")
-    boxes = []
-    for p in resp.json().get("predictions", []):
-        w, h = p["width"], p["height"]
-        boxes.append({"cls": p.get("class", "leaf"), "conf": float(p.get("confidence", 0)),
-                      "x1": p["x"] - w / 2, "y1": p["y"] - h / 2,
-                      "x2": p["x"] + w / 2, "y2": p["y"] + h / 2, "area": w * h})
-    return boxes, image.width * image.height
+    return _boxes_from_predictions(resp.json().get("predictions", [])), image.width * image.height
+
+
+# --------------------------------------------------------------------------- 워크플로
+def _workflow_urls() -> List[str]:
+    """호출할 워크플로 URL 후보. 로보플로우가 쓰는 두 경로 형식을 모두 시도한다."""
+    if ROBOFLOW_WORKFLOW_URL:
+        return [ROBOFLOW_WORKFLOW_URL]
+    ws, wf = ROBOFLOW_WORKSPACE, ROBOFLOW_WORKFLOW_ID
+    return [f"{ROBOFLOW_API_URL}/infer/workflows/{ws}/{wf}",
+            f"{ROBOFLOW_API_URL}/{ws}/workflows/{wf}"]
+
+
+def _iter_prediction_lists(node):
+    """워크플로 응답 어디에 박혀 있든 탐지 predictions 리스트를 전부 찾아낸다.
+
+    출력 블록 이름(step 이름)이 워크플로마다 달라서 경로를 고정할 수 없다.
+    그래서 응답 트리를 훑어 '박스처럼 생긴' predictions 리스트만 골라낸다.
+    """
+    if isinstance(node, dict):
+        preds = node.get("predictions")
+        if isinstance(preds, list) and any(
+                isinstance(p, dict) and "x" in p and "width" in p for p in preds):
+            yield preds
+        for v in node.values():
+            yield from _iter_prediction_lists(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _iter_prediction_lists(v)
+
+
+def _iter_image_dims(node):
+    """응답에 실려 오는 이미지 크기({"image": {"width":…, "height":…}})를 찾는다."""
+    if isinstance(node, dict):
+        img = node.get("image")
+        if isinstance(img, dict):
+            w, h = img.get("width"), img.get("height")
+            if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0:
+                yield float(w) * float(h)
+        for v in node.values():
+            yield from _iter_image_dims(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _iter_image_dims(v)
+
+
+def _workflow_image_area(payload, fallback: float) -> float:
+    """워크플로가 리사이즈를 포함하면 박스 좌표계가 업로드한 원본과 달라진다.
+    응답이 알려 주는 이미지 크기를 우선 쓰고, 없으면 원본 크기로 되돌아간다."""
+    return next(_iter_image_dims(payload), fallback)
+
+
+def _extract_workflow_boxes(payload) -> List[dict]:
+    """워크플로 응답 → 박스 목록. 중복 박스는 한 번만 센다."""
+    boxes, seen = [], set()
+    for preds in _iter_prediction_lists(payload):
+        for b in _boxes_from_predictions(preds):
+            key = (b["cls"], round(b["x1"], 1), round(b["y1"], 1),
+                   round(b["x2"], 1), round(b["y2"], 1))
+            if key in seen:
+                continue
+            seen.add(key)
+            # 워크플로는 confidence 파라미터를 안 받는 경우가 있어 여기서 걸러 준다
+            if b["conf"] and b["conf"] < CONFIDENCE / 100.0:
+                continue
+            boxes.append(b)
+    return boxes
+
+
+def _detect_workflow(image: Image.Image):
+    import requests
+    payload = {"api_key": ROBOFLOW_API_KEY,
+               "inputs": {WORKFLOW_IMAGE_INPUT: {"type": "base64", "value": _jpeg_b64(image)}}}
+    resp = None
+    for url in _workflow_urls():
+        try:
+            resp = requests.post(url, json=payload, timeout=90)
+        except requests.RequestException:
+            raise HTTPException(502, "로보플로우 서버 연결 실패 (인터넷 확인)")
+        if resp.status_code != 404:
+            break                      # 404 면 다른 경로 형식으로 한 번 더
+    if resp.status_code in (401, 403):
+        raise HTTPException(401, "로보플로우 개인(Private) API 키를 확인하세요.")
+    if resp.status_code == 404:
+        raise HTTPException(502, "워크플로를 찾을 수 없어요. ROBOFLOW_WORKSPACE / ROBOFLOW_WORKFLOW_ID 확인")
+    if not resp.ok:
+        raise HTTPException(502, f"워크플로 오류: {resp.text[:150]}")
+    try:
+        data = resp.json()
+    except ValueError:
+        raise HTTPException(502, "워크플로 응답을 해석할 수 없어요.")
+    area = _workflow_image_area(data, float(image.width * image.height))
+    return _extract_workflow_boxes(data), area
 
 
 def _detect_local(image: Image.Image):
@@ -176,7 +295,8 @@ def analyze_top(boxes: List[dict], img_area: float) -> dict:
     if not leaves:
         return {"top_leaf_size": "없음", "top_leaf_pct": 0.0}
     top = min(leaves, key=lambda b: b["y1"])          # 사진에서 가장 위쪽 잎
-    pct = round(top["area"] / img_area * 100, 1) if img_area else 0.0
+    # 좌표계가 어긋나도 100%를 넘지 않게 (워크플로 리사이즈 등)
+    pct = min(round(top["area"] / img_area * 100, 1), 100.0) if img_area else 0.0
     size = "대엽" if pct > 18 else ("중엽" if pct > 8 else "소엽")
     return {"top_leaf_size": size, "top_leaf_pct": pct}
 
@@ -247,7 +367,7 @@ def index():
 
 @app.get("/api/plants")
 def list_plants():
-    return {"engine": ENGINE, "plants": list(PLANTS.values())}
+    return {"engine": ENGINE_LABEL, "plants": list(PLANTS.values())}
 
 
 @app.get("/api/slots")
