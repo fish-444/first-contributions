@@ -103,6 +103,8 @@
     <div id="potInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px">
       화분 위치를 한 번 찍어 두면 pot 라벨링 없이 개체가 갈립니다
     </div>
+    <div id="potMap" style="display:none;position:relative;width:238px;height:159px;margin-top:6px;
+      background:#0e1512;border:1px solid rgba(120,180,140,.22);border-radius:7px"></div>
     <label class="mbtn" id="refBtnWrap" style="display:none;margin-top:7px;padding:10px;border-radius:9px;border:1px solid rgba(180,150,90,.35);background:#2b2718;color:#e8ddc0;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
       🎯 화분 기준으로 스캔<input type="file" id="refFile" accept="image/*" multiple style="display:none">
     </label>
@@ -168,11 +170,17 @@
     <img id="calImg" style="max-width:88vw;max-height:62vh;display:block;border-radius:8px">
     <canvas id="calCv" style="position:absolute;inset:0;cursor:crosshair"></canvas>
   </div>
-  <div id="refPick" style="display:none;gap:8px;align-items:center;background:#1d2b23;padding:8px 12px;border-radius:9px">
-    <span style="color:#cfe0d4;font-size:12px">방금 찍은 곳은 몇 번 화분인가요?</span>
-    <select id="refSel" style="background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:7px;padding:6px"></select>
-    <button class="mbtn" id="refOk" style="padding:6px 12px;background:#2e7d32;color:#fff;border:none">확인</button>
-    <button class="mbtn" id="refSkip" style="padding:6px 12px">취소</button>
+  <div id="refPick" style="display:none;gap:12px;align-items:center;background:#1d2b23;padding:10px 14px;border-radius:9px">
+    <div>
+      <div style="color:#cfe0d4;font-size:12px;margin-bottom:6px">방금 찍은 곳은 어느 화분인가요?</div>
+      <div style="color:#7f8f83;font-size:10.5px;margin-bottom:6px">지도에서 같은 위치를 클릭하세요 (위 = 온실 안쪽)</div>
+      <div id="refMap" style="position:relative;width:230px;height:153px;background:#0e1512;border:1px solid rgba(120,180,140,.25);border-radius:7px"></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <select id="refSel" style="background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:7px;padding:6px"></select>
+      <button class="mbtn" id="refOk" style="padding:6px 12px;background:#2e7d32;color:#fff;border:none">확인</button>
+      <button class="mbtn" id="refSkip" style="padding:6px 12px">취소</button>
+    </div>
   </div>
   <div style="display:flex;gap:8px;align-items:center">
     <label id="regionLbl" style="color:#cfe0d4;font-size:12px">이 사진이 덮는 구역
@@ -374,13 +382,35 @@ const calWrap=document.getElementById('calWrap'),calImg=document.getElementById(
       calCv=document.getElementById('calCv'),calNext=document.getElementById('calNext');
 const DEF_REGION=['0,0,1,1','0,0,0.55,1','0.45,0,1,1','0,0,1,0.55','0,0.45,1,1'];
 
-// 기준 화분 지정 확인/취소
-document.getElementById('refOk').addEventListener('click',()=>{
-  const sel=document.getElementById('refSel'); if(!CAL.pending||!sel.value)return;
-  const i=+sel.value, pot=CAL.potList.find(p=>p.i===i);
+// 저장된 화분 배치를 작은 지도로 그린다. 자리 이름(C3)만으론 어느 화분인지 알 수 없어서,
+// 실제 배치 그대로 보여 주고 같은 위치를 누르게 한다.
+function renderPotMap(el,{used=new Set(),onPick=null,marked=new Set()}={}){
+  el.innerHTML='';
+  const W=el.clientWidth||230, H=el.clientHeight||153;
+  CAL.potList.forEach(p=>{
+    const d=document.createElement('div');
+    const off=used.has(p.i);
+    d.textContent=p.slot;
+    d.style.cssText=`position:absolute;left:${p.u*(W-30)+3}px;top:${p.v*(H-20)+3}px;
+      width:26px;height:15px;line-height:15px;text-align:center;border-radius:4px;
+      font-size:8.5px;font-weight:700;user-select:none;
+      background:${off?'#33413a':(marked.has(p.i)?'#e8a64a':'#2e7d32')};
+      color:${off?'#6f8073':'#fff'};cursor:${off||!onPick?'default':'pointer'}`;
+    if(onPick&&!off) d.addEventListener('click',()=>onPick(p.i));
+    el.appendChild(d);
+  });
+}
+function commitRef(i){
+  if(!CAL.pending)return;
+  const pot=CAL.potList.find(p=>p.i===i);
   CAL.refs.push({...CAL.pending,i,label:pot.slot});
   CAL.pending=null; document.getElementById('refPick').style.display='none';
   drawCal(); updCalStep(); calNext.disabled=CAL.refs.length<4;
+}
+// 기준 화분 지정 확인/취소
+document.getElementById('refOk').addEventListener('click',()=>{
+  const sel=document.getElementById('refSel');
+  if(CAL.pending&&sel.value) commitRef(+sel.value);
 });
 document.getElementById('refSkip').addEventListener('click',()=>{
   CAL.pending=null; document.getElementById('refPick').style.display='none'; drawCal();
@@ -408,15 +438,23 @@ function bindPotClear(){
   a.addEventListener('click',async ev=>{ ev.preventDefault();
     await fetch('/api/pots',{method:'DELETE'});
     document.getElementById('potInfo').textContent='화분 자리를 지웠습니다. 다시 지정할 수 있어요.';
-    showRefBtn(false);
+    CAL.potList=[]; showRefBtn(false); showPotMap(false);
   });
 }
 async function loadPots(){
   try{ const d=await(await fetch('/api/pots')).json();
+    CAL.potList=d.pots||[];
     if(d.count){ document.getElementById('potInfo').innerHTML=
       `✅ 화분 ${d.count}개 지정됨 <a href="#" id="potClear" style="color:#c98">지우기</a>`; bindPotClear(); }
     showRefBtn(d.count>=4);
+    showPotMap(d.count>0);
   }catch(e){}
+}
+// 지정된 화분 배치를 사이드 패널에 상시 표시 (어느 화분이 C3인지 확인용)
+function showPotMap(on){
+  const el=document.getElementById('potMap');
+  el.style.display=on?'block':'none';
+  if(on) renderPotMap(el);
 }
 // 화분이 4개 이상 지정돼 있어야 '화분 기준 보정'을 쓸 수 있다
 function showRefBtn(on){
@@ -490,13 +528,15 @@ calCv.addEventListener('click',e=>{
   // 화면 좌표 → 원본 픽셀 좌표 (백엔드는 원본 기준으로 받는다)
   const sx=calImg.naturalWidth/calImg.clientWidth, sy=calImg.naturalHeight/calImg.clientHeight;
   if(CAL.mode==='ref'){
-    // 찍은 지점이 몇 번 화분인지 물어본다
+    // 찍은 지점이 어느 화분인지 묻는다 — 자리 이름만으론 못 고르니 지도를 보여준다
     CAL.pending={dx,dy,x:dx*sx,y:dy*sy}; drawCal();
-    const sel=document.getElementById('refSel'); sel.innerHTML='';
     const used=new Set(CAL.refs.map(r=>r.i));
-    CAL.potList.filter(p=>!used.has(p.i)).forEach(p=>{
-      const o=document.createElement('option'); o.value=p.i; o.textContent='화분 '+p.slot; sel.appendChild(o); });
-    document.getElementById('refPick').style.display=sel.options.length?'flex':'none';
+    const left=CAL.potList.filter(p=>!used.has(p.i));
+    const sel=document.getElementById('refSel'); sel.innerHTML='';
+    left.forEach(p=>{ const o=document.createElement('option');
+      o.value=p.i; o.textContent='화분 '+p.slot; sel.appendChild(o); });
+    renderPotMap(document.getElementById('refMap'),{used,onPick:commitRef});
+    document.getElementById('refPick').style.display=left.length?'flex':'none';
     return;
   }
   if(CAL.mode==='pot'&&CAL.pts.length>=4){ CAL.pots.push({dx,dy,x:dx*sx,y:dy*sy});
@@ -548,9 +588,10 @@ calNext.addEventListener('click',async()=>{
       const r=await fetch('/api/pots',{method:'POST',body:fd});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'저장 실패');}
       const d=await r.json();
+      CAL.potList=d.pots;
       document.getElementById('potInfo').innerHTML=
         `✅ 화분 ${d.count}개 지정됨 — 이제 스캔하면 이 자리로 갈립니다 <a href="#" id="potClear" style="color:#c98">지우기</a>`;
-      bindPotClear(); showRefBtn(d.count>=4);
+      bindPotClear(); showRefBtn(d.count>=4); showPotMap(true);
     }catch(e){ document.getElementById('potInfo').textContent='⚠️ '+e.message; }
     CAL.files=[]; CAL.mode='multi';
     return;
