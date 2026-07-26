@@ -441,7 +441,8 @@ scanModeEl.addEventListener('change',updModeHelp); updModeHelp();
 // 스캔 결과 문구 — 새 잎이 몇 장 났는지가 핵심
 function scanMsg(d,how){
   const nl=d.new_leaves?` · 새 잎 ${d.new_leaves}장`:'';
-  return `✅ ${d.count}개 개체${nl} · 모양 ${d.shape_groups}종 (${how})`;
+  const rm=d.removed?` · 유령 ${d.removed}개 정리`:'';
+  return `✅ ${d.count}개 개체${nl}${rm} · 모양 ${d.shape_groups}종 (${how})`;
 }
 document.getElementById('scanFile').addEventListener('change',async(e)=>{
   const f=e.target.files[0]; if(!f)return;
@@ -676,7 +677,7 @@ calNext.addEventListener('click',async()=>{
       const d=await r.json();
       CAL.potList=d.pots;
       document.getElementById('potInfo').innerHTML=
-        `✅ 화분 ${d.count}개 지정됨 — 이제 스캔하면 이 자리로 갈립니다 <a href="#" id="potClear" style="color:#c98">지우기</a>`;
+        `✅ 화분 ${d.count}개 지정됨${d.removed?` · 예전 자리 식물 ${d.removed}개 정리`:''} — 이제 스캔하면 이 자리로 갈립니다 <a href="#" id="potClear" style="color:#c98">지우기</a>`;
       bindPotClear(); showRefBtn(d.count>=4); showPotMap(true);
     }catch(e){ document.getElementById('potInfo').textContent='⚠️ '+e.message; }
     CAL.files=[]; CAL.mode='multi';

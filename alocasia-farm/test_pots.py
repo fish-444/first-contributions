@@ -261,6 +261,52 @@ def test_plants_sit_at_their_measured_spot_not_the_grid_cell():
     _reset()
 
 
+def test_reassigning_pots_clears_the_old_ghosts():
+    """화분 자리를 다시 찍으면 예전 자리 식물은 유령이 된다.
+
+    화분 14개를 지정했는데 개체가 24개로 불어난 게 이것 때문이었다.
+    """
+    _reset()
+    _set_pots([[0.2, 0.2], [0.8, 0.2]])
+    main._ensure_pot_slots([])
+    assert len(main.PLANTS) == 2
+
+    # 다른 위치로 다시 지정 → 예전 자리 두 개는 유령
+    res = _set_pots([[0.3, 0.7], [0.7, 0.7], [0.5, 0.4]])
+    assert res["removed"] == 2, res["removed"]
+    assert len(main.PLANTS) == 0, main.PLANTS
+
+    main._ensure_pot_slots([])
+    assert len(main.PLANTS) == 3 == len(main.POTS)
+    _reset()
+
+
+def test_scan_cleans_ghosts_and_reports_them():
+    _reset()
+    _set_pots([[0.5, 0.5]])
+    main.PLANTS["ghost"] = {"id": "ghost", "name": "예전 식물", "pos": "A1",
+                            "x": 0, "z": 0, "leaf_count": 3}
+    orig = main.detect_boxes
+    main.detect_boxes = lambda im, mid: (
+        [box(600, 400, 90, 90, "mature leaf")], float(1200 * 800))
+    try:
+        res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
+        assert res["removed"] == 1, res["removed"]
+        assert res["count"] == 1 and "ghost" not in main.PLANTS
+    finally:
+        main.detect_boxes = orig
+        _reset()
+
+
+def test_no_pots_defined_means_no_cleanup():
+    """화분 자리를 안 정했으면 함부로 지우지 않는다."""
+    _reset()
+    main.PLANTS["p1"] = {"id": "p1", "name": "손으로 넣은 식물", "pos": "A1", "x": 0, "z": 0}
+    assert main._drop_orphans() == 0
+    assert "p1" in main.PLANTS
+    _reset()
+
+
 def test_empty_flag_clears_once_leaves_appear():
     """빈 화분에 잎이 잡히면 '빈 화분' 표시가 사라져야 한다."""
     _reset()

@@ -827,8 +827,9 @@ async def set_pots(points: str = Form(None), points_px: str = Form(None),
             raise HTTPException(400, "자리가 모자라요. 화분 수를 줄여 주세요.")
         taken.add(slot["label"])
         POTS.append({"i": i, "u": round(u, 4), "v": round(v, 4), "slot": slot["label"]})
+    removed = _drop_orphans()      # 예전 자리에 남은 식물은 유령이 된다
     save_state()
-    return {"count": len(POTS), "pots": POTS}
+    return {"count": len(POTS), "removed": removed, "pots": POTS}
 
 
 @app.delete("/api/pots")
@@ -918,6 +919,7 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     if scan_mode == "replace":
         PLANTS.clear()
         FEATS.clear()
+    removed = _drop_orphans()      # 예전 화분 좌표로 만들어진 유령 정리
 
     result = _register_groups(
         groups, cw, ch,
@@ -930,7 +932,7 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
 
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "grouped_by": _grouped_by(boxes, slots),
-            "shape_groups": len(shapes), "mode": scan_mode,
+            "shape_groups": len(shapes), "mode": scan_mode, "removed": removed,
             "new_leaves": sum(p.get("new_leaves", 0) for p in result),
             "plants": result}
 
@@ -975,6 +977,23 @@ def _pot_xz(slot_label: str):
     if pot is None:
         return None
     return (pot["u"] - 0.5) * _W, (pot["v"] - 0.5) * _D
+
+
+def _drop_orphans() -> int:
+    """지정한 화분에 없는 식물을 정리한다.
+
+    화분 자리를 다시 찍으면 자리 이름이 바뀌는데, 예전 자리에 있던 식물이 그대로
+    남아 유령이 된다. 화분 14개를 지정했는데 개체가 24개로 불어난 게 그 경우다.
+    화분 자리를 정해 뒀다면 '농장 = 지정한 화분들' 이므로 나머지는 지운다.
+    """
+    if not POTS:
+        return 0
+    keep = {p["slot"] for p in POTS}
+    gone = [pid for pid, p in PLANTS.items() if p.get("pos") not in keep]
+    for pid in gone:
+        PLANTS.pop(pid, None)
+        FEATS.pop(pid, None)
+    return len(gone)
 
 
 def _ensure_pot_slots(result: List[dict]) -> None:
@@ -1211,6 +1230,7 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     scan_mode = _scan_mode(mode, replace)
     if scan_mode == "replace":
         PLANTS.clear(); FEATS.clear()
+    removed = _drop_orphans()      # 예전 화분 좌표로 만들어진 유령 정리
 
     src_of = {id(merged[i]): sources[i] for i in keep}
     feat_of_box = {id(merged[i]): feats[i] for i in keep}
@@ -1231,6 +1251,7 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "photos": len(files), "merged_boxes": len(boxes_m),
             "deduped": dropped, "shape_groups": len(shapes), "mode": scan_mode,
+            "removed": removed,
             "new_leaves": sum(p.get("new_leaves", 0) for p in result),
             "grouped_by": _grouped_by(boxes_m, slots), "plants": result}
 
