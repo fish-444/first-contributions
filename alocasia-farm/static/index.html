@@ -226,6 +226,15 @@
       <label style="font-size:12px;color:#cfe0d4;display:flex;justify-content:space-between;margin-bottom:5px">🧭 화분 방향 돌리기 <span id="mRotV" style="color:#7ddb9a;font-weight:700">0°</span></label>
       <input type="range" id="mRot" min="0" max="359" step="1" value="0" style="width:100%;accent-color:#4fa85a">
     </div>
+    <div style="margin:2px 0 13px">
+      <label style="font-size:12px;color:#cfe0d4;display:block;margin-bottom:5px">🚚 자리 이동 — 자동 배치가 틀렸을 때 손으로 옮기기</label>
+      <div style="display:flex;gap:6px">
+        <select id="mMoveSel" style="flex:1;font-size:12.5px;padding:8px;background:#14201a;
+          color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:8px"></select>
+        <button type="button" class="mbtn" id="mMoveBtn" style="flex:none;padding:8px 14px">이동</button>
+      </div>
+      <div id="mMoveInfo" style="font-size:10.5px;color:#6f8073;margin-top:4px"></div>
+    </div>
     <div class="mrow">
       <label class="mbtn">📷 새 사진으로 갱신<input type="file" id="mReFile" accept="image/*"></label>
       <button class="mbtn danger" id="mDel">🗑 제거</button>
@@ -1015,8 +1024,39 @@ function openModal(p){
     (p.size_class==='미검출'?'이 화분은 잎이 잡히지 않았어요 — 아래에서 직접 넣어 주세요 · ':'')
     + (p.updated?('최근 분석: '+p.updated):'');
   const rv=p.rot||0; document.getElementById('mRot').value=rv; document.getElementById('mRotV').textContent=rv+'°';
+  document.getElementById('mMoveInfo').textContent='';
+  populateMoveSelect(p);
   document.getElementById('mWrap').style.display='flex';
 }
+// 자리 이동 — 자동 배치(스캔·화분 최근접)가 틀렸을 때 손으로 옮긴다.
+// 목적지에 이미 식물이 있으면 서버가 자동으로 서로 자리를 맞바꾼다.
+async function populateMoveSelect(p){
+  const sel=document.getElementById('mMoveSel');
+  let slots; try{ slots=await(await fetch('/api/slots')).json(); }catch(e){ return; }
+  sel.innerHTML='';
+  slots.forEach(s=>{
+    const o=document.createElement('option'); o.value=s.label;
+    const occupant=(s.occupied&&objs[s.plant_id]&&s.plant_id!==p.id)?objs[s.plant_id].data.name:null;
+    o.textContent=s.label+(s.label===p.pos?' (현재 자리)':occupant?` — ${occupant} 와 맞바꿈`:' — 빈 자리');
+    if(s.label===p.pos) o.selected=true;
+    sel.appendChild(o);
+  });
+}
+document.getElementById('mMoveBtn').addEventListener('click',async()=>{
+  if(!modalId)return;
+  const target=document.getElementById('mMoveSel').value;
+  const info=document.getElementById('mMoveInfo');
+  if(!target||target===objs[modalId].data.pos){ info.textContent='이미 그 자리예요'; return; }
+  info.textContent='이동 중…';
+  const fd=new FormData(); fd.append('pos',target);
+  const r=await fetch('/api/plants/'+modalId+'/move',{method:'PATCH',body:fd});
+  if(!r.ok){ const e=await r.json().catch(()=>({})); info.textContent='⚠️ '+(e.detail||'이동 실패'); return; }
+  const res=await r.json();
+  await loadAll();
+  openModal(res.plant);      // openModal 이 mMoveInfo 를 비우니, 메시지는 그 뒤에 넣는다
+  document.getElementById('mMoveInfo').textContent=res.swapped_with
+    ?`✅ ${res.swapped_with.name}(${res.swapped_with.pos}) 와 자리를 맞바꿨어요`:'✅ 이동했어요';
+});
 // 화분 방향 회전
 const mRot=document.getElementById('mRot'),mRotV=document.getElementById('mRotV');
 mRot.addEventListener('input',()=>{

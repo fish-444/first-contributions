@@ -90,6 +90,26 @@ def test_hand_set_size_class_clears_the_stale_percentage():
     _reset()
 
 
+def test_hand_set_leaf_count_makes_an_empty_pot_actually_show_a_plant():
+    """빈 화분(empty=True)은 3D 가 흙만 그리고 잎을 아예 안 그린다. 잎이 가려져서
+    못 잡힌 걸 손으로 넣었는데 empty 가 안 풀리면, 수치는 바뀌어도 화면엔 여전히
+    빈 화분으로 남아 '반영이 안 된다'로 보인다."""
+    _plant(size_class="미검출", leaf_count=0, shoot_count=0, mature_count=0,
+          old_count=0, empty=True)
+    p = _patch(mature_count=2)
+    assert "empty" not in p, p
+    assert p["size_class"] == "소품", p    # '미검출'로는 등급 배지·3D 크기를 못 정한다
+    _reset()
+
+
+def test_hand_set_leaf_count_to_zero_does_not_fake_an_empty_pot():
+    """실수로 0으로 만들었다고 empty 취급하면 안 된다 — 사람이 명시적으로 지운 값이다."""
+    _plant(mature_count=1, leaf_count=1)
+    p = _patch(mature_count=0)
+    assert "empty" not in p, p
+    _reset()
+
+
 def test_bad_size_class_rejected():
     _plant()
     try:

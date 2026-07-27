@@ -1359,10 +1359,61 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
     if touched:
         p["leaf_count"] = sum(p.get(k, 0) or 0 for k in
                               ("shoot_count", "mature_count", "old_count"))
+        if p["leaf_count"] > 0:
+            # 빈 화분(잎을 못 잡은 자리)은 3D 가 흙만 그리고 잎을 아예 안 그린다.
+            # 손으로 잎 수를 넣었는데 empty 를 안 지우면, 수치는 바뀌어도
+            # 화면엔 여전히 빈 화분으로 남아 "반영이 안 된다"로 보인다.
+            p.pop("empty", None)
+            if p.get("size_class") not in SIZE_CLASSES:
+                p["size_class"] = "소품"      # '미검출'로는 등급 배지·3D 크기를 못 정한다
         p["manual"] = True
         p["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     save_state()
     return p
+
+
+def _place_plant(plant: dict, label: str, now: str) -> None:
+    """식물을 그 자리(label)로 옮긴다 — 좌표·잎 소속을 자리에 맞춘다."""
+    slot = _slot_by_label(label)
+    xz_cm = _pot_xz_cm(label) or (slot["x"], slot["z"])
+    plant["pos"] = label
+    plant["x"], plant["z"] = round(xz_cm[0], 2), round(xz_cm[1], 2)
+    plant["manual"] = True
+    plant["updated"] = now
+    for leaf in LEAVES.values():
+        if leaf["plant_id"] == plant["id"]:
+            leaf["pot_slot"] = label
+
+
+@app.patch("/api/plants/{pid}/move")
+async def move_plant(pid: str, pos: str = Form(...)):
+    """식물을 다른 자리로 옮긴다. 자동 배치(스캔·화분 최근접)가 틀렸을 때,
+    혹은 실제로 화분을 옮긴 뒤 기록만 맞출 때 손으로 바로잡는 자리다.
+
+    화분 자리를 지정해 뒀으면 빈 화분에도 '미검출' 자리표시 식물이 항상 있으므로
+    (`_ensure_pot_slots`), 목적지에 다른 식물이 있으면 **서로 자리를 맞바꾼다** —
+    자리 하나에 둘이 앉는 일이 없게. 이름·잎 기록은 식물을 따라가고, 좌표는
+    자리를 따라간다.
+    """
+    if pid not in PLANTS:
+        raise HTTPException(404, "없는 식물")
+    label = (pos or "").strip()
+    slot = _slot_by_label(label)
+    if slot is None:
+        raise HTTPException(400, "없는 자리예요.")
+    plant = PLANTS[pid]
+    old_pos = plant["pos"]
+    if old_pos == label:
+        return {"ok": True, "moved": False, "plant": plant, "swapped_with": None}
+
+    other = next((p for p in PLANTS.values() if p["id"] != pid and p.get("pos") == label), None)
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    _place_plant(plant, label, now)
+    if other:
+        _place_plant(other, old_pos, now)
+    LEAF_FIXES.clear()     # 손으로 옮긴 잎 기억은 좌표에 묶여 있다 — 화분 배치가 바뀌었으니 무효
+    save_state()
+    return {"ok": True, "moved": True, "plant": plant, "swapped_with": other}
 
 
 # --------------------------------------------------------------------------- 배치
@@ -1515,14 +1566,9 @@ async def apply_placement(moves: str = Form(...)):
     if staying & {s for _, s in todo}:
         raise HTTPException(400, "안 움직이는 식물의 자리로는 못 옮겨요.")
 
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
     for plant, slot in todo:
-        xz_cm = _pot_xz_cm(slot) or (0.0, 0.0)
-        plant["pos"] = slot
-        plant["x"], plant["z"] = round(xz_cm[0], 2), round(xz_cm[1], 2)
-        plant["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        for leaf in LEAVES.values():
-            if leaf["plant_id"] == plant["id"]:
-                leaf["pot_slot"] = slot
+        _place_plant(plant, slot, now)
     # 잎을 손으로 옮긴 기억은 좌표에 묶여 있다. 식물이 자리를 옮겼으니 무효다.
     if todo:
         LEAF_FIXES.clear()
