@@ -1299,6 +1299,10 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
 
 
 SIZE_CLASSES = ("소품", "중품", "대품")
+# 3D 화분·잎 크기는 top_leaf_size(모델1) 를 본다 — size_class(모델2, 소중대품)와는
+# 다른 필드다. 손으로 소/중/대품을 바꿔도 top_leaf_size 를 같이 안 바꾸면 모달
+# 표시만 바뀌고 3D 는 그대로라 "고쳤는데 반영이 안 된다"로 보인다.
+SIZE_TO_TOP_LEAF = {"소품": "소엽", "중품": "중엽", "대품": "대엽"}
 
 # 품 등급은 '가장 큰 잎의 긴 변 길이(cm)'로 가른다.
 # 사진 전체 면적 대비 비율로 재던 예전 방식은 구도에 휘둘렸다 — 같은 식물도
@@ -1342,6 +1346,8 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
         if size_class not in SIZE_CLASSES:
             raise HTTPException(400, f"크기 등급은 {' / '.join(SIZE_CLASSES)} 중 하나여야 해요.")
         p["size_class"] = size_class
+        p["top_leaf_size"] = SIZE_TO_TOP_LEAF[size_class]   # 3D 크기도 같이 반영
+        p["top_leaf_pct"] = None                            # 더는 실측 비율과 안 맞으니 표시 안 함
         touched = True
     for key, val in (("shoot_count", shoot_count), ("mature_count", mature_count),
                      ("old_count", old_count)):

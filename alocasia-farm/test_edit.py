@@ -71,6 +71,25 @@ def test_size_class_can_be_set_by_hand():
     _reset()
 
 
+def test_hand_set_size_class_actually_resizes_the_pot_in_3d():
+    """3D 화분 크기는 top_leaf_size 를 본다 — 소중대품 버튼만 바꾸고 이 필드를
+    안 건드리면 모달 글자만 바뀌고 화면의 화분은 그대로다."""
+    _plant(size_class="소품", top_leaf_size="소엽")
+    p = _patch(size_class="대품")
+    assert p["top_leaf_size"] == "대엽", p
+    p2 = _patch(size_class="소품")
+    assert p2["top_leaf_size"] == "소엽", p2
+    _reset()
+
+
+def test_hand_set_size_class_clears_the_stale_percentage():
+    """top_leaf_pct 는 실측 비율이다. 손으로 등급을 바꾸면 그 실측과 안 맞으니 지운다."""
+    _plant(top_leaf_pct=12.0)
+    p = _patch(size_class="대품")
+    assert p["top_leaf_pct"] is None, p
+    _reset()
+
+
 def test_bad_size_class_rejected():
     _plant()
     try:
