@@ -1534,21 +1534,33 @@ def list_leaves(ambiguous: str = None):
     return {"count": len(leaves), "leaves": leaves, "fixes": len(LEAF_FIXES), **report}
 
 
-def _recount_from_leaves(pid: str) -> None:
-    """잎 기록에서 단계별 개수를 다시 센다 (잎을 옮긴 화분 양쪽에)."""
+def _shift_leaf_count(pid: str, stage: str, leaf_id: str, delta: int) -> None:
+    """잎 한 장이 오간 만큼만(+1/-1) 반영한다 — 전체를 다시 세지 않는다.
+
+    한때 여기서 LEAVES 를 통째로 다시 세서 넣었는데, 그러면 사람이 ± 버튼으로
+    얹어 둔 보정치(감지 안 된 잎을 메꾸려고 손으로 올린 값)가 사라진다.
+    잎이 3장인데 카메라가 2장만 잡아서 mature_count 를 손으로 3으로 올려
+    놨다고 하자 — 그중 잡힌 잎 하나를 다른 화분으로 옮기면, 통째로 다시 셀 땐
+    "화분에 실제로 LEAVES 가 1장 남았다"는 이유로 카운트가 1로 뚝 떨어졌다.
+    사람이 애써 고친 값이 잎 이동 한 번에 지워진 것 — 옮긴 만큼만 가감하면
+    이 보정치가 살아남는다.
+    """
     plant = PLANTS.get(pid)
     if plant is None:
         return
-    mine = [l for l in LEAVES.values() if l["plant_id"] == pid]
-    counts = {"shoot": 0, "mature": 0, "old": 0}
-    for l in mine:
-        counts[l["stage"]] += 1
-    plant.update({"shoot_count": counts["shoot"], "mature_count": counts["mature"],
-                  "old_count": counts["old"], "leaf_count": len(mine),
-                  "leaf_ids": [l["leaf_id"] for l in mine],
-                  "ambiguous_ids": [l["leaf_id"] for l in mine if l["ambiguous"]]})
-    if mine:
-        plant.pop("empty", None)
+    key = f"{stage}_count"
+    plant[key] = max(0, (plant.get(key) or 0) + delta)
+    plant["leaf_count"] = sum(plant.get(k, 0) or 0 for k in
+                              ("shoot_count", "mature_count", "old_count"))
+    ids = list(plant.get("leaf_ids") or [])
+    if delta > 0 and leaf_id not in ids:
+        ids.append(leaf_id)
+    elif delta < 0 and leaf_id in ids:
+        ids.remove(leaf_id)
+    plant["leaf_ids"] = ids
+    plant["ambiguous_ids"] = [i for i in ids if LEAVES.get(i, {}).get("ambiguous")]
+    if delta > 0:
+        plant.pop("empty", None)       # 잎이 들어왔으니 빈 화분이 아니다
     plant["manual"] = True             # 사람이 옮긴 결과다 — 재스캔이 덮지 않게
     plant["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1572,7 +1584,7 @@ async def move_leaf(leaf_id: str, pot_slot: str = Form(...)):
     if leaf["pot_slot"] == slot:
         return {"ok": True, "leaf": leaf, "moved": False}
 
-    was = leaf["plant_id"]
+    was, stage = leaf["plant_id"], leaf["stage"]
     leaf.update({"pot_slot": slot, "plant_id": target["id"],
                  "manual": True, "ambiguous": False})
 
@@ -1581,8 +1593,8 @@ async def move_leaf(leaf_id: str, pot_slot: str = Form(...)):
                      if math.dist((f["u"], f["v"]), (u_uv, v_uv)) > LEAF_FIX_RADIUS_UV]
     LEAF_FIXES.append({"u": u_uv, "v": v_uv, "pot_slot": slot})
 
-    _recount_from_leaves(was)
-    _recount_from_leaves(target["id"])
+    _shift_leaf_count(was, stage, leaf_id, -1)
+    _shift_leaf_count(target["id"], stage, leaf_id, 1)
     save_state()
     return {"ok": True, "moved": True, "leaf": leaf,
             "from": PLANTS.get(was), "to": target}

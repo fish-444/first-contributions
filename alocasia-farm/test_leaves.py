@@ -292,6 +292,32 @@ def test_plus_minus_buttons_still_work_with_leaf_records():
     _reset()
 
 
+def test_a_hand_bump_survives_a_leaf_move_off_that_plant():
+    """가려져서 못 잡은 잎을 손으로 메꿔 놨는데, 잡힌 잎 하나를 다른 화분으로
+    옮기면 그 보정치가 통째로 사라지면 안 된다 — 옮긴 만큼만 깎여야 한다.
+    """
+    _reset()
+    _set_pots([[0.25, 0.5], [0.75, 0.5]])
+    d = _scan([box(300, 400, 90, 90, "mature leaf"), box(900, 400, 90, 90, "mature leaf")])
+    a, b = d["plants"][0], d["plants"][1]          # 화분마다 실제 잎 1장씩
+    assert a["leaf_count"] == 1 and b["leaf_count"] == 1
+
+    # 가려진 잎이 하나 더 있다고 보고 손으로 mature_count 를 3으로 올린다
+    asyncio.run(main.update_plant(pid=a["id"], name=None, rot=None, size_class=None,
+                                  shoot_count=None, mature_count=3, old_count=None))
+    assert main.PLANTS[a["id"]]["leaf_count"] == 3
+
+    # 실제 잡힌 잎 1장을 옆 화분으로 옮긴다
+    _move(a["leaf_ids"][0], b["pos"])
+
+    # 옮긴 만큼(1장)만 깎여야 한다 — 3 - 1 = 2, LEAVES 기준으로 통째로 다시 세서 0 이 되면 안 된다
+    assert main.PLANTS[a["id"]]["leaf_count"] == 2, main.PLANTS[a["id"]]
+    assert main.PLANTS[a["id"]]["mature_count"] == 2, main.PLANTS[a["id"]]
+    # 받은 쪽은 원래 1장에 옮겨온 1장을 더해 2장
+    assert main.PLANTS[b["id"]]["leaf_count"] == 2, main.PLANTS[b["id"]]
+    _reset()
+
+
 def test_deleting_a_plant_forgets_its_leaves():
     _reset()
     _set_pots([[0.25, 0.5], [0.75, 0.5]])
