@@ -134,6 +134,10 @@ python3 -m uvicorn main:app --reload           # 서버 실행
 > 옆 화분으로 옮기면 3 − 1 = **2** 가 됩니다 — 옮긴 만큼만 깎이지, 화분에 실제로 남은 잎
 > 기록 수로 통째로 다시 세지 않습니다.
 
+- **메모** — 모달에 자유 기록 칸을 뒀습니다. 자동 판정을 고치는 게 아니라 그냥
+  적어 두는 글이라(예: `잎 끝 마름 발견 · 분갈이 예정`) `✋ 직접 수정함` 표시와는
+  무관합니다. 칸에서 벗어나면(blur) 자동 저장되고, 빈 칸으로 두면 메모가 지워집니다.
+
 ### 💧 물주기 · 흙 마름 표시
 습도 센서가 없어서 실제 흙 수분은 모릅니다. 대신 **사람이 물 준 날짜만 기록**하고,
 며칠 지났는지로 마름 위험을 보여줍니다. 모달의 `물 줬어요` 버튼을 누르면 오늘 날짜가
@@ -526,7 +530,7 @@ python3 test_move.py          # 식물 자리 손으로 옮기기 (네트워크 
 | POST | `/api/placement/apply` | `moves` → 옮긴 결과를 기록에 반영 |
 | GET | `/api/placement/heatmap` | 선반 전체 빛 분포 |
 | GET·POST | `/api/environment` | 조명 위치 — 좌·우 레일 3개, `z`(레일 방향)만 조절 |
-| PATCH | `/api/plants/{id}` | `name` / `rot` / `size_class` / `shoot_count` · `mature_count` · `old_count` |
+| PATCH | `/api/plants/{id}` | `name` / `rot` / `note` / `size_class` / `shoot_count` · `mature_count` · `old_count` |
 | PATCH | `/api/plants/{id}/move` | `pos` → 다른 자리로 이동 (자리에 식물이 있으면 서로 맞바꿈) |
 | POST | `/api/plants/{id}/reanalyze` | `file` → 새 사진으로 갱신 |
 | POST | `/api/plants/{id}/water` | 오늘 물을 줬다고 기록 |
@@ -543,6 +547,7 @@ python3 test_move.py          # 식물 자리 손으로 옮기기 (네트워크 
 | `size_class` (대/중/소품) | 모델2 | 리스트 · 모달 |
 | `shape_group` (A/B/C…), `shape_group_size` | 생김새 | 리스트 배지 · 모달 칩 |
 | `manual`, `leaf_log`, `new_leaves` | 직접 수정 · keep 모드 | 모달 칩 · 스캔 결과 |
+| `note` | 직접 수정 | 모달 메모 (자유 기록, 자동 판정과 무관) |
 | `leaf_ids`, `ambiguous_ids` | 잎 낱개 판정 | 애매한 잎 목록 |
 | `last_watered`, `days_since_watered`, `soil_dry` | 물주기 기록 | 3D 흙 색 · 모달 물 상태 |
 | `pos`, `x`, `z`, `rot` | 자리 시스템 | 3D 배치 |

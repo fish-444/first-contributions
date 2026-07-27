@@ -284,8 +284,8 @@ def test_plus_minus_buttons_still_work_with_leaf_records():
     _set_pots([[0.25, 0.5]])
     d = _scan([box(300, 400, 90, 90)])
     pid = d["plants"][0]["id"]
-    args = {"name": None, "rot": None, "size_class": None, "shoot_count": None,
-            "mature_count": 5, "old_count": None}
+    args = {"name": None, "rot": None, "note": None, "size_class": None,
+            "shoot_count": None, "mature_count": 5, "old_count": None}
     p = asyncio.run(main.update_plant(pid=pid, **args))
     assert p["mature_count"] == 5 and p["leaf_count"] == 5, p
     assert p["manual"] is True
@@ -303,7 +303,7 @@ def test_a_hand_bump_survives_a_leaf_move_off_that_plant():
     assert a["leaf_count"] == 1 and b["leaf_count"] == 1
 
     # 가려진 잎이 하나 더 있다고 보고 손으로 mature_count 를 3으로 올린다
-    asyncio.run(main.update_plant(pid=a["id"], name=None, rot=None, size_class=None,
+    asyncio.run(main.update_plant(pid=a["id"], name=None, rot=None, note=None, size_class=None,
                                   shoot_count=None, mature_count=3, old_count=None))
     assert main.PLANTS[a["id"]]["leaf_count"] == 3
 

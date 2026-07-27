@@ -58,7 +58,7 @@ def _plant(**kw):
 
 
 def _patch(**kw):
-    args = {"name": None, "rot": None, "size_class": None,
+    args = {"name": None, "rot": None, "note": None, "size_class": None,
             "shoot_count": None, "mature_count": None, "old_count": None}
     args.update(kw)
     return asyncio.run(main.update_plant(pid="t1", **args))
@@ -162,6 +162,44 @@ def test_renaming_alone_is_not_a_hand_edit():
     _plant()
     p = _patch(name="프라이덱")
     assert p["name"] == "프라이덱" and "manual" not in p
+    _reset()
+
+
+# ── 메모 ────────────────────────────────────────────────────────────────
+def test_note_can_be_written_and_read_back():
+    _plant()
+    p = _patch(note="잎 끝이 살짝 말랐음 · 분갈이 예정")
+    assert p["note"] == "잎 끝이 살짝 말랐음 · 분갈이 예정"
+    _reset()
+
+
+def test_writing_a_note_is_not_a_hand_edit():
+    """메모는 탐지값을 고치는 게 아니라 그냥 적어 두는 글이다."""
+    _plant()
+    p = _patch(note="관찰 기록")
+    assert "manual" not in p
+    _reset()
+
+
+def test_note_can_be_cleared():
+    _plant(note="예전 메모")
+    p = _patch(note="")
+    assert p["note"] == ""
+    _reset()
+
+
+def test_note_is_trimmed():
+    _plant()
+    p = _patch(note="  앞뒤 공백  ")
+    assert p["note"] == "앞뒤 공백"
+    _reset()
+
+
+def test_leaving_note_untouched_keeps_the_old_value():
+    """note 를 안 보내면(None) 기존 메모가 그대로 있어야 한다."""
+    _plant(note="원래 메모")
+    p = _patch(name="이름만 변경")
+    assert p["note"] == "원래 메모"
     _reset()
 
 
@@ -298,8 +336,8 @@ def test_keep_mode_protects_hand_edits():
     asyncio.run(main.set_pots(points='[[0.5,0.5]]', points_px=None, corners=None))
     _scan("update", [box(600, 400, 90, 90, "mature leaf")])
     pid = list(main.PLANTS)[0]
-    args = {"name": None, "rot": None, "size_class": None, "shoot_count": None,
-            "mature_count": 7, "old_count": None}
+    args = {"name": None, "rot": None, "note": None, "size_class": None,
+            "shoot_count": None, "mature_count": 7, "old_count": None}
     asyncio.run(main.update_plant(pid=pid, **args))
     assert main.PLANTS[pid]["leaf_count"] == 7
 

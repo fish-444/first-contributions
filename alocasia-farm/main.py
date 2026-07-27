@@ -1380,13 +1380,17 @@ def grade_by_leaf_cm(leaf_cm: float) -> str:
 
 @app.patch("/api/plants/{pid}")
 async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None),
-                       size_class: str = Form(None), shoot_count: int = Form(None),
-                       mature_count: int = Form(None), old_count: int = Form(None)):
-    """이름 · 화분 방향 · 그리고 사람이 직접 고치는 값들.
+                       note: str = Form(None), size_class: str = Form(None),
+                       shoot_count: int = Form(None), mature_count: int = Form(None),
+                       old_count: int = Form(None)):
+    """이름 · 화분 방향 · 메모 · 그리고 사람이 직접 고치는 값들.
 
     사진이 뭉개지거나 잎이 가려지면 탐지가 틀립니다. 그럴 때 손으로 바로잡으라고
     크기 등급과 단계별 잎 수를 열어 뒀어요. 단계 이동(성엽→노엽)은 한쪽을 줄이고
     다른 쪽을 늘리면 됩니다. 직접 고친 식물은 manual 로 표시됩니다.
+
+    메모는 탐지값을 고치는 게 아니라 그냥 적어 두는 글이라 manual 표시와는 무관합니다
+    (이름과 같은 취급). 빈 문자열을 보내면 메모를 지웁니다.
     """
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
@@ -1395,6 +1399,8 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
         p["name"] = name.strip()
     if rot is not None:
         p["rot"] = float(rot) % 360
+    if note is not None:
+        p["note"] = note.strip()
 
     touched = False
     if size_class is not None:

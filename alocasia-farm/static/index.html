@@ -234,6 +234,13 @@
       <button type="button" class="mbtn" id="mWaterBtn" style="flex:none;padding:8px 14px">물 줬어요</button>
     </div>
     <div style="margin:2px 0 13px">
+      <label style="font-size:12px;color:#cfe0d4;display:block;margin-bottom:5px">📝 메모</label>
+      <textarea id="mNote" rows="2" placeholder="간단히 적어 두세요 (예: 잎 끝 마름 발견, 분갈이 예정)"
+        style="width:100%;font-size:12.5px;padding:8px;background:#14201a;color:#e8f0ea;
+        border:1px solid rgba(120,180,140,.3);border-radius:8px;resize:vertical;font-family:inherit"></textarea>
+      <div id="mNoteInfo" style="font-size:10.5px;color:#6f8073;margin-top:4px;min-height:1.2em"></div>
+    </div>
+    <div style="margin:2px 0 13px">
       <label style="font-size:12px;color:#cfe0d4;display:flex;justify-content:space-between;margin-bottom:5px">🧭 화분 방향 돌리기 <span id="mRotV" style="color:#7ddb9a;font-weight:700">0°</span></label>
       <input type="range" id="mRot" min="0" max="359" step="1" value="0" style="width:100%;accent-color:#4fa85a">
     </div>
@@ -1044,8 +1051,21 @@ function openModal(p){
     +(p.soil_dry?' · ⚠️ 흙 마름 위험':'');
   document.getElementById('mMoveInfo').textContent='';
   populateMoveSelect(p);
+  document.getElementById('mNote').value=p.note||'';
+  document.getElementById('mNoteInfo').textContent='';
   document.getElementById('mWrap').style.display='flex';
 }
+// 메모 — 자동 판정과 무관한 자유 기록. 칸을 벗어나면(blur) 저장한다
+document.getElementById('mNote').addEventListener('change',async()=>{
+  if(!modalId)return;
+  const info=document.getElementById('mNoteInfo');
+  const fd=new FormData(); fd.append('note',document.getElementById('mNote').value);
+  const r=await fetch('/api/plants/'+modalId,{method:'PATCH',body:fd});
+  if(!r.ok){ info.textContent='⚠️ 저장 실패'; return; }
+  const p=await r.json();
+  objs[modalId].data=p; refreshList();
+  info.textContent='✅ 저장됨';
+});
 // 물 주기 — 센서가 없으니 사람이 준 날짜만 기록하고, 며칠 지났는지로 마름 위험을 보여준다
 document.getElementById('mWaterBtn').addEventListener('click',async()=>{
   if(!modalId)return;
