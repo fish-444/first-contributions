@@ -320,6 +320,72 @@ def test_leaf_log_is_capped():
     assert len(log) == 30
 
 
+# ── 물주기 (센서 없이, 사람이 기록한 날짜로) ──────────────────────────────
+from datetime import date, timedelta
+
+
+def test_watering_today_starts_the_count_at_zero():
+    _plant()
+    p = main.water_plant(pid="t1")
+    assert p["days_since_watered"] == 0
+    assert p["soil_dry"] is False
+    assert p["last_watered"] == date.today().isoformat()
+    _reset()
+
+
+def test_no_record_means_no_dry_warning():
+    """한 번도 물 준 기록이 없으면 '마름'이 아니라 '모른다' 다."""
+    p = _plant()
+    main._augment_water(p)
+    assert p["days_since_watered"] is None
+    assert p["soil_dry"] is False
+    _reset()
+
+
+def test_soil_stays_fine_through_day_three():
+    """기준(WATER_DRY_DAYS=3)까지는 물기가 있다고 본다."""
+    p = _plant(last_watered=(date.today() - timedelta(days=main.WATER_DRY_DAYS)).isoformat())
+    main._augment_water(p)
+    assert p["days_since_watered"] == main.WATER_DRY_DAYS
+    assert p["soil_dry"] is False
+    _reset()
+
+
+def test_soil_turns_dry_the_day_after_the_threshold():
+    p = _plant(last_watered=(date.today() - timedelta(days=main.WATER_DRY_DAYS + 1)).isoformat())
+    main._augment_water(p)
+    assert p["soil_dry"] is True
+    _reset()
+
+
+def test_watering_again_resets_a_dry_pot():
+    p = _plant(last_watered=(date.today() - timedelta(days=10)).isoformat())
+    main._augment_water(p)
+    assert p["soil_dry"] is True
+    main.water_plant(pid="t1")
+    assert main.PLANTS["t1"]["soil_dry"] is False
+    _reset()
+
+
+def test_watering_an_unknown_plant_is_a_404():
+    _reset()
+    try:
+        main.water_plant(pid="nope")
+    except HTTPException as e:
+        assert e.status_code == 404
+    else:
+        raise AssertionError("없는 식물은 404")
+
+
+def test_list_plants_reports_water_status_for_everyone():
+    _plant()
+    main.water_plant(pid="t1")
+    d = main.list_plants()
+    p = d["plants"][0]
+    assert p["days_since_watered"] == 0 and p["soil_dry"] is False
+    _reset()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

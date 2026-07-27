@@ -36,6 +36,7 @@ import os
 import time
 import uuid
 import random
+from datetime import date
 from typing import Dict, List
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -757,6 +758,8 @@ def index():
 
 @app.get("/api/plants")
 def list_plants():
+    for p in PLANTS.values():
+        _augment_water(p)
     return {"engine": ENGINE_LABEL, "plants": list(PLANTS.values())}
 
 
@@ -1303,6 +1306,40 @@ SIZE_CLASSES = ("소품", "중품", "대품")
 # 다른 필드다. 손으로 소/중/대품을 바꿔도 top_leaf_size 를 같이 안 바꾸면 모달
 # 표시만 바뀌고 3D 는 그대로라 "고쳤는데 반영이 안 된다"로 보인다.
 SIZE_TO_TOP_LEAF = {"소품": "소엽", "중품": "중엽", "대품": "대엽"}
+
+
+# --------------------------------------------------------------------------- 물주기
+# 센서가 없으니 실제 흙 수분은 모른다. 대신 "언제 물을 줬는지"만 사람이 기록하고,
+# 며칠 지났는지로 마름 위험을 보여준다. 날씨 API는 안 쓴다 — 온실 안은 냉난방으로
+# 외부 기온 영향이 작아서 굳이 외부 의존성을 늘일 이유가 없고, 여름 기준 일수만
+# 맞으면 충분하다는 판단(사람이 확인).
+WATER_DRY_DAYS = int(os.environ.get("WATER_DRY_DAYS", "3"))    # 이 일수를 넘기면 마름 위험
+
+
+def _augment_water(p: dict) -> None:
+    """물 준 지 며칠째인지 + 마름 위험 여부를 얹는다. last_watered 가 없으면 '기록 없음'."""
+    last = p.get("last_watered")
+    days = None
+    if last:
+        try:
+            days = (date.today() - date.fromisoformat(last)).days
+        except ValueError:
+            days = None
+    p["days_since_watered"] = days
+    p["soil_dry"] = bool(days is not None and days > WATER_DRY_DAYS)
+
+
+@app.post("/api/plants/{pid}/water")
+def water_plant(pid: str):
+    """오늘 물을 줬다고 기록한다. 흙 마름 표시가 여기서부터 다시 3일을 센다."""
+    if pid not in PLANTS:
+        raise HTTPException(404, "없는 식물")
+    p = PLANTS[pid]
+    p["last_watered"] = date.today().isoformat()
+    p["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _augment_water(p)
+    save_state()
+    return p
 
 # 품 등급은 '가장 큰 잎의 긴 변 길이(cm)'로 가른다.
 # 사진 전체 면적 대비 비율로 재던 예전 방식은 구도에 휘둘렸다 — 같은 식물도

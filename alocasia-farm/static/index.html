@@ -222,6 +222,11 @@
       <div class="stat"><div class="k">총 잎 개수</div><div class="v" id="mLeaf">–</div></div>
       <div class="stat"><div class="k">겹침 밀도</div><div class="v" id="mDen">–</div></div>
     </div>
+    <div style="margin:2px 0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;
+      background:#1a2620;border-radius:9px;padding:9px 12px">
+      <div style="font-size:12px;color:#cfe0d4">💧 <b>물 상태</b> — <span id="mWaterInfo">–</span></div>
+      <button type="button" class="mbtn" id="mWaterBtn" style="flex:none;padding:8px 14px">물 줬어요</button>
+    </div>
     <div style="margin:2px 0 13px">
       <label style="font-size:12px;color:#cfe0d4;display:flex;justify-content:space-between;margin-bottom:5px">🧭 화분 방향 돌리기 <span id="mRotV" style="color:#7ddb9a;font-weight:700">0°</span></label>
       <input type="range" id="mRot" min="0" max="359" step="1" value="0" style="width:100%;accent-color:#4fa85a">
@@ -508,19 +513,22 @@ function computePotFit(items){
   POT_FIT=Math.max(0.35, Math.min(1, (m*0.46)/biggest));
 }
 
+// 물 준 지 오래돼 마름 위험이면 흙이 밝은 갈색으로 바뀐다 (센서 없이, 사람이
+// 기록한 날짜 기준 — /api/plants 가 계산해서 soil_dry 로 내려준다)
+const SOIL_WET=0x241d16, SOIL_DRY=0xc8935b;
 function buildObj(p){
   const g=new THREE.Group(); const unit=TOP_UNIT[p.top_leaf_size]||1.4; const potH=6+unit*1.6;
-  // 실제 화분처럼 팔각, 빈 화분은 흙색
   const empty=!!p.empty;
   const pot=new THREE.Mesh(new THREE.CylinderGeometry(unit*2.1,unit*1.6,potH,8),
-    new THREE.MeshStandardMaterial({color:empty?0xd9d3c4:0xededed,roughness:0.85}));
+    new THREE.MeshStandardMaterial({color:0xededed,roughness:0.85}));
   pot.position.y=potH/2; pot.castShadow=pot.receiveShadow=true; g.add(pot);
+  // 흙은 심어진 화분에도 항상 보인다 — 마름 위험은 색으로, 잎 유무와는 별개다
+  const soil=new THREE.Mesh(new THREE.CylinderGeometry(unit*1.9,unit*1.9,0.4,8),
+    new THREE.MeshStandardMaterial({color:p.soil_dry?SOIL_DRY:SOIL_WET,roughness:1}));
+  soil.position.y=potH-0.1; g.add(soil);
   const counts={shoot:p.shoot_count||0,mature:p.mature_count||0,old:p.old_count||0};
   if(!empty&&counts.shoot+counts.mature+counts.old===0) counts.mature=Math.max(2,p.leaf_count||3);
   if(!empty){ const plant=makeAlocasia(unit,counts); plant.position.y=potH-0.5; g.add(plant); }
-  else { const soil=new THREE.Mesh(new THREE.CylinderGeometry(unit*1.9,unit*1.9,0.4,8),
-           new THREE.MeshStandardMaterial({color:0x241d16,roughness:1}));
-         soil.position.y=potH-0.1; g.add(soil); }
   // 이름표는 겹치기 쉬워 작게 + 화분마다 높이를 조금씩 어긋나게
   const label=nameSprite((p.pos?p.pos+' · ':'')+p.name);
   const jitter=((parseInt(p.id,36)||0)%3)*2.4;
@@ -1024,10 +1032,23 @@ function openModal(p){
     (p.size_class==='미검출'?'이 화분은 잎이 잡히지 않았어요 — 아래에서 직접 넣어 주세요 · ':'')
     + (p.updated?('최근 분석: '+p.updated):'');
   const rv=p.rot||0; document.getElementById('mRot').value=rv; document.getElementById('mRotV').textContent=rv+'°';
+  const wi=document.getElementById('mWaterInfo');
+  if(p.days_since_watered==null) wi.innerHTML='기록 없음';
+  else wi.innerHTML=`물 준 지 <b style="color:${p.soil_dry?'#e8a64a':'#7ddb9a'}">${p.days_since_watered}일째</b>`
+    +(p.soil_dry?' · ⚠️ 흙 마름 위험':'');
   document.getElementById('mMoveInfo').textContent='';
   populateMoveSelect(p);
   document.getElementById('mWrap').style.display='flex';
 }
+// 물 주기 — 센서가 없으니 사람이 준 날짜만 기록하고, 며칠 지났는지로 마름 위험을 보여준다
+document.getElementById('mWaterBtn').addEventListener('click',async()=>{
+  if(!modalId)return;
+  const r=await fetch('/api/plants/'+modalId+'/water',{method:'POST'});
+  if(!r.ok)return;
+  const p=await r.json();
+  objs[modalId].data=p; rebuildObj(p); refreshList();
+  openModal(p);
+});
 // 자리 이동 — 자동 배치(스캔·화분 최근접)가 틀렸을 때 손으로 옮긴다.
 // 목적지에 이미 식물이 있으면 서버가 자동으로 서로 자리를 맞바꾼다.
 async function populateMoveSelect(p){
