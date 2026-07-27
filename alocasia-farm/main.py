@@ -1360,11 +1360,11 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
 
 
 # --------------------------------------------------------------------------- 배치
-# 조명·팬 위치는 케이지마다 다르다. 기본값을 쓰다가 실제 위치를 재서 넣으면
-# 그때부터 그 값으로 계산한다. 저장되므로 한 번만 넣으면 된다.
+# 조명 위치는 케이지마다 다르다. 기본값(화분 자리를 처음 표시할 때 쓴 세 지점)을
+# 쓰다가 실제 위치를 사람이 넣으면 그때부터 그 값으로 계산한다. 저장되므로
+# 한 번만 넣으면 된다. 팬은 없다 — 빛만 본다.
 def _env():
-    return (ENVIRONMENT.get("lights") or placement.DEFAULT_LIGHTS,
-            ENVIRONMENT.get("fans") or placement.DEFAULT_FANS)
+    return ENVIRONMENT.get("lights") or placement.DEFAULT_LIGHTS
 
 
 def _spots():
@@ -1373,63 +1373,51 @@ def _spots():
 
 @app.get("/api/environment")
 def get_environment():
-    """조명·팬 위치(cm). 안 넣었으면 기본값을 그대로 돌려준다."""
-    lights, fans = _env()
-    return {"lights": lights, "fans": fans, "shelf": {"w": _W, "d": _D},
-            "custom": bool(ENVIRONMENT)}
+    """조명 위치(cm). 안 넣었으면 기본값을 그대로 돌려준다."""
+    return {"lights": _env(), "shelf": {"w": _W, "d": _D}, "custom": bool(ENVIRONMENT)}
 
 
 @app.post("/api/environment")
-async def set_environment(lights: str = Form(None), fans: str = Form(None)):
-    """조명 `[{x,y,z,power}]` · 팬 `[{x,y,z,dx,dz,power}]` 을 실좌표 cm 로."""
+async def set_environment(lights: str = Form(...)):
+    """조명 `[{x,y,z,power,angle}]` 을 실좌표 cm 로. `angle` 은 빔 반각(도), 기본 30."""
     import json
-    for key, raw in (("lights", lights), ("fans", fans)):
-        if raw is None:
-            continue
-        try:
-            val = json.loads(raw)
-        except ValueError:
-            raise HTTPException(400, f"{key} 를 읽을 수 없어요 (JSON 형식).")
-        if not isinstance(val, list):
-            raise HTTPException(400, f"{key} 는 목록이어야 해요.")
-        for item in val:
-            if not isinstance(item, dict) or "x" not in item or "z" not in item:
-                raise HTTPException(400, f"{key} 항목에 x·z 가 있어야 해요.")
-        ENVIRONMENT[key] = val
+    try:
+        val = json.loads(lights)
+    except ValueError:
+        raise HTTPException(400, "lights 를 읽을 수 없어요 (JSON 형식).")
+    if not isinstance(val, list) or not val:
+        raise HTTPException(400, "조명을 하나 이상 넣어 주세요.")
+    for item in val:
+        if not isinstance(item, dict) or "x" not in item or "z" not in item:
+            raise HTTPException(400, "조명 항목에 x·z 가 있어야 해요.")
+    ENVIRONMENT["lights"] = val
     save_state()
     return get_environment()
 
 
 @app.get("/api/placement")
 def get_placement():
-    """지금 배치의 점수. 자리마다 빛·그늘·바람과 그 식물에게 필요한 양."""
-    lights, fans = _env()
-    graded = placement.score_layout(_spots(), lights, fans)
+    """지금 배치의 점수. 자리마다 빛·그늘과 그 식물에게 필요한 양."""
+    graded = placement.score_layout(_spots(), _env())
     worst = sorted(graded["spots"], key=lambda s: s["score"])[:3]
     return {**graded, "worst": worst, "custom_env": bool(ENVIRONMENT)}
 
 
 @app.get("/api/placement/heatmap")
-def get_heatmap(cols: int = 20, rows: int = 14, occupied: str = None):
-    """선반 전체의 빛·바람 분포. 3D 바닥에 깔아 보여 준다.
-
-    occupied=1 이면 지금 서 있는 식물이 바람을 막는 것까지 반영한다.
-    """
-    lights, fans = _env()
+def get_heatmap(cols: int = 20, rows: int = 14):
+    """선반 전체의 빛 분포. 3D 바닥에 깔아 보여 준다."""
     cols = max(4, min(60, cols)); rows = max(4, min(40, rows))
-    blockers = _spots() if occupied else None
-    return placement.heatmap(_W, _D, cols, rows, lights, fans, blockers)
+    return placement.heatmap(_W, _D, cols, rows, _env())
 
 
 @app.post("/api/placement/optimize")
 def optimize_placement():
-    """자리를 바꾸면 얼마나 좋아지는지 — '무엇과 무엇을 바꾸라' 목록.
+    """자리를 바꾸면 얼마나 좋아지는지 — '무엇을 어디로 옮기라' 목록.
 
     화분은 사람이 직접 옮긴다. 서버가 기록을 먼저 바꿔 버리면 실제 온실과
     어긋나므로, 여기서는 제안만 하고 적용은 따로 부른다.
     """
-    lights, fans = _env()
-    return placement.optimize(_spots(), lights, fans)
+    return placement.optimize(_spots(), _env())
 
 
 @app.post("/api/placement/apply")

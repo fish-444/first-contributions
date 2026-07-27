@@ -146,9 +146,18 @@
       모서리가 안 보일 때 · 아는 화분 4개 이상만 찍으면 됩니다
     </div>
   </div>
-  <!-- 조명·통풍을 계산해 '어느 화분에 어느 식물을 둘까'를 제안한다 -->
+  <!-- 조명 위치를 계산해 '어느 화분에 어느 식물을 둘까'를 제안한다 -->
   <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
-    <div style="display:flex;align-items:baseline;gap:8px">
+    <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">💡 <b>조명 위치</b></div>
+    <div style="font-size:10.5px;color:#6f8073;margin-bottom:6px">
+      3D 화면에서 분홍 조명을 끌어 옮기세요 (빔 각도 기본 30°)
+    </div>
+    <div id="lightList"></div>
+    <div class="mrow" style="margin-top:6px">
+      <button type="button" class="mbtn" id="lightAdd">➕ 조명 추가</button>
+      <button type="button" class="mbtn" id="lightReset">↺ 기본값</button>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-top:12px">
       <div style="font-size:12px;color:#cfe0d4">☀️ <b>배치 점수</b></div>
       <b id="plScore" style="font-size:20px;color:#7ddb9a;margin-left:auto">–</b>
       <span style="font-size:11px;color:#6f8073">/100</span>
@@ -157,11 +166,6 @@
     <div class="mrow" style="margin-top:8px">
       <button type="button" class="mbtn" id="plOpt">🔀 최적 배치 계산</button>
       <button type="button" class="mbtn" id="plHeat">🌈 히트맵</button>
-    </div>
-    <div id="plHeatKind" style="display:none;font-size:10.5px;color:#6f8073;margin-top:5px;text-align:center">
-      <a href="#" data-hm="light" style="color:#e8c96a">빛</a> ·
-      <a href="#" data-hm="air" style="color:#6fa8c8">바람</a> ·
-      <a href="#" data-hm="off" style="color:#9fb4a6">끄기</a>
     </div>
     <div id="plPlan" style="display:none;margin-top:8px"></div>
   </div>
@@ -295,28 +299,113 @@ scene.add(new THREE.AmbientLight(0xffffff,0.28));
 const floor=new THREE.Mesh(new THREE.PlaneGeometry(W,D),new THREE.MeshStandardMaterial({color:0x1a221d,roughness:1}));
 floor.rotation.x=-Math.PI/2; floor.receiveShadow=true; scene.add(floor);
 scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(W,H,D)),new THREE.LineBasicMaterial({color:0x3f5a49})).translateY(H/2));
-// 조명·팬은 실제 케이지 배치(/api/environment)를 그대로 세운다.
-// 점수 계산이 쓰는 위치와 3D 에 보이는 위치가 같아야 디지털 트윈이다.
+// 조명은 실제 케이지 배치(/api/environment)를 그대로 세운다. 점수 계산이 쓰는
+// 위치와 3D 에 보이는 위치가 같아야 디지털 트윈이다. 3D 에서 끌어다 옮기면
+// 그 자리가 그대로 계산에 반영된다.
 let rig=new THREE.Group(); scene.add(rig);
+let ENV_LIGHTS=[];
+const LIGHT_HANDLE_MAT=new THREE.MeshStandardMaterial({color:0xff86c8,emissive:0xff86c8,emissiveIntensity:0.9});
 function buildRig(env){
+  ENV_LIGHTS=(env.lights||[]).map(l=>({...l}));
   scene.remove(rig); rig=new THREE.Group(); scene.add(rig);
-  (env.lights||[]).forEach(l=>{
-    const pn=new THREE.Mesh(new THREE.BoxGeometry(10,1,6),new THREE.MeshStandardMaterial({color:0xff86c8,emissive:0xff86c8,emissiveIntensity:0.9}));
-    pn.position.set(l.x,l.y,l.z); rig.add(pn);
-    const sp=new THREE.SpotLight(0xffe1f1,0.7*(l.power||1),0,Math.PI/3,0.5,1.0);
-    sp.position.set(l.x,l.y,l.z); sp.target.position.set(l.x*0.35,0,l.z*0.35);
+  ENV_LIGHTS.forEach((l,i)=>{
+    const pn=new THREE.Mesh(new THREE.BoxGeometry(10,1,6),LIGHT_HANDLE_MAT);
+    pn.userData.lightIndex=i; rig.add(pn);
+    // 판을 정확히 겨냥하기 힘드니 잡기 쉬운 투명 손잡이를 둘레에 겹쳐 둔다
+    const grab=new THREE.Mesh(new THREE.SphereGeometry(6,10,10),new THREE.MeshBasicMaterial({visible:false}));
+    grab.userData.lightIndex=i; pn.add(grab);
+    const sp=new THREE.SpotLight(0xffe1f1,0.7*(l.power||1),0,
+      THREE.MathUtils.degToRad(l.angle||30),0.5,1.0);
     sp.castShadow=true; rig.add(sp,sp.target);
+    l._pin=pn; l._spot=sp;
+    positionLight(i);
   });
-  (env.fans||[]).forEach(f=>{
-    const body=new THREE.Mesh(new THREE.CylinderGeometry(4,4,1.6,16),
-      new THREE.MeshStandardMaterial({color:0x6fa8c8,emissive:0x2a4f66,emissiveIntensity:0.6}));
-    body.position.set(f.x,f.y,f.z);
-    // 팬 면이 바람 방향을 향하게 눕힌다
-    body.rotation.x=Math.PI/2; body.rotation.y=Math.atan2(f.dx||0,f.dz||1);
-    rig.add(body);
-    const dir=new THREE.Vector3(f.dx||0,0,f.dz||1).normalize();
-    rig.add(new THREE.ArrowHelper(dir,new THREE.Vector3(f.x,f.y,f.z),12,0x6fa8c8,4,3));
-  });
+  renderLightPanel();
+}
+function positionLight(i){
+  const l=ENV_LIGHTS[i]; if(!l)return;
+  l._pin.position.set(l.x,l.y,l.z);
+  l._spot.position.set(l.x,l.y,l.z);
+  l._spot.angle=THREE.MathUtils.degToRad(l.angle||30);
+  l._spot.intensity=0.7*(l.power||1);
+  // 빔이 향하는 지점 — 온실 중앙 쪽으로 살짝 기울여 놓는다 (스팟등이 안쪽을 보게)
+  l._spot.target.position.set(l.x*0.35,0,l.z*0.35);
+  l._spot.target.updateMatrixWorld();
+}
+
+// ===== 조명 끌어서 옮기기 =====
+const lray=new THREE.Raycaster(), lmouse=new THREE.Vector2();
+let dragLight=null; const dragPlane=new THREE.Plane();
+function ndc(ev){
+  const r=renderer.domElement.getBoundingClientRect();
+  lmouse.x=((ev.clientX-r.left)/r.width)*2-1;
+  lmouse.y=-((ev.clientY-r.top)/r.height)*2+1;
+}
+renderer.domElement.addEventListener('pointerdown',ev=>{
+  ndc(ev); lray.setFromCamera(lmouse,camera);
+  const hit=lray.intersectObjects(rig.children,true);
+  if(!hit.length||hit[0].object.userData.lightIndex===undefined)return;
+  dragLight=hit[0].object.userData.lightIndex;
+  dragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0,1,0),hit[0].point);
+  controls.enabled=false;
+});
+addEventListener('pointermove',ev=>{
+  if(dragLight===null)return;
+  ndc(ev); lray.setFromCamera(lmouse,camera);
+  const pt=new THREE.Vector3();
+  if(!lray.ray.intersectPlane(dragPlane,pt))return;
+  const l=ENV_LIGHTS[dragLight];
+  l.x=Math.round(Math.max(-W/2,Math.min(W/2,pt.x))*10)/10;
+  l.z=Math.round(Math.max(-D/2,Math.min(D/2,pt.z))*10)/10;
+  positionLight(dragLight); renderLightPanel();
+});
+addEventListener('pointerup',()=>{
+  if(dragLight===null)return;
+  dragLight=null; controls.enabled=true; saveEnvironment();
+});
+
+function renderLightPanel(){
+  const box=document.getElementById('lightList'); if(!box)return;
+  box.innerHTML=ENV_LIGHTS.map((l,i)=>`
+    <div style="display:flex;gap:6px;align-items:center;font-size:11px;color:#e8ddc0;
+      padding:4px 6px;margin-bottom:3px;border:1px solid rgba(180,150,90,.25);border-radius:6px;background:#221e14">
+      <span>💡${i+1}</span>
+      <span style="color:#6f8073">x${l.x} z${l.z}</span>
+      <label style="margin-left:auto;display:flex;align-items:center;gap:2px">각도
+        <input type="number" class="lang" data-i="${i}" value="${l.angle||30}" min="5" max="80"
+          style="width:38px;background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:4px;padding:2px"></label>
+      <label style="display:flex;align-items:center;gap:2px">밝기
+        <input type="number" class="lpow" data-i="${i}" value="${l.power||1}" step="0.1" min="0.1" max="3"
+          style="width:40px;background:#14201a;color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:4px;padding:2px"></label>
+      <span class="x" data-i="${i}" style="cursor:pointer;color:#c98;font-size:14px">×</span>
+    </div>`).join('') || '<div style="font-size:11px;color:#6f8073">조명이 없어요</div>';
+  box.querySelectorAll('.lang,.lpow').forEach(inp=>inp.addEventListener('change',ev=>{
+    const i=+ev.target.dataset.i, key=ev.target.classList.contains('lang')?'angle':'power';
+    ENV_LIGHTS[i][key]=parseFloat(ev.target.value)||(key==='angle'?30:1);
+    positionLight(i); saveEnvironment();
+  }));
+  box.querySelectorAll('.x').forEach(btn=>btn.addEventListener('click',()=>{
+    const i=+btn.dataset.i;
+    rig.remove(ENV_LIGHTS[i]._pin); rig.remove(ENV_LIGHTS[i]._spot,ENV_LIGHTS[i]._spot.target);
+    ENV_LIGHTS.splice(i,1);
+    buildRig({lights:ENV_LIGHTS}); saveEnvironment();
+  }));
+}
+document.getElementById('lightAdd').addEventListener('click',()=>{
+  buildRig({lights:[...ENV_LIGHTS.map(({_pin,_spot,...l})=>l),{x:0,y:47,z:0,power:1,angle:30}]});
+  saveEnvironment();
+});
+document.getElementById('lightReset').addEventListener('click',()=>{
+  buildRig({lights:[{x:-22,y:47,z:17,power:1,angle:30},{x:-22,y:47,z:-13,power:1,angle:30},
+                    {x:22,y:47,z:2,power:1,angle:30}]});
+  saveEnvironment();
+});
+async function saveEnvironment(){
+  const fd=new FormData();
+  fd.append('lights',JSON.stringify(ENV_LIGHTS.map(({_pin,_spot,...l})=>l)));
+  await fetch('/api/environment',{method:'POST',body:fd});
+  await loadPlacement();
+  if(hmKind!=='off') showHeatmap(hmKind);
 }
 
 // ===== 빛·바람 히트맵 (3D 바닥) =====
@@ -612,7 +701,7 @@ async function loadPlacement(){
   document.getElementById('plScore').textContent=d.spots.length?d.score:'–';
   document.getElementById('plWorst').innerHTML=d.worst.map(s=>
     `<div>${s.slot} <b style="color:${s.score<40?'#e8a64a':'#9fb4a6'}">${s.score}점</b>`
-    +` <span style="color:#5c6b60">빛 ${s.light} · 그늘 ${s.shade} · 바람 ${s.air}</span></div>`).join('')
+    +` <span style="color:#5c6b60">빛 ${s.light} · 그늘 ${s.shade}</span></div>`).join('')
     || '<div>식물을 등록하면 자리별 점수가 나옵니다</div>';
 }
 document.getElementById('plOpt').addEventListener('click',async()=>{
@@ -635,25 +724,18 @@ document.getElementById('plOpt').addEventListener('click',async()=>{
     if(!r.ok){ scanStatus.textContent='⚠️ 반영 실패'; return; }
     const res=await r.json();
     box.style.display='none'; planSwaps=null;
-    scanStatus.textContent=`✅ ${res.applied}쌍 반영 · 배치 점수 ${res.score}`;
+    scanStatus.textContent=`✅ ${res.applied}개 이동 반영 · 배치 점수 ${res.score}`;
     await loadAll();
   });
 });
-document.getElementById('plHeat').addEventListener('click',()=>{
-  const pick=document.getElementById('plHeatKind');
-  const on=pick.style.display==='none';
-  pick.style.display=on?'block':'none';
-  showHeatmap(on?(hmKind==='off'?'light':hmKind):'off');
-});
-document.getElementById('plHeatKind').addEventListener('click',ev=>{
-  const kind=ev.target.dataset.hm; if(!kind)return;
-  ev.preventDefault(); showHeatmap(kind);
-});
+document.getElementById('plHeat').addEventListener('click',()=>showHeatmap(hmKind==='off'?'light':'off'));
 async function showHeatmap(kind){
   hmKind=kind;
-  if(kind==='off'){ hmPlane.visible=false; return; }
-  const d=await(await fetch('/api/placement/heatmap?cols=40&rows=27&occupied=1')).json();
-  paintHeatmap(d[kind],kind);
+  const btn=document.getElementById('plHeat');
+  if(kind==='off'){ hmPlane.visible=false; btn.style.background='#24382c'; return; }
+  btn.style.background='#2e7d32';
+  const d=await(await fetch('/api/placement/heatmap?cols=40&rows=27')).json();
+  paintHeatmap(d.light,'light');
 }
 async function loadEnvironment(){
   try{ buildRig(await(await fetch('/api/environment')).json()); }catch(e){}

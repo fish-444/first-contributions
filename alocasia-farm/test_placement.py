@@ -2,9 +2,10 @@
 
 실행:  python3 test_placement.py
 
-'어느 화분에 어느 식물을 두면 잘 자라나'를 계산하는 부분. 물리가 그럴듯한지
-(조명에 가까우면 밝다, 큰 이웃이 그늘을 만든다, 팬 뒤쪽은 바람이 없다)와
-자리를 바꿔서 점수가 실제로 올라가는지를 확인한다.
+'어느 화분에 어느 식물을 두면 잘 자라나'를 계산하는 부분. 팬은 없고 빛만 본다.
+조명은 화분 자리를 표시할 때 찍어 둔 세 지점이 기본값이고, 사람이 실측 위치로
+바꿀 수 있다. 물리가 그럴듯한지(조명에 가까우면 밝다, 빔 각도 밖은 안 비친다,
+큰 이웃이 그늘을 만든다)와 자리를 바꿔서 점수가 실제로 올라가는지를 확인한다.
 """
 
 import asyncio
@@ -37,24 +38,47 @@ def _reset():
 
 # ── 빛 ───────────────────────────────────────────────────────────────────
 def test_under_the_lamp_is_brighter_than_the_corner():
-    lamp = [{"x": 0.0, "y": 40.0, "z": 0.0, "power": 1.0}]
+    lamp = [{"x": 0.0, "y": 40.0, "z": 0.0, "power": 1.0, "angle": 60}]
     middle = placement.illuminance(0, 0, lamp)
     corner = placement.illuminance(-28, -18, lamp)
-    assert middle > corner * 1.5, (middle, corner)
+    assert middle > corner, (middle, corner)
 
 
 def test_light_falls_off_with_distance_squared():
     """거리가 2배면 밝기는 대략 1/4 이하 (입사각까지 더 나빠진다)."""
-    lamp = [{"x": 0.0, "y": 20.0, "z": 0.0, "power": 1.0}]
+    lamp = [{"x": 0.0, "y": 20.0, "z": 0.0, "power": 1.0, "angle": 89}]
     near = placement.illuminance(0, 0, lamp, canopy_y_cm=0)      # 20cm 아래
     far = placement.illuminance(0, 0, lamp, canopy_y_cm=-20)     # 40cm 아래
     assert far < near / 4 * 1.05, (near, far)
 
 
 def test_two_lamps_beat_one():
-    one = [{"x": 0.0, "y": 40.0, "z": 0.0}]
-    two = one + [{"x": 10.0, "y": 40.0, "z": 0.0}]
+    one = [{"x": 0.0, "y": 40.0, "z": 0.0, "angle": 60}]
+    two = one + [{"x": 10.0, "y": 40.0, "z": 0.0, "angle": 60}]
     assert placement.illuminance(5, 0, two) > placement.illuminance(5, 0, one)
+
+
+def test_outside_the_beam_angle_gets_nothing():
+    """스팟등이라 빔 반각 밖은 아예 안 비친다."""
+    narrow = [{"x": 0.0, "y": 30.0, "z": 0.0, "power": 1.0, "angle": 15}]
+    under = placement.illuminance(0, 0, narrow)          # 바로 아래 — 빔 안
+    far_side = placement.illuminance(25, 0, narrow)       # 30cm 높이에서 25cm 옆 — 빔 밖
+    assert under > 0 and far_side == 0.0, (under, far_side)
+
+
+def test_a_wider_beam_covers_more_ground():
+    # y=30, canopy=18 → 수직 거리 12cm. 옆으로 10cm면 입사각 ≈ atan(10/12) ≈ 40도.
+    lamp_x = lambda angle: {"x": 0.0, "y": 30.0, "z": 0.0, "power": 1.0, "angle": angle}
+    assert placement.illuminance(10, 0, [lamp_x(15)]) == 0.0
+    assert placement.illuminance(10, 0, [lamp_x(45)]) > 0.0
+
+
+def test_default_lights_sit_where_pots_were_first_marked():
+    """기본 조명은 화분 자리를 처음 표시할 때 찍은 세 지점이다."""
+    assert len(placement.DEFAULT_LIGHTS) == 3
+    xz = {(round(l["x"]), round(l["z"])) for l in placement.DEFAULT_LIGHTS}
+    assert xz == {(-22, 17), (-22, -13), (22, 2)}, xz
+    assert all(l.get("angle") == 30 for l in placement.DEFAULT_LIGHTS)
 
 
 # ── 그늘 ─────────────────────────────────────────────────────────────────
@@ -86,35 +110,6 @@ def test_shade_never_exceeds_everything():
     assert placement.shade_factor(small, crowd) == 1.0
 
 
-# ── 바람 ─────────────────────────────────────────────────────────────────
-def test_behind_the_fan_there_is_no_wind():
-    fan = [{"x": 0.0, "y": 25.0, "z": -28.0, "dx": 0.0, "dz": 1.0}]
-    downwind = placement.airflow(0, 0, fan)
-    upwind = placement.airflow(0, -35, fan)      # 팬 뒤쪽
-    assert downwind > 0 and upwind == 0.0, (downwind, upwind)
-
-
-def test_wind_weakens_with_distance():
-    fan = [{"x": 0.0, "y": 25.0, "z": -28.0, "dx": 0.0, "dz": 1.0}]
-    assert placement.airflow(0, -10, fan) > placement.airflow(0, 18, fan)
-
-
-def test_a_big_plant_upwind_blocks_the_wind():
-    """바람 위쪽에 대품이 서 있으면 뒤쪽은 습기가 안 빠진다."""
-    fan = [{"x": 0.0, "y": 25.0, "z": -28.0, "dx": 0.0, "dz": 1.0}]
-    blocker = [_spot("C5", 0, -5, r_cm=22, h_cm=48)]
-    clear = placement.airflow(0, 10, fan)
-    behind = placement.airflow(0, 10, fan, blocker)
-    assert behind < clear * 0.8, (clear, behind)
-    # 축에서 옆으로 비켜날수록 덜 막힌다
-    def loss(x_cm):
-        return 1 - placement.airflow(x_cm, 10, fan, blocker) / placement.airflow(x_cm, 10, fan)
-    assert loss(0) > loss(14) > loss(28), [round(loss(v), 3) for v in (0, 14, 28)]
-    # 잎우산 밖으로 완전히 벗어난 길은 그대로다
-    narrow = [_spot("C5", -20, -5, r_cm=8, h_cm=20)]
-    assert placement.airflow(20, 10, fan, narrow) == placement.airflow(20, 10, fan)
-
-
 # ── 채점 ─────────────────────────────────────────────────────────────────
 def test_score_reports_every_spot():
     spots = [_spot("C3", -10, 0), _spot("C7", 10, 0)]
@@ -122,14 +117,8 @@ def test_score_reports_every_spot():
     assert 0 <= got["score"] <= 100
     assert {s["slot"] for s in got["spots"]} == {"C3", "C7"}
     for s in got["spots"]:
-        for key in ("light", "shade", "air", "score", "need_light", "need_air"):
+        for key in ("light", "shade", "score", "need_light"):
             assert key in s, (key, s)
-
-
-def test_a_dense_plant_needs_more_air():
-    airy = placement._need_air(_plant("p1", "C3", density=0))
-    packed = placement._need_air(_plant("p2", "C4", density=90))
-    assert packed > airy
 
 
 def test_a_big_plant_needs_more_light():
@@ -150,7 +139,7 @@ def test_empty_farm_scores_zero_without_crashing():
 # ── 최적화 ───────────────────────────────────────────────────────────────
 def test_swapping_a_shaded_small_plant_helps():
     """어두운 구석의 대품과 밝은 자리의 소품을 바꾸면 점수가 올라야 한다."""
-    lamp = [{"x": -25.0, "y": 40.0, "z": 0.0}]
+    lamp = [{"x": -25.0, "y": 40.0, "z": 0.0, "angle": 60}]
     big = _plant("big", "C2", "대품", leaf_cm=22)
     small = _plant("small", "C9", "소품", leaf_cm=6)
     spots = [_spot("C2", 25, 0, small, r_cm=6, h_cm=13),    # 밝은 자리에 소품
@@ -163,7 +152,7 @@ def test_swapping_a_shaded_small_plant_helps():
 
 def test_every_plant_gets_exactly_one_new_home():
     """제안이 '한 자리에 둘'이 되면 사람이 실행할 수 없다."""
-    lamp = [{"x": -25.0, "y": 40.0, "z": 0.0}]
+    lamp = [{"x": -25.0, "y": 40.0, "z": 0.0, "angle": 60}]
     spots = [_spot("C1", -25, 0, _plant("a", "C1", "소품", leaf_cm=6), 6, 13),
              _spot("C5", 0, 0, _plant("b", "C5", "중품", leaf_cm=13), 13, 28),
              _spot("C9", 25, 0, _plant("c", "C9", "대품", leaf_cm=22), 22, 48)]
@@ -180,14 +169,13 @@ def test_every_plant_gets_exactly_one_new_home():
 
 def test_a_three_way_rotation_is_reported_as_a_ring():
     """둘씩 맞바꿔서 안 끝나는 배치는 '고리'로 알려 줘야 한다."""
-    lamp = [{"x": -28.0, "y": 40.0, "z": -18.0}]
-    fan = [{"x": 28.0, "y": 25.0, "z": 18.0, "dx": -1.0, "dz": -1.0}]
+    lamp = [{"x": -28.0, "y": 40.0, "z": -18.0, "angle": 70}]
     grades = ["대품", "소품", "중품", "대품", "소품", "중품"]
     spots = [_spot(f"C{i+1}", -25 + i * 10, (i % 2) * 12 - 6,
                    _plant(f"p{i}", f"C{i+1}", g, density=i * 15),
                    *placement.GRADE_SHAPE[g])
              for i, g in enumerate(grades)]
-    res = placement.optimize(spots, lamp, fan)
+    res = placement.optimize(spots, lamp)
     moved = {m["from"] for m in res["moves"]}
     # 고리에 든 자리를 다 합치면 움직이는 자리 전체와 같아야 한다
     assert {s for ring in res["cycles"] for s in ring} == moved, (res["cycles"], moved)
@@ -202,7 +190,7 @@ def test_one_plant_has_nothing_to_swap():
 
 
 def test_optimize_never_makes_it_worse():
-    lamp = [{"x": -20.0, "y": 40.0, "z": 10.0}]
+    lamp = [{"x": -20.0, "y": 40.0, "z": 10.0, "angle": 60}]
     grades = ["소품", "중품", "대품", "중품", "소품"]
     spots = [_spot(f"C{i+1}", -24 + i * 12, 0, _plant(f"p{i}", f"C{i+1}", g))
              for i, g in enumerate(grades)]
@@ -216,26 +204,32 @@ def test_heatmap_covers_the_shelf():
     assert hm["cols"] == 10 and hm["rows"] == 7
     assert len(hm["light"]) == 7 and len(hm["light"][0]) == 10
     assert max(v for row in hm["light"] for v in row) == 1.0   # 제일 밝은 곳이 1
-    assert all(0 <= v <= 1 for row in hm["air"] for v in row)
 
 
 # ── 엔드포인트 ───────────────────────────────────────────────────────────
-def test_environment_defaults_then_takes_real_positions():
+def test_environment_defaults_to_the_originally_marked_lights():
     _reset()
-    assert main.get_environment()["custom"] is False
+    env = main.get_environment()
+    assert env["custom"] is False
+    assert env["lights"] == placement.DEFAULT_LIGHTS
+    _reset()
+
+
+def test_environment_then_takes_real_positions():
+    _reset()
     asyncio.run(main.set_environment(
-        lights=json.dumps([{"x": 0, "y": 55, "z": 0, "power": 2}]), fans=None))
+        lights=json.dumps([{"x": 0, "y": 55, "z": 0, "power": 2, "angle": 25}])))
     env = main.get_environment()
     assert env["custom"] is True and env["lights"][0]["y"] == 55
-    assert env["fans"] == placement.DEFAULT_FANS      # 안 준 쪽은 기본값 유지
+    assert env["lights"][0]["angle"] == 25
     _reset()
 
 
 def test_bad_environment_is_refused():
     _reset()
-    for bad in ("{oops", json.dumps({"x": 1}), json.dumps([{"y": 40}])):
+    for bad in ("{oops", json.dumps({"x": 1}), json.dumps([{"y": 40}]), json.dumps([])):
         try:
-            asyncio.run(main.set_environment(lights=bad, fans=None))
+            asyncio.run(main.set_environment(lights=bad))
         except HTTPException as e:
             assert e.status_code == 400
         else:
@@ -369,17 +363,8 @@ def test_apply_refuses_junk():
 
 def test_heatmap_endpoint_clamps_silly_sizes():
     _reset()
-    assert main.get_heatmap(cols=999, rows=1, occupied=None)["cols"] == 60
-    assert main.get_heatmap(cols=1, rows=999, occupied=None)["rows"] == 40
-    _reset()
-
-
-def test_heatmap_can_include_the_plants_standing_there():
-    _farm(["대품", "대품", "대품"])
-    plain = main.get_heatmap(cols=10, rows=7, occupied=None)
-    blocked = main.get_heatmap(cols=10, rows=7, occupied="1")
-    total = lambda hm: sum(v for row in hm["air"] for v in row)
-    assert total(blocked) < total(plain), (total(plain), total(blocked))
+    assert main.get_heatmap(cols=999, rows=1)["cols"] == 60
+    assert main.get_heatmap(cols=1, rows=999)["rows"] == 40
     _reset()
 
 
