@@ -146,6 +146,12 @@
       모서리가 안 보일 때 · 아는 화분 4개 이상만 찍으면 됩니다
     </div>
   </div>
+  <!-- 화분 하나씩 모달을 열지 않고, 트레이 전체에 준 물주기를 한 번에 기록한다 -->
+  <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
+    <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">💧 <b>물주기</b></div>
+    <button type="button" class="mbtn" id="waterAllBtn" style="width:100%">전체 화분에 물 줬어요</button>
+    <div id="waterAllInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px"></div>
+  </div>
   <!-- 조명 위치를 계산해 '어느 화분에 어느 식물을 둘까'를 제안한다 -->
   <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
     <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">💡 <b>조명 위치</b> — 좌·우 레일 3개</div>
@@ -474,7 +480,7 @@ function makeAlocasia(unit,counts){
     const mul=stage==='shoot'?0.6:stage==='old'?1.15:1.0;         // 새순 작게, 늙은잎 크게
     const bs=(1.5+(i%3)*0.35)*unit*mul; bl.scale.set(bs,bs,bs);
     bl.position.set(px*(0.5*unit+petH*0.5*lean+bs*0.2),(petH+Math.cos(lean)*0.3*unit)*0.98,pz*(0.5*unit+petH*0.5*lean+bs*0.2));
-    bl.rotation.y=-ang+Math.PI/2; bl.rotation.x=-1.12-lean*0.3; bl.castShadow=true; g.add(bl);
+    bl.rotation.y=-ang+Math.PI/2; bl.rotation.x=-1.38-lean*0.15; bl.castShadow=true; g.add(bl);
   }
   return g;}
 // 3D 식물 크기 = 모델1의 '맨 위 잎' 크기
@@ -1048,6 +1054,16 @@ document.getElementById('mWaterBtn').addEventListener('click',async()=>{
   const p=await r.json();
   objs[modalId].data=p; rebuildObj(p); refreshList();
   openModal(p);
+});
+// 전체 화분 물주기 — 모달을 하나씩 열지 않고 트레이 전체를 한 번에 기록
+document.getElementById('waterAllBtn').addEventListener('click',async()=>{
+  const info=document.getElementById('waterAllInfo');
+  info.textContent='기록 중…';
+  const r=await fetch('/api/water-all',{method:'POST'});
+  if(!r.ok){ info.textContent='⚠️ 실패'; return; }
+  const res=await r.json();
+  info.textContent=res.watered?`✅ 화분 ${res.watered}개에 오늘 날짜로 기록했어요`:'등록된 화분이 없어요';
+  await loadAll();
 });
 // 자리 이동 — 자동 배치(스캔·화분 최근접)가 틀렸을 때 손으로 옮긴다.
 // 목적지에 이미 식물이 있으면 서버가 자동으로 서로 자리를 맞바꾼다.

@@ -386,6 +386,43 @@ def test_list_plants_reports_water_status_for_everyone():
     _reset()
 
 
+def _second_plant(pid, **kw):
+    p = {"id": pid, "name": "테스트2", "pos": "D8", "x": 5, "z": 5, "rot": 0,
+         "size_class": "중품", "leaf_count": 2, "shoot_count": 0,
+         "mature_count": 2, "old_count": 0, "top_leaf_size": "중엽",
+         "top_leaf_pct": 8.0, "overlap_count": 0, "overlap_density": 0,
+         "updated": "2026-01-01 00:00:00"}
+    p.update(kw)
+    main.PLANTS[pid] = p
+    return p
+
+
+def test_water_all_waters_every_plant_in_one_call():
+    """모달을 하나씩 열지 않고, 트레이를 통째로 준 물주기를 한 번에 기록한다."""
+    _plant()
+    _second_plant("t2", last_watered=(date.today() - timedelta(days=10)).isoformat())
+    res = main.water_all_plants()
+    assert res["watered"] == 2
+    for pid in ("t1", "t2"):
+        assert main.PLANTS[pid]["days_since_watered"] == 0
+        assert main.PLANTS[pid]["soil_dry"] is False
+    _reset()
+
+
+def test_water_all_includes_undetected_pots():
+    """'미검출' 화분도 물리적으로는 물을 받으니 똑같이 기록해야 한다."""
+    _plant(size_class="미검출", empty=True, last_watered=None)
+    main.water_all_plants()
+    assert main.PLANTS["t1"]["days_since_watered"] == 0
+    _reset()
+
+
+def test_water_all_on_an_empty_farm_does_not_crash():
+    _reset()
+    res = main.water_all_plants()
+    assert res["watered"] == 0
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

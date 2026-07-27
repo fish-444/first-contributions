@@ -1341,6 +1341,24 @@ def water_plant(pid: str):
     save_state()
     return p
 
+
+@app.post("/api/water-all")
+def water_all_plants():
+    """화분 전체 구역에 한 번에 오늘 물을 줬다고 기록한다.
+
+    한 포기씩 모달을 열어 누르는 대신, 트레이를 통째로 준 실제 물주기를 한 번에
+    반영하는 자리다. '미검출'(잎이 안 잡힌) 화분도 물리적으로는 물을 받으므로
+    똑같이 기록한다.
+    """
+    today = date.today().isoformat()
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    for p in PLANTS.values():
+        p["last_watered"] = today
+        p["updated"] = now
+        _augment_water(p)
+    save_state()
+    return {"ok": True, "watered": len(PLANTS)}
+
 # 품 등급은 '가장 큰 잎의 긴 변 길이(cm)'로 가른다.
 # 사진 전체 면적 대비 비율로 재던 예전 방식은 구도에 휘둘렸다 — 같은 식물도
 # 가까이 찍으면 대품, 멀리서 찍으면 소품이 됐고, 농장 전체 사진에서는 한 개체가
