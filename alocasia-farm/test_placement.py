@@ -75,10 +75,18 @@ def test_a_wider_beam_covers_more_ground():
 
 def test_default_lights_sit_where_pots_were_first_marked():
     """기본 조명은 화분 자리를 처음 표시할 때 찍은 세 지점이다."""
-    assert len(placement.DEFAULT_LIGHTS) == 3
+    assert len(placement.DEFAULT_LIGHTS) == placement.LIGHT_COUNT == 3
     xz = {(round(l["x"]), round(l["z"])) for l in placement.DEFAULT_LIGHTS}
     assert xz == {(-22, 17), (-22, -13), (22, 2)}, xz
     assert all(l.get("angle") == 30 for l in placement.DEFAULT_LIGHTS)
+    assert {l["side"] for l in placement.DEFAULT_LIGHTS} == {"left", "right"}
+
+
+def test_rail_x_is_fixed_by_side():
+    """조명은 레일에 달려 있다 — x 는 좌/우로만 정해지고 사람이 못 바꾼다."""
+    left, right = placement.rail_x("left"), placement.rail_x("right")
+    assert left == -right and left < 0 < right
+    assert left == placement.DEFAULT_LIGHTS[0]["x"]
 
 
 # ── 그늘 ─────────────────────────────────────────────────────────────────
@@ -215,19 +223,48 @@ def test_environment_defaults_to_the_originally_marked_lights():
     _reset()
 
 
+def _three(*overrides):
+    base = [{"side": "left", "z": 17, "y": 47, "power": 1, "angle": 30},
+            {"side": "left", "z": -13, "y": 47, "power": 1, "angle": 30},
+            {"side": "right", "z": 2, "y": 47, "power": 1, "angle": 30}]
+    for i, patch in enumerate(overrides):
+        base[i] = {**base[i], **patch}
+    return base
+
+
 def test_environment_then_takes_real_positions():
     _reset()
     asyncio.run(main.set_environment(
-        lights=json.dumps([{"x": 0, "y": 55, "z": 0, "power": 2, "angle": 25}])))
+        lights=json.dumps(_three({"y": 55, "z": 5, "power": 2, "angle": 25}))))
     env = main.get_environment()
     assert env["custom"] is True and env["lights"][0]["y"] == 55
     assert env["lights"][0]["angle"] == 25
     _reset()
 
 
+def test_environment_pins_x_to_the_rail_regardless_of_what_is_sent():
+    """레일에 고정돼 있으니 x 를 직접 보내도 무시하고 side 로만 정한다."""
+    _reset()
+    sneaky = _three({"x": 0})       # 가운데로 보내 봐도
+    asyncio.run(main.set_environment(lights=json.dumps(sneaky)))
+    env = main.get_environment()
+    assert env["lights"][0]["x"] == placement.rail_x("left"), env["lights"][0]
+    _reset()
+
+
+def test_environment_z_is_clamped_to_the_shelf():
+    _reset()
+    asyncio.run(main.set_environment(lights=json.dumps(_three({"z": 999}))))
+    env = main.get_environment()
+    assert env["lights"][0]["z"] == main._D / 2, env["lights"][0]
+    _reset()
+
+
 def test_bad_environment_is_refused():
     _reset()
-    for bad in ("{oops", json.dumps({"x": 1}), json.dumps([{"y": 40}]), json.dumps([])):
+    bad_count = json.dumps(_three()[:2])          # 2개뿐 — 레일엔 3개가 달려 있다
+    bad_side = json.dumps(_three({"side": "middle"}))
+    for bad in ("{oops", json.dumps({"x": 1}), json.dumps([]), bad_count, bad_side):
         try:
             asyncio.run(main.set_environment(lights=bad))
         except HTTPException as e:

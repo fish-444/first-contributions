@@ -19,11 +19,28 @@ import os
 from typing import Dict, List
 
 # --------------------------------------------------------------------------- 환경
-# 조명은 원래 화분 자리를 표시할 때 찍어 둔 세 지점 그대로다(선반 위 47cm).
-# 실제 위치는 사람이 조절한다 — GET/POST /api/environment.
-DEFAULT_LIGHTS = [{"x": -22.0, "y": 47.0, "z": 17.0, "power": 1.0, "angle": 30.0},
-                  {"x": -22.0, "y": 47.0, "z": -13.0, "power": 1.0, "angle": 30.0},
-                  {"x": 22.0, "y": 47.0, "z": 2.0, "power": 1.0, "angle": 30.0}]
+# 조명은 실제로 좌측·우측 레일에 3개 달려 있다(2개+1개) — 실측 위치를 넣기
+# 전까지는 화분 자리를 처음 표시할 때 찍었던 세 지점을 그대로 쓴다(선반 위 47cm).
+# 레일에 고정돼 있으니 좌우(x)는 못 옮기고, 레일을 따라(z) 위치만 조절한다.
+SHELF_W_CM = float(os.environ.get("SHELF_W_CM", "60"))
+RAIL_MARGIN_CM = float(os.environ.get("RAIL_MARGIN_CM", "8"))     # 벽에서 레일까지
+LIGHT_COUNT = 3
+
+
+def rail_x(side: str, w_cm: float = None, margin_cm: float = None) -> float:
+    """레일(좌/우)의 x 좌표. 조명은 이 값에서 벗어날 수 없다."""
+    w_cm = SHELF_W_CM if w_cm is None else w_cm
+    margin_cm = RAIL_MARGIN_CM if margin_cm is None else margin_cm
+    x = w_cm / 2 - margin_cm
+    return -x if side == "left" else x
+
+
+DEFAULT_LIGHTS = [{"side": "left", "x": rail_x("left"), "y": 47.0, "z": 17.0,
+                   "power": 1.0, "angle": 30.0},
+                  {"side": "left", "x": rail_x("left"), "y": 47.0, "z": -13.0,
+                   "power": 1.0, "angle": 30.0},
+                  {"side": "right", "x": rail_x("right"), "y": 47.0, "z": 2.0,
+                   "power": 1.0, "angle": 30.0}]
 DEFAULT_ANGLE = float(os.environ.get("LIGHT_ANGLE", "30"))    # 빔 반각(도) — 스팟등 기준
 
 # 잎이 모인 높이(cm). 빛이 실제로 닿아 광합성하는 지점.

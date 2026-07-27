@@ -327,14 +327,21 @@ python3 -m uvicorn main:app --reload           # 서버 실행
 알로카시아는 직사광에 잎이 탑니다. 필요한 빛은 잎이 넓을수록 많습니다
 (`leaf_max_cm` 실측 우선, 없으면 소중대품 등급 기본값).
 
-#### 💡 조명 위치 조절
-3D 화면의 분홍 조명을 **끌어다 옮기면** 그 자리가 그대로 계산에 반영됩니다.
-기본 위치는 **화분 자리를 처음 표시할 때 찍었던 세 지점**이에요. 사이드 패널에서
-조명마다 빔 각도·밝기를 숫자로 고칠 수 있고, 추가·삭제·기본값 복귀도 됩니다.
+#### 💡 조명 위치 조절 — 좌·우 레일 3개(2+1)
+조명은 실제로 좌측·우측 레일에 3개 달려 있습니다. **레일에 고정돼 있어서
+좌우(x)로는 못 옮기고, 레일을 따라(앞뒤/z)만** 조절됩니다. 3D 화면에서 분홍
+조명을 끌면 그 방향으로만 움직이고, 옆으로 끌어도 레일 밖으로는 안 나갑니다.
+회색 막대가 레일이에요.
+
+기본 위치는 **화분 자리를 처음 표시할 때 찍었던 세 지점**이고,
+사이드 패널에서 조명마다 좌/우 레일 전환·빔 각도·밝기를 고칠 수 있습니다.
+개수는 3개로 고정입니다(레일에 물리적으로 달린 개수라 늘고 줄지 않아요).
 
 ```bash
 curl -X POST localhost:8123/api/environment \
-  -F 'lights=[{"x":-22,"y":47,"z":17,"power":1,"angle":30},{"x":22,"y":47,"z":2,"power":1,"angle":30}]'
+  -F 'lights=[{"side":"left","z":17,"power":1,"angle":30},
+              {"side":"left","z":-13,"power":1,"angle":30},
+              {"side":"right","z":2,"power":1,"angle":30}]'
 ```
 
 #### 제안은 '고리'로 나옵니다
@@ -472,11 +479,11 @@ python3 test_placement.py     # 조명·그늘·통풍 · 배치 최적화 (네�
 | GET | `/api/leaves` | 잎 낱개 + 화분별 집계 (`?ambiguous=1`) |
 | PATCH | `/api/leaves/{leaf_id}` | `pot_slot` → 잎 소속 화분 변경 |
 | DELETE | `/api/leaves/fixes` | 손으로 옮긴 잎 기억 지우기 |
-| GET | `/api/placement` | 배치 점수 + 자리별 빛·그늘·바람 |
+| GET | `/api/placement` | 배치 점수 + 자리별 빛·그늘 |
 | POST | `/api/placement/optimize` | 최적 배치 제안 (제안만, 기록 불변) |
 | POST | `/api/placement/apply` | `moves` → 옮긴 결과를 기록에 반영 |
-| GET | `/api/placement/heatmap` | 선반 전체 빛·바람 분포 |
-| GET·POST | `/api/environment` | 조명·팬 실측 위치(cm) |
+| GET | `/api/placement/heatmap` | 선반 전체 빛 분포 |
+| GET·POST | `/api/environment` | 조명 위치 — 좌·우 레일 3개, `z`(레일 방향)만 조절 |
 | PATCH | `/api/plants/{id}` | `name` / `rot` / `size_class` / `shoot_count` · `mature_count` · `old_count` |
 | POST | `/api/plants/{id}/reanalyze` | `file` → 새 사진으로 갱신 |
 | DELETE | `/api/plants/{id}` | 제거 |

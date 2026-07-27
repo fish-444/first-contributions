@@ -1360,9 +1360,10 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
 
 
 # --------------------------------------------------------------------------- 배치
-# 조명 위치는 케이지마다 다르다. 기본값(화분 자리를 처음 표시할 때 쓴 세 지점)을
-# 쓰다가 실제 위치를 사람이 넣으면 그때부터 그 값으로 계산한다. 저장되므로
-# 한 번만 넣으면 된다. 팬은 없다 — 빛만 본다.
+# 조명은 실제로 좌측·우측 레일에 3개(2+1) 달려 있다. 레일에 고정돼 있으니
+# 좌우(x)는 못 옮기고 레일을 따라(z)만 조절한다 — 기본값(화분 자리를 처음
+# 표시할 때 쓴 세 지점)을 쓰다가 실제 위치를 사람이 넣으면 그 값으로 계산한다.
+# 저장되므로 한 번만 넣으면 된다. 팬은 없다 — 빛만 본다.
 def _env():
     return ENVIRONMENT.get("lights") or placement.DEFAULT_LIGHTS
 
@@ -1374,23 +1375,39 @@ def _spots():
 @app.get("/api/environment")
 def get_environment():
     """조명 위치(cm). 안 넣었으면 기본값을 그대로 돌려준다."""
-    return {"lights": _env(), "shelf": {"w": _W, "d": _D}, "custom": bool(ENVIRONMENT)}
+    return {"lights": _env(), "shelf": {"w": _W, "d": _D},
+            "rail_margin": placement.RAIL_MARGIN_CM, "custom": bool(ENVIRONMENT)}
 
 
 @app.post("/api/environment")
 async def set_environment(lights: str = Form(...)):
-    """조명 `[{x,y,z,power,angle}]` 을 실좌표 cm 로. `angle` 은 빔 반각(도), 기본 30."""
+    """조명 `[{side,z,y,power,angle}]` 을 실좌표 cm 로.
+
+    `side` 는 `left`/`right` — 레일에 고정된 x 는 여기서 정해진다(사람이 못 정함).
+    `angle` 은 빔 반각(도), 기본 30. 레일에 조명이 3개(고정) 달려 있다.
+    """
     import json
     try:
         val = json.loads(lights)
     except ValueError:
         raise HTTPException(400, "lights 를 읽을 수 없어요 (JSON 형식).")
-    if not isinstance(val, list) or not val:
-        raise HTTPException(400, "조명을 하나 이상 넣어 주세요.")
-    for item in val:
-        if not isinstance(item, dict) or "x" not in item or "z" not in item:
-            raise HTTPException(400, "조명 항목에 x·z 가 있어야 해요.")
-    ENVIRONMENT["lights"] = val
+    if not isinstance(val, list) or len(val) != placement.LIGHT_COUNT:
+        raise HTTPException(400, f"조명은 {placement.LIGHT_COUNT}개여야 해요 (레일에 고정된 개수).")
+    norm = []
+    for i, item in enumerate(val):
+        if not isinstance(item, dict) or item.get("side") not in ("left", "right"):
+            raise HTTPException(400, f"{i + 1}번째 조명의 side 는 left/right 여야 해요.")
+        try:
+            z_cm = min(max(float(item.get("z", 0.0)), -_D / 2), _D / 2)
+            y_cm = float(item.get("y", 47.0))
+            power = max(0.1, min(3.0, float(item.get("power", 1.0))))
+            angle = max(5.0, min(80.0, float(item.get("angle", placement.DEFAULT_ANGLE))))
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"{i + 1}번째 조명 값이 이상해요.")
+        norm.append({"side": item["side"], "x": placement.rail_x(item["side"], _W),
+                    "y": round(y_cm, 1), "z": round(z_cm, 1),
+                    "power": round(power, 2), "angle": round(angle, 1)})
+    ENVIRONMENT["lights"] = norm
     save_state()
     return get_environment()
 
