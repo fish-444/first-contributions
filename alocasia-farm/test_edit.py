@@ -126,6 +126,59 @@ def test_renaming_alone_is_not_a_hand_edit():
     _reset()
 
 
+# ── 크기 등급 (잎 실측 길이) ────────────────────────────────────────────
+def _leaf(long_side, cls="mature leaf"):
+    return box(500, 400, long_side, long_side * 0.6, cls)
+
+
+def test_grade_comes_from_the_biggest_leaf_in_cm():
+    """선반 폭(60cm)을 알면 잎을 실제 길이로 재서 등급을 매긴다."""
+    cm_per_unit = 60.0 / 1000                      # 캔버스 1000 = 선반 60cm
+    for long_side, expect in [(100, "소품"), (220, "중품"), (330, "대품")]:
+        m = main.analyze_metrics([_leaf(long_side)], 1000 * 667, cm_per_unit)
+        assert m["size_class"] == expect, (long_side, m["leaf_max_cm"], m["size_class"])
+        assert m["leaf_max_cm"] == round(long_side * cm_per_unit, 1)
+
+
+def test_grade_uses_the_biggest_leaf_not_the_count():
+    """잎이 많아도 다 작으면 소품, 한 장이라도 크면 대품."""
+    cm = 60.0 / 1000
+    many_small = main.analyze_metrics([_leaf(90) for _ in range(12)], 1000 * 667, cm)
+    one_big = main.analyze_metrics([_leaf(340)], 1000 * 667, cm)
+    assert many_small["size_class"] == "소품", many_small
+    assert one_big["size_class"] == "대품", one_big
+
+
+def test_grade_ignores_how_close_the_photo_was_taken():
+    """같은 식물을 가까이/멀리 찍어도 실측이면 등급이 안 흔들린다."""
+    near = main.analyze_metrics([_leaf(400)], 1000 * 667, cm_per_unit=60.0 / 2000)
+    far = main.analyze_metrics([_leaf(200)], 1000 * 667, cm_per_unit=60.0 / 1000)
+    assert near["leaf_max_cm"] == far["leaf_max_cm"] == 12.0
+    assert near["size_class"] == far["size_class"] == "중품"
+
+
+def test_grade_without_scale_falls_back_to_ratio():
+    """배율을 모르는 개체 사진 1장에서도 등급은 나와야 한다."""
+    m = main.analyze_metrics([_leaf(900)], 1000 * 1000, cm_per_unit=None)
+    assert m["leaf_max_cm"] is None
+    assert m["size_class"] in main.SIZE_CLASSES
+
+
+def test_grade_thresholds_are_tunable():
+    assert main.grade_by_leaf_cm(main.LEAF_SMALL_CM) == "소품"
+    assert main.grade_by_leaf_cm(main.LEAF_SMALL_CM + 0.1) == "중품"
+    assert main.grade_by_leaf_cm(main.LEAF_LARGE_CM) == "중품"
+    assert main.grade_by_leaf_cm(main.LEAF_LARGE_CM + 0.1) == "대품"
+
+
+def test_hand_set_grade_survives_a_keep_scan():
+    """자동 판정이 틀렸을 때 손으로 고친 등급은 유지된다."""
+    _plant(size_class="중품")
+    p = _patch(size_class="대품")
+    assert p["size_class"] == "대품" and p["manual"] is True
+    _reset()
+
+
 # ── 스캔 모드 ────────────────────────────────────────────────────────────
 def _scan(mode, boxes):
     orig = main.detect_boxes

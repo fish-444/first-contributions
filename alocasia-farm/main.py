@@ -518,7 +518,12 @@ def analyze_top(boxes: List[dict], img_area: float, ref_area: float = None) -> d
     return {"top_leaf_size": size, "top_leaf_pct": pct}
 
 
-def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
+def analyze_metrics(boxes: List[dict], img_area: float, cm_per_unit: float = None) -> dict:
+    """개체 지표. cm_per_unit 을 주면 잎을 실제 길이로 재서 등급을 매긴다.
+
+    cm_per_unit = 선반 폭(cm) / 박스 좌표계 폭. 한 장 스캔이면 사진 폭 기준,
+    여러 장 스캔이면 선반 캔버스 기준이라 어느 쪽이든 같은 식으로 구해진다.
+    """
     leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     leaf_count = len(leaves)
 
@@ -537,16 +542,21 @@ def analyze_metrics(boxes: List[dict], img_area: float) -> dict:
     overlap_count = len(overlapping)
     overlap_density = round(overlap_count / leaf_count * 100) if leaf_count else 0
 
-    # 크기 분류 (잎 면적 비율 + 개수)
-    coverage = sum(b["area"] for b in leaves) / img_area if img_area else 0
-    if coverage > 0.45 or leaf_count >= 9:
-        size_class = "대품"
-    elif coverage > 0.2 or leaf_count >= 5:
-        size_class = "중품"
-    else:
-        size_class = "소품"
+    # 크기 등급 — 가장 큰 잎의 긴 변 길이
+    biggest = max(leaves, key=_leaf_long_side) if leaves else None
+    leaf_max_cm = None
+    if biggest is not None and cm_per_unit:
+        leaf_max_cm = round(_leaf_long_side(biggest) * cm_per_unit, 1)
 
-    return {"size_class": size_class, "leaf_count": leaf_count,
+    if leaf_max_cm is not None:
+        size_class = grade_by_leaf_cm(leaf_max_cm)
+    else:
+        # 실측 배율을 모르는 경우(개체 사진 1장 등)엔 화면 대비 비율로 대신한다
+        pct = (biggest["area"] / img_area * 100) if (biggest and img_area) else 0
+        size_class = "대품" if pct > 18 else ("중품" if pct > 8 else "소품")
+
+    return {"size_class": size_class, "leaf_max_cm": leaf_max_cm,
+            "leaf_count": leaf_count,
             "shoot_count": counts["shoot"], "mature_count": counts["mature"],
             "old_count": counts["old"], "overlap_count": overlap_count,
             "overlap_density": overlap_density}
@@ -757,7 +767,8 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
         per_plant_area=img_area / len(groups),      # 식물 1개 몫 — 대/중/소엽 기준
         img_area=img_area,
         slot_of=(lambda g: slots.get(id(g))) if slots else None,
-        mode=scan_mode)
+        mode=scan_mode,
+        cm_per_unit=(_W / space_w) if space_w else None)
 
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "grouped_by": _grouped_by(boxes, slots),
@@ -847,7 +858,8 @@ def _ensure_pot_slots(result: List[dict]) -> None:
                  "x": xz_cm[0], "z": xz_cm[1], "rot": 0,
                  # 잎을 못 찾은 것뿐이지 '작은 식물'이라는 뜻이 아니다.
                  # 소품으로 적어 두면 실제 소품과 구분이 안 된다.
-                 "size_class": "미검출", "leaf_count": 0, "shoot_count": 0,
+                 "size_class": "미검출", "leaf_max_cm": None,
+                 "leaf_count": 0, "shoot_count": 0,
                  "mature_count": 0, "old_count": 0,
                  "top_leaf_size": "없음", "top_leaf_pct": 0.0,
                  "overlap_count": 0, "overlap_density": 0, "empty": True,
@@ -867,7 +879,8 @@ def _grouped_by(boxes: List[dict], slots: dict) -> str:
 
 def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
                      thumb_of, feat_of, per_plant_area: float, img_area: float,
-                     slot_of=None, mode: str = "update") -> List[dict]:
+                     slot_of=None, mode: str = "update",
+                     cm_per_unit: float = None) -> List[dict]:
     """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다.
 
     space_w/space_h 는 **박스가 놓인 좌표계의 크기**다. 한 장 스캔이면 사진 박스
@@ -911,7 +924,7 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
 
         metrics = {}
         metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
-        metrics.update(analyze_metrics(g, img_area))
+        metrics.update(analyze_metrics(g, img_area, cm_per_unit))
         metrics["thumb"] = thumb_of(g)
         feat = feat_of(g)
 
@@ -1082,7 +1095,7 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     result = _register_groups(groups, CANVAS, canvas_h, thumb_of, feat_of,
                               canvas_area / len(groups), canvas_area,
                               slot_of=(lambda g: slots.get(id(g))) if slots else None,
-                              mode=scan_mode)
+                              mode=scan_mode, cm_per_unit=_W / CANVAS)
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "photos": len(files), "merged_boxes": len(boxes_m),
             "deduped": dropped, "shape_groups": len(shapes), "mode": scan_mode,
@@ -1107,6 +1120,24 @@ async def reanalyze(pid: str, file: UploadFile = File(...)):
 
 
 SIZE_CLASSES = ("소품", "중품", "대품")
+
+# 품 등급은 '가장 큰 잎의 긴 변 길이(cm)'로 가른다.
+# 사진 전체 면적 대비 비율로 재던 예전 방식은 구도에 휘둘렸다 — 같은 식물도
+# 가까이 찍으면 대품, 멀리서 찍으면 소품이 됐고, 농장 전체 사진에서는 한 개체가
+# 화면의 3~5% 뿐이라 비율 조건이 아예 발동하지 않아 사실상 잎 개수로만 갈렸다.
+LEAF_SMALL_CM = float(os.environ.get("LEAF_SMALL_CM", "8"))    # 이하 → 소품
+LEAF_LARGE_CM = float(os.environ.get("LEAF_LARGE_CM", "16"))   # 초과 → 대품
+
+
+def _leaf_long_side(box: dict) -> float:
+    """잎 박스의 긴 변. 잎이 어느 방향으로 눕든 같은 값이 나오게."""
+    return max(box["x2"] - box["x1"], box["y2"] - box["y1"])
+
+
+def grade_by_leaf_cm(leaf_cm: float) -> str:
+    if leaf_cm <= LEAF_SMALL_CM:
+        return "소품"
+    return "중품" if leaf_cm <= LEAF_LARGE_CM else "대품"
 
 
 @app.patch("/api/plants/{pid}")
