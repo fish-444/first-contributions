@@ -146,6 +146,25 @@
       모서리가 안 보일 때 · 아는 화분 4개 이상만 찍으면 됩니다
     </div>
   </div>
+  <!-- 조명·통풍을 계산해 '어느 화분에 어느 식물을 둘까'를 제안한다 -->
+  <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
+    <div style="display:flex;align-items:baseline;gap:8px">
+      <div style="font-size:12px;color:#cfe0d4">☀️ <b>배치 점수</b></div>
+      <b id="plScore" style="font-size:20px;color:#7ddb9a;margin-left:auto">–</b>
+      <span style="font-size:11px;color:#6f8073">/100</span>
+    </div>
+    <div id="plWorst" style="font-size:10.5px;color:#6f8073;margin-top:5px;line-height:1.6"></div>
+    <div class="mrow" style="margin-top:8px">
+      <button type="button" class="mbtn" id="plOpt">🔀 최적 배치 계산</button>
+      <button type="button" class="mbtn" id="plHeat">🌈 히트맵</button>
+    </div>
+    <div id="plHeatKind" style="display:none;font-size:10.5px;color:#6f8073;margin-top:5px;text-align:center">
+      <a href="#" data-hm="light" style="color:#e8c96a">빛</a> ·
+      <a href="#" data-hm="air" style="color:#6fa8c8">바람</a> ·
+      <a href="#" data-hm="off" style="color:#9fb4a6">끄기</a>
+    </div>
+    <div id="plPlan" style="display:none;margin-top:8px"></div>
+  </div>
   <div id="mapWrap">
     <h2>🗺️ 온실 자리 지도</h2>
     <div id="map"></div>
@@ -276,12 +295,53 @@ scene.add(new THREE.AmbientLight(0xffffff,0.28));
 const floor=new THREE.Mesh(new THREE.PlaneGeometry(W,D),new THREE.MeshStandardMaterial({color:0x1a221d,roughness:1}));
 floor.rotation.x=-Math.PI/2; floor.receiveShadow=true; scene.add(floor);
 scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(W,H,D)),new THREE.LineBasicMaterial({color:0x3f5a49})).translateY(H/2));
-[[-22,17],[-22,-13],[22,2]].forEach(([x,z])=>{
-  const pn=new THREE.Mesh(new THREE.BoxGeometry(10,1,6),new THREE.MeshStandardMaterial({color:0xff86c8,emissive:0xff86c8,emissiveIntensity:0.9}));
-  pn.position.set(x,H-3,z); scene.add(pn);
-  const sp=new THREE.SpotLight(0xffe1f1,0.7,0,Math.PI/3,0.5,1.0); sp.position.set(x,H-3,z);
-  sp.target.position.set(x*0.35,0,z*0.35); sp.castShadow=true; scene.add(sp,sp.target);
-});
+// 조명·팬은 실제 케이지 배치(/api/environment)를 그대로 세운다.
+// 점수 계산이 쓰는 위치와 3D 에 보이는 위치가 같아야 디지털 트윈이다.
+let rig=new THREE.Group(); scene.add(rig);
+function buildRig(env){
+  scene.remove(rig); rig=new THREE.Group(); scene.add(rig);
+  (env.lights||[]).forEach(l=>{
+    const pn=new THREE.Mesh(new THREE.BoxGeometry(10,1,6),new THREE.MeshStandardMaterial({color:0xff86c8,emissive:0xff86c8,emissiveIntensity:0.9}));
+    pn.position.set(l.x,l.y,l.z); rig.add(pn);
+    const sp=new THREE.SpotLight(0xffe1f1,0.7*(l.power||1),0,Math.PI/3,0.5,1.0);
+    sp.position.set(l.x,l.y,l.z); sp.target.position.set(l.x*0.35,0,l.z*0.35);
+    sp.castShadow=true; rig.add(sp,sp.target);
+  });
+  (env.fans||[]).forEach(f=>{
+    const body=new THREE.Mesh(new THREE.CylinderGeometry(4,4,1.6,16),
+      new THREE.MeshStandardMaterial({color:0x6fa8c8,emissive:0x2a4f66,emissiveIntensity:0.6}));
+    body.position.set(f.x,f.y,f.z);
+    // 팬 면이 바람 방향을 향하게 눕힌다
+    body.rotation.x=Math.PI/2; body.rotation.y=Math.atan2(f.dx||0,f.dz||1);
+    rig.add(body);
+    const dir=new THREE.Vector3(f.dx||0,0,f.dz||1).normalize();
+    rig.add(new THREE.ArrowHelper(dir,new THREE.Vector3(f.x,f.y,f.z),12,0x6fa8c8,4,3));
+  });
+}
+
+// ===== 빛·바람 히트맵 (3D 바닥) =====
+// 어디가 밝고 어디에 바람이 안 닿는지는 숫자보다 그림이 빠르다.
+const hmCv=document.createElement('canvas');
+const hmTex=new THREE.CanvasTexture(hmCv);
+const hmPlane=new THREE.Mesh(new THREE.PlaneGeometry(W,D),
+  new THREE.MeshBasicMaterial({map:hmTex,transparent:true,opacity:0.72,depthWrite:false}));
+hmPlane.rotation.x=-Math.PI/2; hmPlane.position.y=0.25; hmPlane.visible=false; scene.add(hmPlane);
+function paintHeatmap(grid,kind){
+  const rows=grid.length, cols=grid[0].length;
+  hmCv.width=cols; hmCv.height=rows;
+  const ctx=hmCv.getContext('2d'), img=ctx.createImageData(cols,rows);
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+    const v=Math.max(0,Math.min(1,grid[r][c]));
+    // 캔버스 첫 줄(위) = uv v=1 = 판의 +y = 눕히면 월드 z=-D/2.
+    // 격자 0번 줄도 z=-D/2 라 그대로 얹으면 맞는다 (flipY 가 이미 뒤집어 준다).
+    const o=(r*cols+c)*4;
+    if(kind==='light'){ img.data[o]=40+215*v; img.data[o+1]=30+200*v; img.data[o+2]=20+40*v; }
+    else { img.data[o]=20+40*v; img.data[o+1]=90+130*v; img.data[o+2]=110+145*v; }
+    img.data[o+3]=60+150*v;
+  }
+  ctx.putImageData(img,0,0);
+  hmTex.needsUpdate=true; hmPlane.visible=true;
+}
 
 // ===== 알로카시아 모델 =====
 function leafShape(){const s=new THREE.Shape();s.moveTo(0,2.1);
@@ -380,7 +440,7 @@ async function loadAll(){
   document.getElementById('eng').textContent=d.engine;
   Object.keys(objs).forEach(removeObj);
   computePotFit(d.plants);
-  d.plants.forEach(buildObj); refreshList(); await refreshSlots(); await loadLeaves();
+  d.plants.forEach(buildObj); refreshList(); await refreshSlots(); await loadLeaves(); await loadPlacement();
 }
 function refreshList(){
   const list=document.getElementById('list'); const items=Object.values(objs).map(o=>o.data);
@@ -543,6 +603,62 @@ async function loadLeaves(){
   });
   showPotMap(CAL.potList.length>0);
 }
+// ===== 배치 최적화 =====
+// 화분 자리는 못 옮기고 식물은 옮길 수 있다. 조명·그늘·통풍을 계산해
+// '무엇과 무엇을 바꾸면 얼마나 좋아지는지'를 알려 준다. 화분은 사람이 옮긴다.
+let planSwaps=null, hmKind='off';
+async function loadPlacement(){
+  let d; try{ d=await(await fetch('/api/placement')).json(); }catch(e){ return; }
+  document.getElementById('plScore').textContent=d.spots.length?d.score:'–';
+  document.getElementById('plWorst').innerHTML=d.worst.map(s=>
+    `<div>${s.slot} <b style="color:${s.score<40?'#e8a64a':'#9fb4a6'}">${s.score}점</b>`
+    +` <span style="color:#5c6b60">빛 ${s.light} · 그늘 ${s.shade} · 바람 ${s.air}</span></div>`).join('')
+    || '<div>식물을 등록하면 자리별 점수가 나옵니다</div>';
+}
+document.getElementById('plOpt').addEventListener('click',async()=>{
+  const box=document.getElementById('plPlan');
+  box.style.display='block'; box.innerHTML='<div style="font-size:11px;color:#6f8073">계산 중…</div>';
+  const d=await(await fetch('/api/placement/optimize',{method:'POST'})).json();
+  planSwaps=d.moves;
+  if(!d.moves.length){ box.innerHTML='<div style="font-size:11px;color:#7ddb9a">✅ 지금 배치가 이미 최선이에요</div>'; return; }
+  // 둘씩 맞바꿔 끝나면 '↔', 셋 이상 돌아가면 '→ … → 처음' 으로 보여 준다
+  const ring=r=>r.length===2?`<b>${r[0]}</b> ↔ <b>${r[1]}</b>`
+    :r.map(s=>`<b>${s}</b>`).join(' → ')+` → <b>${r[0]}</b>`;
+  box.innerHTML=`<div style="font-size:11px;color:#cfe0d4;margin-bottom:5px">`
+    +`${d.before} → <b style="color:#7ddb9a">${d.after}</b>점 (+${d.gain}) · ${d.moves.length}개 이동</div>`
+    +d.cycles.map(r=>`<div style="font-size:11px;color:#e8ddc0;padding:5px 7px;margin-bottom:3px;`
+      +`border:1px solid rgba(180,150,90,.28);border-radius:6px;background:#221e14">${ring(r)}</div>`).join('')
+    +`<button type="button" class="mbtn" id="plApply" style="margin-top:6px">✅ 화분을 옮겼어요 · 기록 반영</button>`;
+  document.getElementById('plApply').addEventListener('click',async()=>{
+    const fd=new FormData(); fd.append('moves',JSON.stringify(planSwaps));
+    const r=await fetch('/api/placement/apply',{method:'POST',body:fd});
+    if(!r.ok){ scanStatus.textContent='⚠️ 반영 실패'; return; }
+    const res=await r.json();
+    box.style.display='none'; planSwaps=null;
+    scanStatus.textContent=`✅ ${res.applied}쌍 반영 · 배치 점수 ${res.score}`;
+    await loadAll();
+  });
+});
+document.getElementById('plHeat').addEventListener('click',()=>{
+  const pick=document.getElementById('plHeatKind');
+  const on=pick.style.display==='none';
+  pick.style.display=on?'block':'none';
+  showHeatmap(on?(hmKind==='off'?'light':hmKind):'off');
+});
+document.getElementById('plHeatKind').addEventListener('click',ev=>{
+  const kind=ev.target.dataset.hm; if(!kind)return;
+  ev.preventDefault(); showHeatmap(kind);
+});
+async function showHeatmap(kind){
+  hmKind=kind;
+  if(kind==='off'){ hmPlane.visible=false; return; }
+  const d=await(await fetch('/api/placement/heatmap?cols=40&rows=27&occupied=1')).json();
+  paintHeatmap(d[kind],kind);
+}
+async function loadEnvironment(){
+  try{ buildRig(await(await fetch('/api/environment')).json()); }catch(e){}
+}
+
 async function moveLeaf(slot,leafId){
   const id=leafId||pickedLeaf;
   if(!id){ scanStatus.textContent='먼저 옮길 잎을 고르세요'; return; }
@@ -873,7 +989,7 @@ document.getElementById('mReFile').addEventListener('change',async(e)=>{
 
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
-loadPots().then(loadLeaves); loadAll();
+loadEnvironment(); loadPots().then(loadLeaves); loadAll();
 </script>
 </body>
 </html>

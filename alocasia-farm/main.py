@@ -43,6 +43,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+import placement
 import providers
 
 # --------------------------------------------------------------------------- 설정
@@ -69,6 +70,8 @@ LEAVES: Dict[str, dict] = {}          # leaf_id -> 잎 하나
 # 짝지을 방법이 없다 — 대신 '그 자리에 난 잎은 이 화분 것'으로 기억해 두면
 # 재스캔해도 보정이 살아남는다. 선반 정규좌표(uv).
 LEAF_FIXES: List[dict] = []           # [{"u","v","pot_slot"}]
+# 조명·팬 실측 위치(cm). 비어 있으면 placement 의 기본값을 쓴다.
+ENVIRONMENT: dict = {}
 # 번호 붙은 자리(슬롯): 온실 60x40cm 을 촘촘한 격자로 분할
 # 기본 A1~E10 (5줄 x 10칸 = 50자리)
 _ROWS = ["A", "B", "C", "D", "E"]
@@ -102,7 +105,8 @@ def save_state() -> None:
     try:
         with _db() as con:
             for key, val in (("plants", PLANTS), ("feats", FEATS), ("pots", POTS),
-                             ("leaves", LEAVES), ("leaf_fixes", LEAF_FIXES)):
+                             ("leaves", LEAVES), ("leaf_fixes", LEAF_FIXES),
+                             ("env", ENVIRONMENT)):
                 con.execute(
                     "INSERT INTO state(key,value) VALUES(?,?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -124,6 +128,7 @@ def load_state() -> None:
         POTS.extend(json.loads(rows.get("pots", "[]")))
         LEAVES.update(json.loads(rows.get("leaves", "{}")))
         LEAF_FIXES.extend(json.loads(rows.get("leaf_fixes", "[]")))
+        ENVIRONMENT.update(json.loads(rows.get("env", "{}")))
         if PLANTS or POTS:
             print(f"[저장소] 식물 {len(PLANTS)}개 · 화분자리 {len(POTS)}개 · "
                   f"잎 {len(LEAVES)}장 불러옴 ({FARM_DB})")
@@ -1352,6 +1357,125 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
         p["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     save_state()
     return p
+
+
+# --------------------------------------------------------------------------- 배치
+# 조명·팬 위치는 케이지마다 다르다. 기본값을 쓰다가 실제 위치를 재서 넣으면
+# 그때부터 그 값으로 계산한다. 저장되므로 한 번만 넣으면 된다.
+def _env():
+    return (ENVIRONMENT.get("lights") or placement.DEFAULT_LIGHTS,
+            ENVIRONMENT.get("fans") or placement.DEFAULT_FANS)
+
+
+def _spots():
+    return placement.build_spots(list(PLANTS.values()), _pot_xz_cm)
+
+
+@app.get("/api/environment")
+def get_environment():
+    """조명·팬 위치(cm). 안 넣었으면 기본값을 그대로 돌려준다."""
+    lights, fans = _env()
+    return {"lights": lights, "fans": fans, "shelf": {"w": _W, "d": _D},
+            "custom": bool(ENVIRONMENT)}
+
+
+@app.post("/api/environment")
+async def set_environment(lights: str = Form(None), fans: str = Form(None)):
+    """조명 `[{x,y,z,power}]` · 팬 `[{x,y,z,dx,dz,power}]` 을 실좌표 cm 로."""
+    import json
+    for key, raw in (("lights", lights), ("fans", fans)):
+        if raw is None:
+            continue
+        try:
+            val = json.loads(raw)
+        except ValueError:
+            raise HTTPException(400, f"{key} 를 읽을 수 없어요 (JSON 형식).")
+        if not isinstance(val, list):
+            raise HTTPException(400, f"{key} 는 목록이어야 해요.")
+        for item in val:
+            if not isinstance(item, dict) or "x" not in item or "z" not in item:
+                raise HTTPException(400, f"{key} 항목에 x·z 가 있어야 해요.")
+        ENVIRONMENT[key] = val
+    save_state()
+    return get_environment()
+
+
+@app.get("/api/placement")
+def get_placement():
+    """지금 배치의 점수. 자리마다 빛·그늘·바람과 그 식물에게 필요한 양."""
+    lights, fans = _env()
+    graded = placement.score_layout(_spots(), lights, fans)
+    worst = sorted(graded["spots"], key=lambda s: s["score"])[:3]
+    return {**graded, "worst": worst, "custom_env": bool(ENVIRONMENT)}
+
+
+@app.get("/api/placement/heatmap")
+def get_heatmap(cols: int = 20, rows: int = 14, occupied: str = None):
+    """선반 전체의 빛·바람 분포. 3D 바닥에 깔아 보여 준다.
+
+    occupied=1 이면 지금 서 있는 식물이 바람을 막는 것까지 반영한다.
+    """
+    lights, fans = _env()
+    cols = max(4, min(60, cols)); rows = max(4, min(40, rows))
+    blockers = _spots() if occupied else None
+    return placement.heatmap(_W, _D, cols, rows, lights, fans, blockers)
+
+
+@app.post("/api/placement/optimize")
+def optimize_placement():
+    """자리를 바꾸면 얼마나 좋아지는지 — '무엇과 무엇을 바꾸라' 목록.
+
+    화분은 사람이 직접 옮긴다. 서버가 기록을 먼저 바꿔 버리면 실제 온실과
+    어긋나므로, 여기서는 제안만 하고 적용은 따로 부른다.
+    """
+    lights, fans = _env()
+    return placement.optimize(_spots(), lights, fans)
+
+
+@app.post("/api/placement/apply")
+async def apply_placement(moves: str = Form(...)):
+    """실제로 화분을 옮긴 뒤 부른다 — 기록의 자리를 새 배치로 맞춘다.
+
+    `moves` 는 최적화가 준 `[{plant_id, from, to}, …]` 그대로. 둘씩 맞바꾸는
+    걸로 안 끝나는 고리(A→B→C→A)가 있어서 '쌍'이 아니라 '식물마다 갈 자리'로 받는다.
+    이름·잎 기록은 식물을 따라가고, 좌표는 자리를 따라간다.
+    """
+    import json
+    try:
+        plan = json.loads(moves)
+    except ValueError:
+        raise HTTPException(400, "moves 를 읽을 수 없어요 (JSON 형식).")
+    if not isinstance(plan, list):
+        raise HTTPException(400, "moves 는 목록이어야 해요.")
+
+    by_slot = {p["pos"]: p for p in PLANTS.values()}
+    todo = []
+    for mv in plan:
+        plant = PLANTS.get(mv.get("plant_id")) or by_slot.get(mv.get("from"))
+        slot = mv.get("to")
+        if plant is None or not _slot_by_label(slot or ""):
+            continue
+        todo.append((plant, slot))
+    if len({id(p) for p, _ in todo}) != len(todo) or len({s for _, s in todo}) != len(todo):
+        raise HTTPException(400, "한 식물이나 한 자리가 두 번 나와요.")
+    # 옮겨 갈 자리가 계획에 없는 식물의 자리라면 그 식물도 움직여야 한다
+    staying = {p["pos"] for p in PLANTS.values() if all(p is not q for q, _ in todo)}
+    if staying & {s for _, s in todo}:
+        raise HTTPException(400, "안 움직이는 식물의 자리로는 못 옮겨요.")
+
+    for plant, slot in todo:
+        xz_cm = _pot_xz_cm(slot) or (0.0, 0.0)
+        plant["pos"] = slot
+        plant["x"], plant["z"] = round(xz_cm[0], 2), round(xz_cm[1], 2)
+        plant["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        for leaf in LEAVES.values():
+            if leaf["plant_id"] == plant["id"]:
+                leaf["pot_slot"] = slot
+    # 잎을 손으로 옮긴 기억은 좌표에 묶여 있다. 식물이 자리를 옮겼으니 무효다.
+    if todo:
+        LEAF_FIXES.clear()
+    save_state()
+    return {"ok": True, "applied": len(todo), **get_placement()}
 
 
 @app.get("/api/leaves")
