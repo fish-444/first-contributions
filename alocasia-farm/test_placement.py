@@ -405,6 +405,56 @@ def test_heatmap_endpoint_clamps_silly_sizes():
     _reset()
 
 
+# ── 예전 자유배치 저장값 되살리기 ────────────────────────────────────────
+def test_old_side_less_lights_migrate_to_the_matching_rail():
+    """레일 도입 전 저장값(side 없음)은 x 부호로 좌/우를 되살린다."""
+    _reset()
+    main.ENVIRONMENT["lights"] = [
+        {"x": -22, "y": 47, "z": 17, "power": 1, "angle": 30},
+        {"x": -22, "y": 47, "z": -13, "power": 1, "angle": 30},
+        {"x": 22, "y": 47, "z": 2, "power": 1, "angle": 30}]
+    env = main.get_environment()
+    sides = sorted(l["side"] for l in env["lights"])
+    assert sides == ["left", "left", "right"], sides
+    assert all(l["x"] == placement.rail_x(l["side"]) for l in env["lights"])
+    _reset()
+
+
+def test_migration_persists_so_it_only_happens_once():
+    """한 번 되살리면 저장돼서 다음부터는 그대로 쓴다."""
+    _reset()
+    main.ENVIRONMENT["lights"] = [
+        {"x": -22, "y": 47, "z": 17, "power": 1, "angle": 30},
+        {"x": -22, "y": 47, "z": -13, "power": 1, "angle": 30},
+        {"x": 22, "y": 47, "z": 2, "power": 1, "angle": 30}]
+    main.get_environment()
+    assert all("side" in l for l in main.ENVIRONMENT["lights"])
+    _reset()
+
+
+def test_a_save_after_migration_actually_works():
+    """예전 값을 물려받은 채로 드래그해도 저장이 거부되면 안 된다."""
+    _reset()
+    main.ENVIRONMENT["lights"] = [
+        {"x": -22, "y": 47, "z": 17, "power": 1, "angle": 30},
+        {"x": -22, "y": 47, "z": -13, "power": 1, "angle": 30},
+        {"x": 22, "y": 47, "z": 2, "power": 1, "angle": 30}]
+    env = main.get_environment()          # 프런트가 로드하며 되살아난 값
+    env["lights"][0]["z"] = 9.9           # 사람이 끌어서 옮긴 것을 흉내낸다
+    asyncio.run(main.set_environment(lights=json.dumps(env["lights"])))
+    assert main.get_environment()["lights"][0]["z"] == 9.9
+    _reset()
+
+
+def test_a_wrong_light_count_from_before_the_rail_falls_back_to_default():
+    """레일 도입 전 자유롭게 늘렸던 개수는 안전하게 기본값으로 되돌린다."""
+    _reset()
+    main.ENVIRONMENT["lights"] = [{"x": 0, "y": 47, "z": 0, "power": 1, "angle": 30}]
+    env = main.get_environment()
+    assert env["lights"] == placement.DEFAULT_LIGHTS
+    _reset()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

@@ -1364,8 +1364,49 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
 # 좌우(x)는 못 옮기고 레일을 따라(z)만 조절한다 — 기본값(화분 자리를 처음
 # 표시할 때 쓴 세 지점)을 쓰다가 실제 위치를 사람이 넣으면 그 값으로 계산한다.
 # 저장되므로 한 번만 넣으면 된다. 팬은 없다 — 빛만 본다.
+def _normalize_lights(raw: list) -> list:
+    """예전 자유배치 저장값(side 없음)을 레일 형식으로 옮긴다.
+
+    레일 도입 전에 저장된 farm.db 는 조명이 `{x,y,z,power,angle}` 뿐이라 side 가
+    없다. 그대로 쓰면 프런트가 전부 우측 레일로 몰아 버리고, 다음 저장은
+    side 누락으로 거부된다 — 조절해도 반영이 안 되는 것처럼 보인다. x 부호로
+    좌/우를 되살리고, 개수가 안 맞으면(레일 도입 전 자유 추가로 늘었을 수 있음)
+    기본값으로 되돌린다.
+    """
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return [dict(l) for l in placement.DEFAULT_LIGHTS]
+        side = item.get("side")
+        if side not in ("left", "right"):
+            x = item.get("x")
+            side = "right" if (isinstance(x, (int, float)) and x > 0) else "left"
+        try:
+            z_cm = min(max(float(item.get("z", 0.0)), -_D / 2), _D / 2)
+            y_cm = float(item.get("y", 47.0))
+            power = max(0.1, min(3.0, float(item.get("power", 1.0))))
+            angle = max(5.0, min(80.0, float(item.get("angle", placement.DEFAULT_ANGLE))))
+        except (TypeError, ValueError):
+            return [dict(l) for l in placement.DEFAULT_LIGHTS]
+        out.append({"side": side, "x": placement.rail_x(side, _W),
+                    "y": round(y_cm, 1), "z": round(z_cm, 1),
+                    "power": round(power, 2), "angle": round(angle, 1)})
+    if len(out) != placement.LIGHT_COUNT:
+        return [dict(l) for l in placement.DEFAULT_LIGHTS]
+    return out
+
+
 def _env():
-    return ENVIRONMENT.get("lights") or placement.DEFAULT_LIGHTS
+    raw = ENVIRONMENT.get("lights")
+    if not raw:
+        return placement.DEFAULT_LIGHTS
+    if (not isinstance(raw, list) or len(raw) != placement.LIGHT_COUNT
+            or any(not isinstance(l, dict) or l.get("side") not in ("left", "right") for l in raw)):
+        norm = _normalize_lights(raw)
+        ENVIRONMENT["lights"] = norm
+        save_state()
+        return norm
+    return raw
 
 
 def _spots():
