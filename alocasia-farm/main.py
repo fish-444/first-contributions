@@ -63,6 +63,12 @@ FEATS: Dict[str, dict] = {}           # id -> 생김새 특징(모양 그룹 계
 # 화분은 안 움직이니 한 번만 찍어 두면 계속 재사용되고, 자리(슬롯)가 고정돼
 # 매번 스캔해도 "이 화분 = 항상 같은 식물"이 유지된다. 선반 정규좌표(0~1).
 POTS: List[dict] = []
+# 잎 낱개 기록. 개체 단위 집계만으론 '이 잎이 어느 화분 것'을 손으로 못 고친다.
+LEAVES: Dict[str, dict] = {}          # leaf_id -> 잎 하나
+# 사람이 옮긴 잎은 위치로 기억한다. 잎에는 고유번호가 없어서 다음 스캔의 잎과
+# 짝지을 방법이 없다 — 대신 '그 자리에 난 잎은 이 화분 것'으로 기억해 두면
+# 재스캔해도 보정이 살아남는다. 선반 정규좌표(uv).
+LEAF_FIXES: List[dict] = []           # [{"u","v","pot_slot"}]
 # 번호 붙은 자리(슬롯): 온실 60x40cm 을 촘촘한 격자로 분할
 # 기본 A1~E10 (5줄 x 10칸 = 50자리)
 _ROWS = ["A", "B", "C", "D", "E"]
@@ -95,7 +101,8 @@ def save_state() -> None:
     import json
     try:
         with _db() as con:
-            for key, val in (("plants", PLANTS), ("feats", FEATS), ("pots", POTS)):
+            for key, val in (("plants", PLANTS), ("feats", FEATS), ("pots", POTS),
+                             ("leaves", LEAVES), ("leaf_fixes", LEAF_FIXES)):
                 con.execute(
                     "INSERT INTO state(key,value) VALUES(?,?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -115,8 +122,11 @@ def load_state() -> None:
         PLANTS.update(json.loads(rows.get("plants", "{}")))
         FEATS.update(json.loads(rows.get("feats", "{}")))
         POTS.extend(json.loads(rows.get("pots", "[]")))
+        LEAVES.update(json.loads(rows.get("leaves", "{}")))
+        LEAF_FIXES.extend(json.loads(rows.get("leaf_fixes", "[]")))
         if PLANTS or POTS:
-            print(f"[저장소] 식물 {len(PLANTS)}개 · 화분자리 {len(POTS)}개 불러옴 ({FARM_DB})")
+            print(f"[저장소] 식물 {len(PLANTS)}개 · 화분자리 {len(POTS)}개 · "
+                  f"잎 {len(LEAVES)}장 불러옴 ({FARM_DB})")
     except Exception as e:
         print(f"[경고] 불러오기 실패({e}) — 빈 상태로 시작합니다")
 
@@ -501,6 +511,141 @@ def group_plants(boxes: List[dict], image: Image.Image = None, box_to_px: float 
     return group_by_distance_and_shape(leaves, lfeats), {}
 
 
+# --------------------------------------------------------------------------- 잎 낱개
+# 여기까지는 '잎 무리 = 식물' 단위로만 다뤘다. 잎 하나하나에 이름을 붙여 두면
+# 어느 잎이 어느 화분 것인지 사람이 손으로 옮길 수 있고, 애매한 잎만 골라
+# 보여 줄 수 있다. 아래가 그 낱개 기록이다.
+# 1·2순위 화분 거리의 격차. 절대 거리로 자르면 화분 간격이 불규칙해서
+# 어떤 곳은 헐겁고 어떤 곳은 빡빡하다. 격차 비율은 간격에 알아서 맞춰진다.
+AMBIGUOUS_MARGIN = float(os.environ.get("AMBIGUOUS_MARGIN", "0.15"))
+LEAF_FIX_RADIUS_UV = float(os.environ.get("LEAF_FIX_RADIUS_UV", "0.03"))
+
+
+def assign_leaf_to_pot(centroid_uv: tuple, pots: List[dict] = None) -> dict:
+    """잎 무게중심 → 소속 화분. 가장 가까운 화분으로 반올림한다.
+
+    격자 칸(A1~E10)으로 매핑하지 않는 이유: 칸은 6x8cm 인데 실제로 가장 가까운
+    두 화분은 5.6cm 떨어져 있어 한 칸에 두 화분이 들어간다. 칸으로 자르면 서로
+    다른 화분이 같은 칸으로 가고 빈 칸도 잎을 받는다. 격자는 이름표로만 쓴다.
+
+    거리는 cm 로 잰다. uv 는 가로 60cm·세로 40cm 를 똑같이 0~1 로 눌러 놓은
+    좌표라 그대로 재면 세로 거리가 1.5배 부풀려진다.
+    """
+    pots = POTS if pots is None else pots
+    if not pots:
+        return {"pot_slot": None, "nearest": None, "second": None,
+                "margin": 0.0, "ambiguous": True}
+    u_uv, v_uv = centroid_uv
+    here_cm = ((u_uv - 0.5) * _W, (v_uv - 0.5) * _D)
+    ranked = sorted((math.dist(((p["u"] - 0.5) * _W, (p["v"] - 0.5) * _D), here_cm), p["slot"])
+                    for p in pots)
+    d1_cm, first = ranked[0]
+    d2_cm, second = ranked[1] if len(ranked) > 1 else (d1_cm, None)
+    margin = (d2_cm - d1_cm) / (d2_cm + d1_cm) if (d1_cm + d2_cm) else 1.0
+    return {"pot_slot": first, "nearest": first, "second": second,
+            "margin": round(margin, 3),
+            "ambiguous": second is not None and margin < AMBIGUOUS_MARGIN}
+
+
+def _leaf_fix_for(u_uv: float, v_uv: float):
+    """그 자리에 사람이 옮겨 둔 잎이 있으면 그 화분 이름."""
+    best, best_d = None, LEAF_FIX_RADIUS_UV
+    for fix in LEAF_FIXES:
+        d = math.dist((fix["u"], fix["v"]), (u_uv, v_uv))
+        if d <= best_d:
+            best, best_d = fix, d
+    return best["pot_slot"] if best else None
+
+
+def assign_leaves(groups: List[List[dict]], slots: dict,
+                  space_w: float, space_h: float) -> tuple:
+    """(무리, 무리→자리) → 잎 낱개까지 소속을 정한 (무리, 무리→자리, 박스별 판정).
+
+    묶기 자체는 건드리지 않는다 — 화분+생김새 교정은 이미 검증된 동작이다.
+    여기서 하는 일은 두 가지뿐:
+      · 잎마다 최근접 화분과 1·2순위 격차를 재서 '애매함' 딱지를 붙인다
+      · 사람이 옮겨 둔 잎은 그 화분으로 되돌리고, 무리를 다시 짠다
+
+    화분 자리를 지정하지 않았으면 기준이 없으므로 그대로 통과시킨다.
+    """
+    if not POTS or not slots:
+        return groups, slots, {}
+
+    verdicts, by_slot = {}, {}
+    for g in groups:
+        group_slot = slots.get(id(g))
+        for b in g:
+            cx_space, cy_space = _center(b)
+            u_uv = min(max(cx_space / space_w, 0.0), 1.0) if space_w else 0.5
+            v_uv = min(max(cy_space / space_h, 0.0), 1.0) if space_h else 0.5
+            verdict = assign_leaf_to_pot((u_uv, v_uv))
+            fixed = _leaf_fix_for(u_uv, v_uv)
+            slot = fixed or group_slot or verdict["nearest"]
+            # 생김새 교정이 최근접을 뒤집은 잎은 사람이 한 번 봐 줄 만하다
+            if not fixed and verdict["nearest"] != slot:
+                verdict["ambiguous"] = True
+            verdict.update({"pot_slot": slot, "manual": bool(fixed),
+                            "centroid_uv": [round(u_uv, 4), round(v_uv, 4)]})
+            verdicts[id(b)] = verdict
+            by_slot.setdefault(slot, []).append(b)
+
+    new_groups = list(by_slot.values())
+    new_slots = {id(g): s for s, g in zip(by_slot.keys(), new_groups)}
+    return new_groups, new_slots, verdicts
+
+
+def _record_leaves(plant: dict, group: List[dict], verdicts: dict, scan_id: str,
+                   cm_per_unit: float = None, extra_of=None) -> None:
+    """이 개체의 잎 낱개 기록을 새로 쓴다 (다른 개체 기록은 안 건드린다)."""
+    pid = plant["id"]
+    for lid in [k for k, v in LEAVES.items() if v.get("plant_id") == pid]:
+        del LEAVES[lid]
+    ids = []
+    for i, b in enumerate(group):
+        verdict = verdicts.get(id(b))
+        if verdict is None:
+            continue
+        lid = "lf_" + uuid.uuid4().hex[:8]
+        rec = {"leaf_id": lid, "scan_id": scan_id, "mask_id": b.get("mask_id", i),
+               "plant_id": pid, "pot_slot": verdict["pot_slot"],
+               "stage": _stage(b["cls"]), "centroid_uv": verdict["centroid_uv"],
+               "long_side_cm": (round(_leaf_long_side(b) * cm_per_unit, 1)
+                                if cm_per_unit else None),
+               "conf": round(float(b.get("conf", 0) or 0), 3),
+               "ambiguous": verdict["ambiguous"], "manual": verdict["manual"],
+               "assign": {"nearest": verdict["nearest"], "second": verdict["second"],
+                          "margin": verdict["margin"]}}
+        if extra_of:
+            rec.update(extra_of(b) or {})
+        LEAVES[lid] = rec
+        ids.append(lid)
+    plant["leaf_ids"] = ids
+    plant["ambiguous_ids"] = [i for i in ids if LEAVES[i]["ambiguous"]]
+
+
+def _forget_leaves(pid: str) -> None:
+    for lid in [k for k, v in LEAVES.items() if v.get("plant_id") == pid]:
+        del LEAVES[lid]
+
+
+def leaf_report(scan_id: str = None) -> dict:
+    """화분별 잎 산출 구조체 — 어느 화분에 어떤 잎이 몇 장인지."""
+    pots = []
+    for plant in sorted(PLANTS.values(), key=lambda p: p.get("pos") or ""):
+        ids = plant.get("leaf_ids") or []
+        pots.append({"slot": plant.get("pos"), "plant_id": plant["id"],
+                     "shoot": plant.get("shoot_count", 0),
+                     "mature": plant.get("mature_count", 0),
+                     "old": plant.get("old_count", 0),
+                     "leaf_ids": ids,
+                     "ambiguous_ids": plant.get("ambiguous_ids") or []})
+    assigned = {lid for p in pots for lid in p["leaf_ids"]}
+    return {"scan_id": scan_id, "pots": pots,
+            "unassigned": [l["leaf_id"] for l in LEAVES.values()
+                           if l["leaf_id"] not in assigned],
+            "ambiguous_total": sum(len(p["ambiguous_ids"]) for p in pots)}
+
+
 def analyze_top(boxes: List[dict], img_area: float, ref_area: float = None) -> dict:
     """모델1: 식물의 '맨 위 잎'(광합성 주력) 크기 → 3D 온실 반영용.
 
@@ -754,12 +899,16 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     if not groups:
         raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
 
+    groups, slots, verdicts = assign_leaves(groups, slots, space_w, space_h)
+
     scan_mode = _scan_mode(mode, replace)
     if scan_mode == "replace":
         PLANTS.clear()
         FEATS.clear()
+        LEAVES.clear()
     removed = _drop_orphans()      # 예전 화분 좌표로 만들어진 유령 정리
 
+    scan_id = "sc_" + uuid.uuid4().hex[:8]
     result = _register_groups(
         groups, space_w, space_h,
         thumb_of=lambda g: _crop_thumb(image, g, box_to_px),
@@ -768,13 +917,18 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
         img_area=img_area,
         slot_of=(lambda g: slots.get(id(g))) if slots else None,
         mode=scan_mode,
-        cm_per_unit=(_W / space_w) if space_w else None)
+        cm_per_unit=(_W / space_w) if space_w else None,
+        verdicts=verdicts, scan_id=scan_id,
+        leaf_extra_of=lambda b: {"bbox_px": [round(b["x1"] * box_to_px, 1),
+                                             round(b["y1"] * box_to_px, 1),
+                                             round(b["x2"] * box_to_px, 1),
+                                             round(b["y2"] * box_to_px, 1)]})
 
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "grouped_by": _grouped_by(boxes, slots),
             "shape_groups": len(shapes), "mode": scan_mode, "removed": removed,
             "new_leaves": sum(p.get("new_leaves", 0) for p in result),
-            "plants": result}
+            "leaves": leaf_report(scan_id), "plants": result}
 
 
 SCAN_MODES = ("replace", "update", "keep")
@@ -833,6 +987,7 @@ def _drop_orphans() -> int:
     for pid in gone:
         PLANTS.pop(pid, None)
         FEATS.pop(pid, None)
+        _forget_leaves(pid)
     return len(gone)
 
 
@@ -863,6 +1018,7 @@ def _ensure_pot_slots(result: List[dict]) -> None:
                  "mature_count": 0, "old_count": 0,
                  "top_leaf_size": "없음", "top_leaf_pct": 0.0,
                  "overlap_count": 0, "overlap_density": 0, "empty": True,
+                 "leaf_ids": [], "ambiguous_ids": [],
                  "updated": time.strftime("%Y-%m-%d %H:%M:%S")}
         PLANTS[pid] = plant
         result.append(plant)
@@ -880,7 +1036,8 @@ def _grouped_by(boxes: List[dict], slots: dict) -> str:
 def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
                      thumb_of, feat_of, per_plant_area: float, img_area: float,
                      slot_of=None, mode: str = "update",
-                     cm_per_unit: float = None) -> List[dict]:
+                     cm_per_unit: float = None, verdicts: dict = None,
+                     scan_id: str = None, leaf_extra_of=None) -> List[dict]:
     """무리 목록 → 자리 배정 후 등록/갱신. 스캔 엔드포인트들이 함께 쓴다.
 
     space_w/space_h 는 **박스가 놓인 좌표계의 크기**다. 한 장 스캔이면 사진 박스
@@ -947,6 +1104,8 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             existing.update(metrics)
             existing["updated"] = now
             FEATS[existing["id"]] = feat
+            if verdicts:
+                _record_leaves(existing, g, verdicts, scan_id, cm_per_unit, leaf_extra_of)
             result.append(existing)
         else:
             pid = uuid.uuid4().hex[:8]
@@ -956,6 +1115,8 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             PLANTS[pid] = plant
             FEATS[pid] = feat
             by_slot[slot["label"]] = plant
+            if verdicts:
+                _record_leaves(plant, g, verdicts, scan_id, cm_per_unit, leaf_extra_of)
             result.append(plant)
     _ensure_pot_slots(result)
     _recompute_shape_groups()
@@ -1075,9 +1236,11 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     if not groups:
         raise HTTPException(400, "사진에서 잎을 찾지 못했어요. 조명·각도를 바꿔 다시 찍어 주세요.")
 
+    groups, slots, verdicts = assign_leaves(groups, slots, CANVAS, canvas_h)
+
     scan_mode = _scan_mode(mode, replace)
     if scan_mode == "replace":
-        PLANTS.clear(); FEATS.clear()
+        PLANTS.clear(); FEATS.clear(); LEAVES.clear()
     removed = _drop_orphans()      # 예전 화분 좌표로 만들어진 유령 정리
 
     src_of = {id(merged[i]): sources[i] for i in keep}
@@ -1091,16 +1254,27 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     def feat_of(group):
         return _mean_features([feat_of_box[id(b)] for b in group])
 
+    def leaf_extra_of(b):
+        """합친 좌표 말고 원본 사진 어디서 온 잎인지도 남긴다."""
+        img_i, orig = src_of[id(b)]
+        return {"photo": img_i,
+                "bbox_px": [round(orig["x1"], 1), round(orig["y1"], 1),
+                            round(orig["x2"], 1), round(orig["y2"], 1)]}
+
     canvas_area = CANVAS * canvas_h
+    scan_id = "sc_" + uuid.uuid4().hex[:8]
     result = _register_groups(groups, CANVAS, canvas_h, thumb_of, feat_of,
                               canvas_area / len(groups), canvas_area,
                               slot_of=(lambda g: slots.get(id(g))) if slots else None,
-                              mode=scan_mode, cm_per_unit=_W / CANVAS)
+                              mode=scan_mode, cm_per_unit=_W / CANVAS,
+                              verdicts=verdicts, scan_id=scan_id,
+                              leaf_extra_of=leaf_extra_of)
     shapes = {p.get("shape_group") for p in result if p.get("shape_group")}
     return {"count": len(result), "photos": len(files), "merged_boxes": len(boxes_m),
             "deduped": dropped, "shape_groups": len(shapes), "mode": scan_mode,
             "removed": removed,
             "new_leaves": sum(p.get("new_leaves", 0) for p in result),
+            "leaves": leaf_report(scan_id),
             "grouped_by": _grouped_by(boxes_m, slots), "plants": result}
 
 
@@ -1180,6 +1354,79 @@ async def update_plant(pid: str, name: str = Form(None), rot: float = Form(None)
     return p
 
 
+@app.get("/api/leaves")
+def list_leaves(ambiguous: str = None):
+    """잎 낱개 + 화분별 집계. ambiguous=1 이면 애매한 잎만."""
+    report = leaf_report()
+    leaves = list(LEAVES.values())
+    if ambiguous:
+        leaves = [l for l in leaves if l["ambiguous"]]
+    return {"count": len(leaves), "leaves": leaves, "fixes": len(LEAF_FIXES), **report}
+
+
+def _recount_from_leaves(pid: str) -> None:
+    """잎 기록에서 단계별 개수를 다시 센다 (잎을 옮긴 화분 양쪽에)."""
+    plant = PLANTS.get(pid)
+    if plant is None:
+        return
+    mine = [l for l in LEAVES.values() if l["plant_id"] == pid]
+    counts = {"shoot": 0, "mature": 0, "old": 0}
+    for l in mine:
+        counts[l["stage"]] += 1
+    plant.update({"shoot_count": counts["shoot"], "mature_count": counts["mature"],
+                  "old_count": counts["old"], "leaf_count": len(mine),
+                  "leaf_ids": [l["leaf_id"] for l in mine],
+                  "ambiguous_ids": [l["leaf_id"] for l in mine if l["ambiguous"]]})
+    if mine:
+        plant.pop("empty", None)
+    plant["manual"] = True             # 사람이 옮긴 결과다 — 재스캔이 덮지 않게
+    plant["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+@app.patch("/api/leaves/{leaf_id}")
+async def move_leaf(leaf_id: str, pot_slot: str = Form(...)):
+    """잎 하나를 다른 화분 소속으로 옮긴다 (지도 위로 드래그).
+
+    자동 판정이 애매한 잎 — 화분 두 개 사이에 걸친 잎 — 을 사람이 바로잡는 자리다.
+    옮긴 자리는 좌표로 기억해 두므로 다음 스캔에서도 같은 자리의 잎은 이 화분으로
+    간다. 개체 단위 ± 버튼은 그대로 남아 있고, 잎 기록이 없는 화분에선 그쪽이
+    여전히 유일한 수정 수단이다.
+    """
+    leaf = LEAVES.get(leaf_id)
+    if leaf is None:
+        raise HTTPException(404, "없는 잎")
+    slot = (pot_slot or "").strip()
+    target = next((p for p in PLANTS.values() if p.get("pos") == slot), None)
+    if target is None:
+        raise HTTPException(400, f"{slot} 자리에 식물이 없어요.")
+    if leaf["pot_slot"] == slot:
+        return {"ok": True, "leaf": leaf, "moved": False}
+
+    was = leaf["plant_id"]
+    leaf.update({"pot_slot": slot, "plant_id": target["id"],
+                 "manual": True, "ambiguous": False})
+
+    u_uv, v_uv = leaf["centroid_uv"]
+    LEAF_FIXES[:] = [f for f in LEAF_FIXES
+                     if math.dist((f["u"], f["v"]), (u_uv, v_uv)) > LEAF_FIX_RADIUS_UV]
+    LEAF_FIXES.append({"u": u_uv, "v": v_uv, "pot_slot": slot})
+
+    _recount_from_leaves(was)
+    _recount_from_leaves(target["id"])
+    save_state()
+    return {"ok": True, "moved": True, "leaf": leaf,
+            "from": PLANTS.get(was), "to": target}
+
+
+@app.delete("/api/leaves/fixes")
+def clear_leaf_fixes():
+    """손으로 옮긴 잎 기억을 지운다. 자동 판정만으로 다시 보고 싶을 때."""
+    n = len(LEAF_FIXES)
+    LEAF_FIXES.clear()
+    save_state()
+    return {"ok": True, "cleared": n}
+
+
 @app.delete("/api/plants/{pid}")
 def remove_plant(pid: str):
     """식물 제거."""
@@ -1187,6 +1434,7 @@ def remove_plant(pid: str):
         raise HTTPException(404, "없는 식물")
     del PLANTS[pid]
     FEATS.pop(pid, None)
+    _forget_leaves(pid)
     _recompute_shape_groups()
     save_state()
     return {"ok": True, "id": pid}

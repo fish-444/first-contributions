@@ -28,7 +28,25 @@ def _restart():
 
 def _clear():
     main.PLANTS.clear(); main.FEATS.clear(); main.POTS.clear()
+    main.LEAVES.clear(); main.LEAF_FIXES.clear()
     main.save_state()
+
+
+def test_leaf_records_and_hand_moves_survive_a_restart():
+    """잎 소속을 손으로 고쳐 놓고 서버를 껐다 켜면 그대로 있어야 한다."""
+    _clear()
+    main.LEAVES["lf_1"] = {"leaf_id": "lf_1", "scan_id": "sc_1", "mask_id": 0,
+                           "plant_id": "p1", "pot_slot": "C3", "stage": "mature",
+                           "centroid_uv": [0.4, 0.6], "long_side_cm": 12.4,
+                           "conf": 0.88, "ambiguous": False, "manual": True,
+                           "assign": {"nearest": "C5", "second": "C3", "margin": 0.07}}
+    main.LEAF_FIXES.append({"u": 0.4, "v": 0.6, "pot_slot": "C3"})
+    main.save_state()
+
+    m2 = _restart()
+    assert m2.LEAVES["lf_1"]["pot_slot"] == "C3", m2.LEAVES
+    assert m2.LEAVES["lf_1"]["assign"]["nearest"] == "C5"
+    assert m2.LEAF_FIXES == [{"u": 0.4, "v": 0.6, "pot_slot": "C3"}], m2.LEAF_FIXES
 
 
 def test_plants_survive_a_restart():
