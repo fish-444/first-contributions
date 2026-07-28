@@ -95,6 +95,44 @@ def test_leaf_outside_any_pot_joins_nearest():
     assert len(groups) == 1 and len(groups[0]) == 1
 
 
+def test_weed_class_is_dropped_at_the_detector_boundary():
+    """풀(잡초) 뭉치를 새 클래스로 학습시켜 두면, detect_boxes 가 결과에서 통째로 뺀다.
+
+    NON_LEAF(pot 등)와 다르다 — pot 은 그룹화의 화분 자리 신호로 계속 쓰이지만,
+    잡초는 그 무엇으로도 안 쓰는 잡음이라 아예 안 보이게 지운다.
+    """
+    import main
+    from PIL import Image
+
+    class _Stub:
+        def detect(self, image):
+            return ([box(100, 100, 60, 60, cls="mature leaf"),
+                    box(400, 100, 200, 200, cls="weed"),
+                    box(600, 100, 150, 150, cls="Weeds")], 10000.0)
+
+    boxes, area = main.detect_boxes(Image.new("RGB", (10, 10)), detector=_Stub())
+    assert [b["cls"] for b in boxes] == ["mature leaf"], boxes
+    assert area == 10000.0
+
+
+def test_weed_boxes_are_not_used_as_fake_pot_anchors():
+    """잡초 뭉치가 화분처럼 취급되면 근처 잎이 잘못 붙는다 — detect_boxes 를 거치면
+    애초에 group_plants 가 보는 목록에 잡초가 없어야 한다."""
+    import main
+    from PIL import Image
+
+    class _Stub:
+        def detect(self, image):
+            return ([box(100, 100, 40, 40, cls="pot"),
+                    box(700, 100, 300, 300, cls="weed"),   # 화분처럼 취급되면 안 됨
+                    box(120, 100, 60, 60, cls="mature leaf")], 10000.0)
+
+    boxes, _ = main.detect_boxes(Image.new("RGB", (10, 10)), detector=_Stub())
+    assert "weed" not in [b["cls"] for b in boxes]
+    groups = group_leaves(boxes)
+    assert len(groups) == 1 and len(groups[0]) == 1
+
+
 def test_ref_area_keeps_leaf_size_meaningful_in_farm_photo():
     """농장 전체 사진에서도 대/중/소엽이 뭉개지면 안 된다."""
     farm_area = 4000 * 3000
@@ -249,13 +287,51 @@ def test_scan_endpoint_registers_one_plant_per_pot():
         assert len(set(positions)) == 3, positions          # 자리가 겹치면 안 된다
         for p in res["plants"]:
             assert p["leaf_count"] == 5, p
-            assert p["thumb"].startswith("data:image/jpeg;base64,")
+            # 농장 전체 탑뷰에서 잘라 낸 조각은 흐릿해서 모달 사진으로 안 쓴다 —
+            # 개체 사진을 따로 올리기 전까진 썸네일이 없다.
+            assert "thumb" not in p, p
 
         # 같은 사진을 다시 스캔해도 개체가 늘어나지 않는다 (이름·방향 유지하며 갱신)
         main.PLANTS[list(main.PLANTS)[0]]["name"] = "내가 지은 이름"
         again = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None, mode=None))
         assert again["count"] == 3 and len(main.PLANTS) == 3, (again["count"], len(main.PLANTS))
         assert "내가 지은 이름" in [p["name"] for p in main.PLANTS.values()]
+    finally:
+        main.detect_boxes = orig_detect
+        main.PLANTS.clear()
+        main.PLANTS.update(orig_plants)
+
+
+def test_farm_scan_does_not_clobber_a_dedicated_photo_thumbnail():
+    """개체 사진으로 따로 올려 둔 썸네일은 탑뷰 스캔이 지나가도 안 지워진다."""
+    import asyncio, io
+    from PIL import Image
+    import main
+
+    class _Upload:
+        content_type = "image/jpeg"
+
+        def __init__(self, raw):
+            self._raw = raw
+
+        async def read(self):
+            return self._raw
+
+    buf = io.BytesIO()
+    Image.new("RGB", (2000, 1500), (20, 80, 30)).save(buf, format="JPEG")
+
+    boxes = _farm_boxes()
+    orig_detect, orig_plants = main.detect_boxes, dict(main.PLANTS)
+    main.detect_boxes = lambda image, det=None: (boxes, float(2000 * 1500))
+    main.PLANTS.clear()
+    try:
+        res = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None, mode=None))
+        pid = res["plants"][0]["id"]
+        main.PLANTS[pid]["thumb"] = "data:image/jpeg;base64,already-here"
+
+        again = asyncio.run(main.scan_farm(file=_Upload(buf.getvalue()), replace=None, mode=None))
+        assert main.PLANTS[pid]["thumb"] == "data:image/jpeg;base64,already-here"
+        assert pid in [p["id"] for p in again["plants"]]
     finally:
         main.detect_boxes = orig_detect
         main.PLANTS.clear()

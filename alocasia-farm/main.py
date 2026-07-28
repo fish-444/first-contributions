@@ -154,13 +154,25 @@ def _free_slot(prefer: str = None):
 
 
 # --------------------------------------------------------------------------- YOLO 탐지
+# YOLO 가 잡아도 식물이 아닌 걸로 취급해 버리는 클래스 — 잡초/풀 뭉치 등.
+# NON_LEAF 와는 역할이 다르다: NON_LEAF(예: pot)는 화분 자리를 찾는 '신호'로
+# 계속 쓰이지만, 여긴 그 무엇으로도 안 쓰는 순수 잡음이라 탐지 직후 통째로
+# 버린다 — 그룹화의 '화분 자리 후보'로도 안 들어가야 하기 때문이다(잡초 뭉치가
+# 가짜 화분처럼 취급되면 근처 잎이 잡초 쪽으로 잘못 붙는다).
+# Roboflow 쪽에 별도 클래스(예: weed)를 학습시켜 두면 여기서 자동으로 걸러진다.
+NOISE_CLASSES = {c.strip().lower() for c in
+                 os.environ.get("NOISE_CLASSES", "weed,weeds,grass").split(",") if c.strip()}
+
+
 def detect_boxes(image: Image.Image, detector=None):
     """이미지 → (픽셀 좌표 박스 목록, 이미지 면적 px²).
 
     실제 탐지는 providers 가 맡는다. 이 함수는 앱 전체가 쓰는 하나의 출입구로,
     테스트에서 여기만 갈아 끼우면 어떤 제공자든 흉내 낼 수 있다.
     """
-    return (detector or DETECT_TOP).detect(image)
+    boxes, area = (detector or DETECT_TOP).detect(image)
+    boxes = [b for b in boxes if b["cls"].lower() not in NOISE_CLASSES]
+    return boxes, area
 
 
 def _iou(a, b):
@@ -863,22 +875,6 @@ def _nearest_slot(x_cm: float, z_cm: float, blocked: set):
     return min(free, key=lambda s: math.dist((s["x"], s["z"]), (x_cm, z_cm)))
 
 
-def _crop_thumb(image: Image.Image, group: List[dict], box_to_px: float) -> str:
-    """식물 무리의 바운딩 박스를 잘라 썸네일로. 모달에서 그 개체만 보이게."""
-    x1_px = min(b["x1"] for b in group) * box_to_px
-    y1_px = min(b["y1"] for b in group) * box_to_px
-    x2_px = max(b["x2"] for b in group) * box_to_px
-    y2_px = max(b["y2"] for b in group) * box_to_px
-    pad_px = 0.06 * max(x2_px - x1_px, y2_px - y1_px)
-    crop_px = (max(0, int(x1_px - pad_px)), max(0, int(y1_px - pad_px)),
-               min(image.width, int(x2_px + pad_px)), min(image.height, int(y2_px + pad_px)))
-    if crop_px[2] <= crop_px[0] or crop_px[3] <= crop_px[1]:
-        crop_px = (0, 0, image.width, image.height)
-    crop = image.crop(crop_px); crop.thumbnail((260, 260))
-    tb = io.BytesIO(); crop.save(tb, format="JPEG", quality=72)
-    return "data:image/jpeg;base64," + base64.b64encode(tb.getvalue()).decode()
-
-
 @app.post("/api/scan")
 async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
                     mode: str = Form(None)):
@@ -919,7 +915,6 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     scan_id = "sc_" + uuid.uuid4().hex[:8]
     result = _register_groups(
         groups, space_w, space_h,
-        thumb_of=lambda g: _crop_thumb(image, g, box_to_px),
         feat_of=lambda g: _mean_features([leaf_features(image, b, box_to_px) for b in g]),
         per_plant_area=img_area / len(groups),      # 식물 1개 몫 — 대/중/소엽 기준
         img_area=img_area,
@@ -1042,7 +1037,7 @@ def _grouped_by(boxes: List[dict], slots: dict) -> str:
 
 
 def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
-                     thumb_of, feat_of, per_plant_area: float, img_area: float,
+                     feat_of, per_plant_area: float, img_area: float,
                      slot_of=None, mode: str = "update",
                      cm_per_unit: float = None, verdicts: dict = None,
                      scan_id: str = None, leaf_extra_of=None) -> List[dict]:
@@ -1055,6 +1050,10 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
 
     slot_of 를 주면(화분 자리를 미리 지정한 경우) 그 자리에 고정 배정한다.
     그러면 매번 스캔해도 같은 화분이 같은 자리로 가서 개체가 안 섞인다.
+
+    썸네일은 여기서 안 건드린다. 농장 전체 탑뷰에서 잘라 낸 조각은 멀리서 찍은
+    사진의 일부라 흐릿하고 작아서 모달에 보여줄 만하지 않다 — 개체 사진(POST
+    /api/plants)이나 '새 사진으로 갱신'으로 직접 올린 사진만 썸네일로 쓴다.
     """
     groups.sort(key=lambda g: sum(_center(b)[1] for b in g) / len(g))
     occupied = {p["pos"] for p in PLANTS.values()}
@@ -1090,7 +1089,6 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
         metrics = {}
         metrics.update(analyze_top(g, img_area, ref_area=per_plant_area))
         metrics.update(analyze_metrics(g, img_area, cm_per_unit))
-        metrics["thumb"] = thumb_of(g)
         feat = feat_of(g)
 
         if existing:
@@ -1184,7 +1182,6 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     canvas_h = CANVAS * (_D / _W)
 
     merged, feats, sources = [], [], []
-    images = []
     for i, f in enumerate(files):
         if not f.content_type or not f.content_type.startswith("image/"):
             raise HTTPException(400, "이미지 파일만 올릴 수 있어요.")
@@ -1192,7 +1189,6 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
             image = Image.open(io.BytesIO(await f.read())).convert("RGB")
         except Exception:
             raise HTTPException(400, f"{i + 1}번째 이미지를 읽을 수 없어요.")
-        images.append(image)
 
         boxes, img_area = detect_boxes(image)
         aspect = image.width / image.height
@@ -1254,11 +1250,6 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     src_of = {id(merged[i]): sources[i] for i in keep}
     feat_of_box = {id(merged[i]): feats[i] for i in keep}
 
-    def thumb_of(group):
-        img_i, _ = src_of[id(max(group, key=lambda b: b["area"]))]
-        orig = [src_of[id(b)][1] for b in group if src_of[id(b)][0] == img_i]
-        return _crop_thumb(images[img_i], orig, 1.0)   # orig 는 이미 원본 픽셀
-
     def feat_of(group):
         return _mean_features([feat_of_box[id(b)] for b in group])
 
@@ -1271,7 +1262,7 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
 
     canvas_area = CANVAS * canvas_h
     scan_id = "sc_" + uuid.uuid4().hex[:8]
-    result = _register_groups(groups, CANVAS, canvas_h, thumb_of, feat_of,
+    result = _register_groups(groups, CANVAS, canvas_h, feat_of,
                               canvas_area / len(groups), canvas_area,
                               slot_of=(lambda g: slots.get(id(g))) if slots else None,
                               mode=scan_mode, cm_per_unit=_W / CANVAS,
