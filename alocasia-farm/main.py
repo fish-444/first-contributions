@@ -184,8 +184,13 @@ def _iou(a, b):
     return inter / union if union > 0 else 0.0
 
 
-# 잎이 아닌 클래스(화분·기준물 등)는 잎 계수에서 제외
-NON_LEAF = {"object", "pot", "background", "ruler", "marker", "tag"}
+# 잎이 아닌 클래스(화분·기준물 등)는 잎 계수에서 제외.
+# canopy(그 식물 잎 전체를 감싸는 큰 박스)도 여기 들어간다 — group_plants() 는
+# NON_LEAF 박스라면 뭐든 '앵커'로 취급해서, 그 안에 든 잎을 확정으로 묶는다.
+# pot 은 화분(작음), canopy 는 그 화분의 잎 전체(큼)라 크기만 다를 뿐 같은 역할이다.
+# 알로카시아는 잎이 화분 밖으로 멀리 뻗어 화분 앵커만으론 놓치는 잎이 많은데,
+# canopy 는 그 잎 전체를 담고 있어서 거리·생김새 보정 없이도 대부분 확정된다.
+NON_LEAF = {"object", "pot", "canopy", "background", "ruler", "marker", "tag"}
 
 
 def _stage(cls: str) -> str:
@@ -875,6 +880,24 @@ def _nearest_slot(x_cm: float, z_cm: float, blocked: set):
     return min(free, key=lambda s: math.dist((s["x"], s["z"]), (x_cm, z_cm)))
 
 
+def _nearest_pot_or_slot(x_cm: float, z_cm: float, blocked: set):
+    """빈 자리 중 가장 가까운 곳 — 화분을 마크해 뒀으면 그 화분들 중에서만 고른다.
+
+    canopy(잎 전체 뭉치) 처럼 화분 자리가 아닌 앵커로 묶었을 때 특히 중요하다.
+    50칸 격자 전체에서 그냥 최근접을 고르면, 마크 안 한 빈 칸이 실제 화분보다
+    가까이 걸려서 있지도 않은 자리에 식물이 등록될 수 있다. 화분을 마크해 뒀다면
+    "농장 = 지정한 화분들"이므로 그 화분들 중에서만 찾는다.
+    """
+    if POTS:
+        candidates = [p for p in POTS if p["slot"] not in blocked]
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda p: math.dist(
+            ((p["u"] - 0.5) * _W, (p["v"] - 0.5) * _D), (x_cm, z_cm)))
+        return _slot_by_label(best["slot"])
+    return _nearest_slot(x_cm, z_cm, blocked)
+
+
 @app.post("/api/scan")
 async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
                     mode: str = Form(None)):
@@ -1031,6 +1054,8 @@ def _grouped_by(boxes: List[dict], slots: dict) -> str:
     """어떤 신호로 묶었는지 — UI 에 그대로 보여 준다."""
     if slots:
         return "pot_preset"                                    # 미리 지정한 화분 자리
+    if any(b["cls"].lower() == "canopy" for b in boxes):
+        return "canopy"                                        # 모델이 잡은 잎 전체 뭉치
     if any(b["cls"].lower() in NON_LEAF for b in boxes):
         return "pot"                                           # 모델이 잡은 화분
     return "distance"
@@ -1078,7 +1103,7 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
             if cand is not None and math.dist((cand["x"], cand["z"]), (x_cm, z_cm)) <= max(_CW, _CD):
                 existing = cand
             slot = (_slot_by_label(existing["pos"]) if existing
-                    else _nearest_slot(x_cm, z_cm, occupied | claimed))
+                    else _nearest_pot_or_slot(x_cm, z_cm, occupied | claimed))
         if slot is None or slot["label"] in claimed:
             continue
         claimed.add(slot["label"])

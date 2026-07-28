@@ -643,7 +643,7 @@ document.getElementById('scanFile').addEventListener('change',async(e)=>{
     if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.detail||'스캔 실패');}
     const d=await r.json();
     await loadAll();
-    const how=({pot_preset:'지정한 화분자리',pot:'화분+생김새'})[d.grouped_by]||'거리+생김새';
+    const how=({pot_preset:'지정한 화분자리',canopy:'캐노피',pot:'화분+생김새'})[d.grouped_by]||'거리+생김새';
     scanStatus.textContent=scanMsg(d,how);
   }catch(err){ scanStatus.textContent='⚠️ '+err.message; }
   e.target.value='';

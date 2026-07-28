@@ -95,6 +95,39 @@ def test_leaf_outside_any_pot_joins_nearest():
     assert len(groups) == 1 and len(groups[0]) == 1
 
 
+# ── canopy(잎 전체 뭉치) 앵커 ────────────────────────────────────────────
+def test_canopy_box_anchors_leaves_like_a_pot_does():
+    """canopy 는 화분보다 큰 앵커일 뿐, 역할은 같다 — 안에 든 잎을 확정으로 묶는다."""
+    canopy = [box(150, 150, 300, 300, cls="canopy"), box(700, 150, 300, 300, cls="canopy")]
+    leaves = [box(120, 120, 60, 60), box(180, 180, 60, 60),   # 왼쪽 캐노피 안
+             box(680, 130, 60, 60)]                            # 오른쪽 캐노피 안
+    groups = group_leaves(canopy + leaves)
+    sizes = sorted(len(g) for g in groups)
+    assert sizes == [1, 2], sizes
+
+
+def test_canopy_is_never_counted_as_a_leaf():
+    boxes = [box(150, 150, 300, 300, cls="canopy"), box(150, 150, 60, 60, cls="mature leaf")]
+    groups = group_leaves(boxes)
+    assert len(groups) == 1 and len(groups[0]) == 1
+    assert analyze_metrics(groups[0], 10000)["leaf_count"] == 1
+
+
+def test_a_leaf_deep_inside_the_overlap_of_two_canopies_still_lands_somewhere():
+    """캐노피끼리 겹쳐도(밀집된 트레이 흔한 상황) 죽지 않고 가장 가까운 쪽으로 간다."""
+    canopy = [box(200, 200, 400, 400, cls="canopy"), box(500, 200, 400, 400, cls="canopy")]
+    leaf = [box(340, 200, 40, 40)]          # 두 캐노피가 겹치는 구간, 왼쪽에 더 가까움
+    groups = group_leaves(canopy + leaf)
+    assert len(groups) == 1 and len(groups[0]) == 1
+
+
+def test_grouped_by_reports_canopy_distinctly_from_pot():
+    import main
+    assert main._grouped_by([box(0, 0, 10, 10, cls="canopy")], {}) == "canopy"
+    assert main._grouped_by([box(0, 0, 10, 10, cls="pot")], {}) == "pot"
+    assert main._grouped_by([box(0, 0, 10, 10, cls="leaf")], {}) == "distance"
+
+
 def test_weed_class_is_dropped_at_the_detector_boundary():
     """풀(잡초) 뭉치를 새 클래스로 학습시켜 두면, detect_boxes 가 결과에서 통째로 뺀다.
 

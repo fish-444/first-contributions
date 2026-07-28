@@ -399,6 +399,62 @@ def test_extra_pot_refs_average_out_click_error():
     assert err(six) < err(four), (err(six), err(four))
 
 
+# ── canopy 앵커 + 화분 자리 매칭 ──────────────────────────────────────────
+# canopy 는 잎을 묶어 주지만(화분처럼) '이 자리 = 항상 같은 식물' 이라는 고정
+# 라벨은 안 준다(모델이 그 사진에서 직접 잡은 박스라 predefined 가 아니다). 그래서
+# 무리의 무게중심을 마크해 둔 화분 중 가장 가까운 곳에 매칭해야 한다 — 격자 50칸
+# 전체에서 고르면 마크 안 한 빈 칸이 걸릴 수 있다.
+from main import _nearest_pot_or_slot
+
+
+def test_nearest_pot_or_slot_only_considers_marked_pots():
+    _reset()
+    _set_pots([[0.1, 0.1], [0.9, 0.9]])
+    marked = {p["slot"] for p in main.POTS}
+    # 정중앙 — 격자로만 고르면 마크 안 한 가운데 칸이 뽑히지만, 화분은 두 개뿐이다
+    slot = _nearest_pot_or_slot(0.0, 0.0, set())
+    assert slot["label"] in marked, (slot, marked)
+    _reset()
+
+
+def test_nearest_pot_or_slot_falls_back_to_the_grid_when_nothing_is_marked():
+    _reset()
+    slot = _nearest_pot_or_slot(0.0, 0.0, set())
+    assert slot is not None and slot["label"] not in set()
+    _reset()
+
+
+def test_nearest_pot_or_slot_returns_none_when_every_marked_pot_is_taken():
+    _reset()
+    _set_pots([[0.1, 0.1]])
+    taken = {p["slot"] for p in main.POTS}
+    assert _nearest_pot_or_slot(0.0, 0.0, taken) is None
+    _reset()
+
+
+def test_canopy_grouped_scan_lands_on_the_marked_pot_not_a_stray_grid_cell():
+    """캐노피로 묶인 무리가, 격자상 더 가까운 빈 칸이 아니라 실제 화분 자리로 간다."""
+    _reset()
+    _set_pots([[0.15, 0.5], [0.85, 0.5]])
+    left_slot, right_slot = (p["slot"] for p in main.POTS)
+
+    canopy = [box(180, 400, 300, 300, cls="canopy"), box(1020, 400, 300, 300, cls="canopy")]
+    leaves = [box(160, 380, 60, 60), box(200, 420, 60, 60),   # 왼쪽 캐노피 안
+             box(1000, 380, 60, 60)]                           # 오른쪽 캐노피 안
+
+    orig = main.detect_boxes
+    main.detect_boxes = lambda im, det=None: (canopy + leaves, float(1200 * 800))
+    try:
+        res = asyncio.run(main.scan_farm(file=_Upload(_jpeg()), replace=None, mode=None))
+    finally:
+        main.detect_boxes = orig
+
+    assert res["grouped_by"] == "canopy", res
+    positions = {p["pos"] for p in res["plants"]}
+    assert positions == {left_slot, right_slot}, (positions, left_slot, right_slot)
+    _reset()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:
