@@ -149,14 +149,15 @@ def test_leaf_outside_every_canopy_does_not_inflate_a_pots_count():
     assert sorted(len(g) for g in groups) == [2, 2], [len(g) for g in groups]
 
 
-def test_nested_canopies_count_as_one_pot():
-    """같은 포기를 큰/작은 캐노피로 두 번 잡아도 화분은 하나, 잎 수는 합쳐서 센다."""
+def test_a_small_canopy_inside_a_big_one_stays_its_own_pot():
+    """빽빽한 트레이에선 작은 포기가 큰 이웃 박스 안에 들어앉는 게 정상이다.
+    '덮였으니 같은 포기'로 합치면 실제 화분이 통째로 사라진다."""
     canopy = [box(200, 200, 300, 300, cls="canopy"),
-              box(180, 180, 90, 90, cls="canopy")]         # 위 캐노피 안에 들어앉음
-    leaves = [box(170, 170, 30, 30), box(190, 190, 30, 30), box(300, 300, 30, 30)]
+              box(120, 120, 80, 80, cls="canopy")]         # 큰 캐노피 안에 들어앉음
+    leaves = [box(110, 110, 30, 30),                       # 작은 캐노피 몫
+              box(300, 300, 30, 30), box(280, 260, 30, 30)]  # 큰 캐노피 몫
     groups = group_leaves(canopy + leaves)
-    assert len(groups) == 1, [len(g) for g in groups]
-    assert analyze_metrics(groups[0], 10000)["leaf_count"] == 3
+    assert sorted(len(g) for g in groups) == [1, 2], [len(g) for g in groups]
 
 
 def test_canopy_wins_over_a_pot_box_on_the_same_plant():
@@ -168,20 +169,14 @@ def test_canopy_wins_over_a_pot_box_on_the_same_plant():
     assert len(groups) == 1 and len(groups[0]) == 3, [len(g) for g in groups]
 
 
-def test_dedupe_canopies_keeps_the_outer_box():
-    import main
-    big = box(200, 200, 300, 300, cls="canopy")
-    small = box(180, 180, 90, 90, cls="canopy")
-    kept = main.dedupe_canopies([small, big])
-    assert kept == [big], kept
-
-
-def test_dedupe_canopies_keeps_neighbours_that_merely_touch():
-    """살짝 겹치는 이웃 포기는 서로 다른 화분이다 — 합치면 안 된다."""
-    import main
-    a = box(200, 200, 300, 300, cls="canopy")
-    b = box(450, 200, 300, 300, cls="canopy")              # 50px 만 겹침
-    assert len(main.dedupe_canopies([a, b])) == 2
+def test_every_canopy_holding_a_leaf_becomes_its_own_pot():
+    """캐노피가 겹쳐 잡혀도 잎을 담고 있으면 각각 화분이다 — 임의로 합치지 않는다."""
+    canopy = [box(200, 200, 400, 400, cls="canopy"),
+              box(320, 200, 400, 400, cls="canopy"),       # 크게 겹침
+              box(700, 200, 200, 200, cls="canopy")]
+    leaves = [box(60, 200, 30, 30), box(450, 200, 30, 30), box(700, 200, 30, 30)]
+    groups = group_leaves(canopy + leaves)
+    assert len(groups) == 3, [len(g) for g in groups]
 
 
 def test_weed_class_is_dropped_at_the_detector_boundary():

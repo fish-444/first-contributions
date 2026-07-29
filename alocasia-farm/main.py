@@ -449,35 +449,13 @@ def group_by_pots_indexed(leaves: List[dict], pots: List[dict],
 
 # --- 캐노피 앵커 -----------------------------------------------------------
 # 캐노피 하나 = 화분 하나, 그 안에 든 잎 수 = 그 화분의 잎 수.
-# 이 등식이 성립하려면 두 가지를 손봐야 한다: 겹쳐 잡힌 캐노피를 하나로 합치고,
-# 밖에 있는 잎을 억지로 안에 넣지 않는 것.
-CANOPY_NEST = float(os.environ.get("CANOPY_NEST", "0.8"))   # 이만큼 덮이면 같은 캐노피로 본다
-
-
-def _covered_ratio(inner: dict, outer: dict) -> float:
-    """inner 박스가 outer 에 얼마나 덮이는지(0~1). IoU 와 달리 크기 차이에 안 흔들려서
-    '큰 캐노피 안에 작은 캐노피가 들어앉은' 경우를 잡아낸다."""
-    ix1, iy1 = max(inner["x1"], outer["x1"]), max(inner["y1"], outer["y1"])
-    ix2, iy2 = min(inner["x2"], outer["x2"]), min(inner["y2"], outer["y2"])
-    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
-    return (iw * ih) / inner["area"] if inner["area"] > 0 else 0.0
-
-
-def dedupe_canopies(canopies: List[dict]) -> List[dict]:
-    """겹쳐 잡힌 캐노피를 하나로 — 캐노피 하나가 식물 하나가 되도록.
-
-    같은 포기를 큰 박스와 작은 박스로 두 번 잡는 일이 실제로 나온다(한 잎만
-    감싼 작은 캐노피가 큰 캐노피 안에 들어앉는 식). 그대로 두면 화분 하나가
-    둘로 쪼개져서, 양쪽 다 잎 수가 실제보다 적게 나온다.
-    큰 것부터 남기고, 이미 남긴 캐노피에 대부분 덮이는 박스는 버린다.
-    """
-    kept: List[dict] = []
-    for c in sorted(canopies, key=lambda b: b["area"], reverse=True):
-        if not any(_covered_ratio(c, k) >= CANOPY_NEST for k in kept):
-            kept.append(c)
-    return kept
-
-
+#
+# 겹쳐 잡힌 캐노피를 '같은 포기를 두 번 잡은 것'으로 보고 합쳐 봤지만, 실제
+# 추론 결과로 재 보니 손해였다. 빽빽한 트레이를 위에서 찍으면 작은 포기의
+# 캐노피가 큰 이웃 포기의 박스 안에 통째로 들어앉는 게 정상이라, '덮였다'로는
+# 중복 박스와 이웃 포기를 구분할 수 없다. 한 사진에서 캐노피 10개 중 5개가
+# 이웃에 흡수돼 화분 9개가 5개로 줄었다. 그래서 겹침 정리는 하지 않는다 —
+# 같은 박스를 두 번 잡는 진짜 중복은 모델 쪽 NMS 가 이미 걸러 준다.
 def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
                               feats: List[dict]) -> List[List[dict]]:
     """캐노피 앵커 전용 그룹화 — 박스 '안'에 든 잎만 그 화분 몫으로 센다.
@@ -589,7 +567,7 @@ def group_plants(boxes: List[dict], image: Image.Image = None, box_to_px: float 
     # 담고 있어 더 믿을 만하므로 캐노피에 몰아 준다.
     canopies = [b for b in pots if b["cls"].lower() in CANOPY_CLASSES]
     if canopies:
-        return group_by_canopies_indexed(leaves, dedupe_canopies(canopies), lfeats), {}
+        return group_by_canopies_indexed(leaves, canopies, lfeats), {}
 
     predefined = False
     if not pots and POTS and canvas:
