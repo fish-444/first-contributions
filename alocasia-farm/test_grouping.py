@@ -128,6 +128,62 @@ def test_grouped_by_reports_canopy_distinctly_from_pot():
     assert main._grouped_by([box(0, 0, 10, 10, cls="leaf")], {}) == "distance"
 
 
+# ── 화분당 잎 수 = 그 캐노피 박스 안의 잎 수 ──────────────────────────────
+def test_leaf_count_per_pot_is_exactly_what_the_canopy_box_holds():
+    """캐노피 안 잎만 그 화분 몫이다 — 밖의 잎이 얹혀 부풀면 안 된다."""
+    canopy = [box(200, 200, 300, 300, cls="canopy")]       # x 50~350, y 50~350
+    inside = [box(120, 120, 40, 40), box(200, 200, 40, 40), box(300, 300, 40, 40)]
+    far = [box(900, 900, 40, 40)]                          # 캐노피 밖 (딴 포기)
+    groups = group_leaves(canopy + inside + far)
+    in_canopy = max(groups, key=len)
+    assert len(in_canopy) == 3, [len(g) for g in groups]
+    assert analyze_metrics(in_canopy, 10000)["leaf_count"] == 3
+
+
+def test_leaf_outside_every_canopy_does_not_inflate_a_pots_count():
+    """캐노피를 놓친 포기가 통째로 옆 화분 잎 수에 얹히면 안 된다."""
+    canopy = [box(200, 200, 200, 200, cls="canopy")]       # x 100~300, y 100~300
+    inside = [box(180, 180, 40, 40), box(230, 230, 40, 40)]
+    missed = [box(500, 200, 40, 40), box(540, 220, 40, 40)]  # 캐노피가 안 잡힌 포기
+    groups = group_leaves(canopy + inside + missed)
+    assert sorted(len(g) for g in groups) == [2, 2], [len(g) for g in groups]
+
+
+def test_nested_canopies_count_as_one_pot():
+    """같은 포기를 큰/작은 캐노피로 두 번 잡아도 화분은 하나, 잎 수는 합쳐서 센다."""
+    canopy = [box(200, 200, 300, 300, cls="canopy"),
+              box(180, 180, 90, 90, cls="canopy")]         # 위 캐노피 안에 들어앉음
+    leaves = [box(170, 170, 30, 30), box(190, 190, 30, 30), box(300, 300, 30, 30)]
+    groups = group_leaves(canopy + leaves)
+    assert len(groups) == 1, [len(g) for g in groups]
+    assert analyze_metrics(groups[0], 10000)["leaf_count"] == 3
+
+
+def test_canopy_wins_over_a_pot_box_on_the_same_plant():
+    """한 포기에 화분 박스와 캐노피가 같이 잡혀도 화분 둘로 쪼개지지 않는다."""
+    boxes = [box(200, 300, 400, 400, cls="canopy"),        # 잎 전체
+             box(200, 400, 80, 80, cls="pot"),             # 같은 포기의 화분
+             box(150, 200, 40, 40), box(250, 250, 40, 40), box(200, 400, 40, 40)]
+    groups = group_leaves(boxes)
+    assert len(groups) == 1 and len(groups[0]) == 3, [len(g) for g in groups]
+
+
+def test_dedupe_canopies_keeps_the_outer_box():
+    import main
+    big = box(200, 200, 300, 300, cls="canopy")
+    small = box(180, 180, 90, 90, cls="canopy")
+    kept = main.dedupe_canopies([small, big])
+    assert kept == [big], kept
+
+
+def test_dedupe_canopies_keeps_neighbours_that_merely_touch():
+    """살짝 겹치는 이웃 포기는 서로 다른 화분이다 — 합치면 안 된다."""
+    import main
+    a = box(200, 200, 300, 300, cls="canopy")
+    b = box(450, 200, 300, 300, cls="canopy")              # 50px 만 겹침
+    assert len(main.dedupe_canopies([a, b])) == 2
+
+
 def test_weed_class_is_dropped_at_the_detector_boundary():
     """풀(잡초) 뭉치를 새 클래스로 학습시켜 두면, detect_boxes 가 결과에서 통째로 뺀다.
 

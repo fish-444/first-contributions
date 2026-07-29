@@ -191,6 +191,10 @@ def _iou(a, b):
 # canopy 는 그 잎 전체를 담고 있어서 거리·생김새 보정 없이도 대부분 확정된다.
 NON_LEAF = {"object", "pot", "canopy", "background", "ruler", "marker", "tag"}
 
+# 그중 '식물 한 개체의 잎 전체'를 뜻하는 클래스. 화분 앵커와 규칙이 달라서
+# (group_by_canopies_indexed 참고) 따로 알아본다.
+CANOPY_CLASSES = {"canopy"}
+
 
 def _stage(cls: str) -> str:
     """클래스 이름을 잎 단계(shoot/mature/old)로 매핑. 이름 표기 흔들려도 인식."""
@@ -443,6 +447,66 @@ def group_by_pots_indexed(leaves: List[dict], pots: List[dict],
     return [(i, g) for i, g in enumerate(groups) if g]
 
 
+# --- 캐노피 앵커 -----------------------------------------------------------
+# 캐노피 하나 = 화분 하나, 그 안에 든 잎 수 = 그 화분의 잎 수.
+# 이 등식이 성립하려면 두 가지를 손봐야 한다: 겹쳐 잡힌 캐노피를 하나로 합치고,
+# 밖에 있는 잎을 억지로 안에 넣지 않는 것.
+CANOPY_NEST = float(os.environ.get("CANOPY_NEST", "0.8"))   # 이만큼 덮이면 같은 캐노피로 본다
+
+
+def _covered_ratio(inner: dict, outer: dict) -> float:
+    """inner 박스가 outer 에 얼마나 덮이는지(0~1). IoU 와 달리 크기 차이에 안 흔들려서
+    '큰 캐노피 안에 작은 캐노피가 들어앉은' 경우를 잡아낸다."""
+    ix1, iy1 = max(inner["x1"], outer["x1"]), max(inner["y1"], outer["y1"])
+    ix2, iy2 = min(inner["x2"], outer["x2"]), min(inner["y2"], outer["y2"])
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    return (iw * ih) / inner["area"] if inner["area"] > 0 else 0.0
+
+
+def dedupe_canopies(canopies: List[dict]) -> List[dict]:
+    """겹쳐 잡힌 캐노피를 하나로 — 캐노피 하나가 식물 하나가 되도록.
+
+    같은 포기를 큰 박스와 작은 박스로 두 번 잡는 일이 실제로 나온다(한 잎만
+    감싼 작은 캐노피가 큰 캐노피 안에 들어앉는 식). 그대로 두면 화분 하나가
+    둘로 쪼개져서, 양쪽 다 잎 수가 실제보다 적게 나온다.
+    큰 것부터 남기고, 이미 남긴 캐노피에 대부분 덮이는 박스는 버린다.
+    """
+    kept: List[dict] = []
+    for c in sorted(canopies, key=lambda b: b["area"], reverse=True):
+        if not any(_covered_ratio(c, k) >= CANOPY_NEST for k in kept):
+            kept.append(c)
+    return kept
+
+
+def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
+                              feats: List[dict]) -> List[List[dict]]:
+    """캐노피 앵커 전용 그룹화 — 박스 '안'에 든 잎만 그 화분 몫으로 센다.
+
+    화분(pot) 앵커와 규칙이 다르다. 화분은 작아서 잎이 밖으로 뻗는 게 정상이라
+    바깥 잎도 가까운 화분에 붙여 준다(group_by_pots_indexed). 캐노피는 그 식물의
+    잎 전체를 감싸는 박스라 '밖에 있다 = 그 식물 것이 아니다' 가 성립한다.
+    억지로 붙이면 한 화분의 잎 수가 부풀어, 캐노피로 잎 수를 세는 의미가 없어진다.
+
+    어느 캐노피에도 안 든 잎은 버리지 않고 자기들끼리 거리+생김새로 묶는다 —
+    캐노피를 놓친 식물이 통째로 옆 화분 잎 수에 얹히는 걸 막는다.
+    """
+    groups: List[List[dict]] = [[] for _ in canopies]
+    strays, stray_feats = [], []
+    for lf, ft in zip(leaves, feats):
+        lx, ly = _center(lf)
+        inside = [i for i, c in enumerate(canopies) if _contains(c, lx, ly)]
+        if inside:
+            # 캐노피끼리 겹치는 구간이면 중심이 가까운 쪽이 임자다
+            groups[min(inside, key=lambda i: math.dist(_center(canopies[i]), (lx, ly)))].append(lf)
+        else:
+            strays.append(lf)
+            stray_feats.append(ft)
+    out = [g for g in groups if g]
+    if strays:
+        out.extend(group_by_distance_and_shape(strays, stray_feats))
+    return out
+
+
 def group_by_pots_and_shape(leaves: List[dict], pots: List[dict], feats: List[dict]) -> List[List[dict]]:
     """화분 + 생김새를 함께 쓰는 그룹화.
 
@@ -519,6 +583,13 @@ def group_plants(boxes: List[dict], image: Image.Image = None, box_to_px: float 
         lfeats = [by_id[id(b)] for b in leaves]
     else:
         lfeats = [leaf_features(image, b, box_to_px) for b in leaves]
+
+    # 캐노피가 잡혔으면 캐노피만 앵커로 쓴다. 화분 박스와 섞으면 같은 포기에
+    # 앵커가 둘 붙어 한 식물이 두 화분으로 쪼개진다 — 캐노피 쪽이 잎 전체를
+    # 담고 있어 더 믿을 만하므로 캐노피에 몰아 준다.
+    canopies = [b for b in pots if b["cls"].lower() in CANOPY_CLASSES]
+    if canopies:
+        return group_by_canopies_indexed(leaves, dedupe_canopies(canopies), lfeats), {}
 
     predefined = False
     if not pots and POTS and canvas:
