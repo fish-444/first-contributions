@@ -89,35 +89,6 @@ def test_rail_x_is_fixed_by_side():
     assert left == placement.DEFAULT_LIGHTS[0]["x"]
 
 
-# ── 그늘 ─────────────────────────────────────────────────────────────────
-def test_a_big_neighbour_casts_shade():
-    small = _spot("C3", 0, 0, r_cm=8, h_cm=15)
-    big = _spot("C4", 6, 0, r_cm=20, h_cm=45)
-    assert placement.shade_factor(small, [small, big]) > 0.3
-    # 반대로 큰 쪽은 작은 이웃 때문에 어두워지지 않는다
-    assert placement.shade_factor(big, [small, big]) == 0.0
-
-
-def test_same_height_plants_do_not_shade_each_other():
-    """옆으로 겹칠 뿐 위를 덮지는 않는다."""
-    a = _spot("C3", 0, 0, r_cm=15, h_cm=30)
-    b = _spot("C4", 5, 0, r_cm=15, h_cm=30)
-    assert placement.shade_factor(a, [a, b]) == 0.0
-    assert placement.shade_factor(b, [a, b]) == 0.0
-
-
-def test_a_far_away_giant_casts_no_shade():
-    small = _spot("A1", -28, -18, r_cm=8, h_cm=15)
-    big = _spot("E10", 28, 18, r_cm=20, h_cm=45)
-    assert placement.shade_factor(small, [small, big]) == 0.0
-
-
-def test_shade_never_exceeds_everything():
-    small = _spot("C3", 0, 0, r_cm=6, h_cm=12)
-    crowd = [small] + [_spot(f"C{i}", 0, 0, r_cm=25, h_cm=50) for i in range(4)]
-    assert placement.shade_factor(small, crowd) == 1.0
-
-
 # ── 채점 ─────────────────────────────────────────────────────────────────
 def test_score_reports_every_spot():
     spots = [_spot("C3", -10, 0), _spot("C7", 10, 0)]

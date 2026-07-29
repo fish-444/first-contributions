@@ -16,7 +16,7 @@ y 는 높이다. 외부 의존성 없이 순수 파이썬으로만 계산한다.
 import functools
 import math
 import os
-from typing import Dict, List
+from typing import List
 
 # --------------------------------------------------------------------------- 환경
 # 조명은 실제로 좌측·우측 레일에 3개 달려 있다(2개+1개) — 실측 위치를 넣기
@@ -103,27 +103,6 @@ def _circle_overlap(r1_cm: float, r2_cm: float, d_cm: float) -> float:
     a2 = math.acos(max(-1.0, min(1.0, (d_cm * d_cm + r2_cm ** 2 - r1_cm ** 2) / (2 * d_cm * r2_cm))))
     return (r1_cm ** 2 * (a1 - math.sin(2 * a1) / 2)
             + r2_cm ** 2 * (a2 - math.sin(2 * a2) / 2))
-
-
-def shade_factor(here: dict, neighbours: List[dict]) -> float:
-    """이웃의 그늘에 덮인 비율 0~1. 나보다 키 큰 이웃만 그늘을 만든다.
-
-    같은 키끼리는 서로 가리지 못한다 — 옆으로 겹칠 뿐 위를 덮지 않는다.
-    """
-    r_cm, h_cm = here["r_cm"], here["h_cm"]
-    mine = math.pi * r_cm * r_cm
-    if mine <= 0:
-        return 0.0
-    covered = 0.0
-    for other in neighbours:
-        if other is here or other["h_cm"] <= h_cm:
-            continue
-        d_cm = math.dist((here["x_cm"], here["z_cm"]), (other["x_cm"], other["z_cm"]))
-        overlap = _circle_overlap(r_cm, other["r_cm"], d_cm)
-        # 키 차이가 클수록 더 확실히 덮는다 (바로 위를 지나간다)
-        lead = min(1.0, (other["h_cm"] - h_cm) / 20.0)
-        covered += overlap * lead
-    return min(1.0, covered / mine)
 
 
 # --------------------------------------------------------------------------- 점수
