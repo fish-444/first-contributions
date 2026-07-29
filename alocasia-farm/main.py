@@ -1332,6 +1332,9 @@ SIZE_TO_TOP_LEAF = {"소품": "소엽", "중품": "중엽", "대품": "대엽"}
 WATER_DRY_DAYS = int(os.environ.get("WATER_DRY_DAYS", "3"))    # 이 일수를 넘기면 마름 위험
 
 
+WATER_LOG_DAYS = int(os.environ.get("WATER_LOG_DAYS", "400"))  # 달력 1년치 남짓
+
+
 def _augment_water(p: dict) -> None:
     """물 준 지 며칠째인지 + 마름 위험 여부를 얹는다. last_watered 가 없으면 '기록 없음'."""
     last = p.get("last_watered")
@@ -1345,13 +1348,22 @@ def _augment_water(p: dict) -> None:
     p["soil_dry"] = bool(days is not None and days > WATER_DRY_DAYS)
 
 
+def _log_watered(p: dict, today: str) -> None:
+    """오늘 물 줬다고 기록 — 하루에 여러 번 눌러도 그날은 한 번만 남는다."""
+    log = p.setdefault("water_log", [])
+    if not log or log[-1] != today:
+        log.append(today)
+        del log[:-WATER_LOG_DAYS]
+    p["last_watered"] = today
+
+
 @app.post("/api/plants/{pid}/water")
 def water_plant(pid: str):
     """오늘 물을 줬다고 기록한다. 흙 마름 표시가 여기서부터 다시 3일을 센다."""
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
     p = PLANTS[pid]
-    p["last_watered"] = date.today().isoformat()
+    _log_watered(p, date.today().isoformat())
     p["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     _augment_water(p)
     save_state()
@@ -1369,11 +1381,26 @@ def water_all_plants():
     today = date.today().isoformat()
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     for p in PLANTS.values():
-        p["last_watered"] = today
+        _log_watered(p, today)
         p["updated"] = now
         _augment_water(p)
     save_state()
     return {"ok": True, "watered": len(PLANTS)}
+
+
+@app.get("/api/water-log")
+def water_log(month: str = None):
+    """날짜별로 몇 개 화분에 물을 줬는지 — 달력에 점으로 찍는 데 쓴다.
+
+    month(`YYYY-MM`)를 주면 그 달만, 안 주면 전체 기록을 돌려준다.
+    """
+    counts: Dict[str, int] = {}
+    for p in PLANTS.values():
+        for d in (p.get("water_log") or []):
+            if month and not d.startswith(month):
+                continue
+            counts[d] = counts.get(d, 0) + 1
+    return {"days": [{"date": d, "count": c} for d, c in sorted(counts.items())]}
 
 # 품 등급은 '가장 큰 잎의 긴 변 길이(cm)'로 가른다.
 # 사진 전체 면적 대비 비율로 재던 예전 방식은 구도에 휘둘렸다 — 같은 식물도

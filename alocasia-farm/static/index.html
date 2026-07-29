@@ -152,7 +152,10 @@
   <!-- 화분 하나씩 모달을 열지 않고, 트레이 전체에 준 물주기를 한 번에 기록한다 -->
   <div class="form" style="border-top:1px solid rgba(120,180,140,.18);padding-top:10px">
     <div style="font-size:12px;color:#cfe0d4;margin-bottom:6px">💧 <b>물주기</b></div>
-    <button type="button" class="mbtn" id="waterAllBtn" style="width:100%">전체 화분에 물 줬어요</button>
+    <div class="mrow">
+      <button type="button" class="mbtn" id="waterAllBtn">전체 화분에 물 줬어요</button>
+      <button type="button" class="mbtn" id="waterCalBtn" style="flex:none;padding:10px 14px">📅</button>
+    </div>
     <div id="waterAllInfo" style="font-size:10.5px;color:#6f8073;margin-top:5px"></div>
   </div>
   <!-- 조명 위치를 계산해 '어느 화분에 어느 식물을 둘까'를 제안한다 -->
@@ -261,6 +264,23 @@
       <button class="mbtn danger" id="mDel">🗑 제거</button>
     </div>
     <div id="mUpd"></div>
+  </div>
+</div>
+
+<!-- 물주기 달력 -->
+<div id="waterCalWrap" style="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:65;display:none;
+  align-items:center;justify-content:center">
+  <div style="background:#16211b;border:1px solid rgba(120,180,140,.3);border-radius:14px;padding:18px;width:320px;max-width:92vw">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <button type="button" id="waterCalPrev" style="background:none;border:none;color:#9fb4a6;font-size:20px;cursor:pointer;padding:2px 8px">‹</button>
+      <b id="waterCalTitle" style="color:#7ddb9a;font-size:14px"></b>
+      <button type="button" id="waterCalNext" style="background:none;border:none;color:#9fb4a6;font-size:20px;cursor:pointer;padding:2px 8px">›</button>
+    </div>
+    <div id="waterCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;font-size:11px"></div>
+    <div id="waterCalInfo" style="font-size:11px;color:#9fb4a6;margin-top:10px;min-height:1.3em"></div>
+    <div style="text-align:right;margin-top:8px">
+      <button type="button" class="mbtn" id="waterCalClose" style="padding:6px 14px">닫기</button>
+    </div>
   </div>
 </div>
 
@@ -1116,7 +1136,59 @@ document.getElementById('waterAllBtn').addEventListener('click',async()=>{
   const res=await r.json();
   info.textContent=res.watered?`✅ 화분 ${res.watered}개에 오늘 날짜로 기록했어요`:'등록된 화분이 없어요';
   await loadAll();
+  if(document.getElementById('waterCalWrap').style.display==='flex') renderWaterCal();
 });
+
+// ===== 물주기 달력 =====
+// 매번 언제 물을 줬는지 잊어버리니, 하루에 몇 화분 줬는지 달로 훑어볼 수 있게 한다.
+const now0=new Date();
+const WCAL={y:now0.getFullYear(), m:now0.getMonth()+1};   // m 은 1~12
+async function renderWaterCal(){
+  const mm=String(WCAL.m).padStart(2,'0');
+  document.getElementById('waterCalTitle').textContent=`${WCAL.y}년 ${WCAL.m}월`;
+  document.getElementById('waterCalInfo').textContent='';
+  let data={days:[]};
+  try{ data=await(await fetch(`/api/water-log?month=${WCAL.y}-${mm}`)).json(); }catch(e){}
+  const counts=Object.fromEntries(data.days.map(d=>[d.date,d.count]));
+  const grid=document.getElementById('waterCalGrid'); grid.innerHTML='';
+  ['일','월','화','수','목','금','토'].forEach(d=>{
+    const h=document.createElement('div'); h.textContent=d;
+    h.style.cssText='text-align:center;color:#6f8073;font-weight:700;padding-bottom:4px';
+    grid.appendChild(h);
+  });
+  const startDow=new Date(WCAL.y,WCAL.m-1,1).getDay();
+  const daysInMonth=new Date(WCAL.y,WCAL.m,0).getDate();
+  const todayStr=new Date().toISOString().slice(0,10);
+  for(let i=0;i<startDow;i++) grid.appendChild(document.createElement('div'));
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr=`${WCAL.y}-${mm}-${String(d).padStart(2,'0')}`;
+    const cnt=counts[dateStr]||0;
+    const cell=document.createElement('div');
+    cell.style.cssText=`text-align:center;padding:5px 2px;border-radius:6px;cursor:${cnt?'pointer':'default'};
+      background:${cnt?'#1d3324':'#14201a'};
+      border:1px solid ${dateStr===todayStr?'#7ddb9a':'rgba(120,180,140,.15)'};color:#e8f0ea`;
+    cell.innerHTML=`<div>${d}</div>`+(cnt?`<div style="font-size:9px;color:#7ddb9a">💧${cnt}</div>`:'');
+    if(cnt) cell.addEventListener('click',()=>{
+      document.getElementById('waterCalInfo').textContent=`${dateStr} — 화분 ${cnt}개에 물을 줬어요`;
+    });
+    grid.appendChild(cell);
+  }
+}
+document.getElementById('waterCalPrev').addEventListener('click',()=>{
+  WCAL.m--; if(WCAL.m<1){WCAL.m=12;WCAL.y--;} renderWaterCal();
+});
+document.getElementById('waterCalNext').addEventListener('click',()=>{
+  WCAL.m++; if(WCAL.m>12){WCAL.m=1;WCAL.y++;} renderWaterCal();
+});
+document.getElementById('waterCalClose').addEventListener('click',()=>{
+  document.getElementById('waterCalWrap').style.display='none';
+});
+document.getElementById('waterCalBtn').addEventListener('click',()=>{
+  const n=new Date(); WCAL.y=n.getFullYear(); WCAL.m=n.getMonth()+1;
+  document.getElementById('waterCalWrap').style.display='flex';
+  renderWaterCal();
+});
+
 // 자리 이동 — 자동 배치(스캔·화분 최근접)가 틀렸을 때 손으로 옮긴다.
 // 목적지에 이미 식물이 있으면 서버가 자동으로 서로 자리를 맞바꾼다.
 async function populateMoveSelect(p){

@@ -461,6 +461,72 @@ def test_water_all_on_an_empty_farm_does_not_crash():
     assert res["watered"] == 0
 
 
+# ── 물주기 달력 ──────────────────────────────────────────────────────────
+def test_watering_appends_to_the_log_not_just_the_last_date():
+    _plant()
+    main.water_plant(pid="t1")
+    assert main.PLANTS["t1"]["water_log"] == [date.today().isoformat()]
+    _reset()
+
+
+def test_watering_twice_in_one_day_only_logs_once():
+    _plant()
+    main.water_plant(pid="t1")
+    main.water_plant(pid="t1")
+    assert main.PLANTS["t1"]["water_log"] == [date.today().isoformat()], main.PLANTS["t1"]["water_log"]
+    _reset()
+
+
+def test_watering_on_a_later_day_adds_a_new_entry():
+    p = _plant(water_log=["2026-01-01"], last_watered="2026-01-01")
+    main.water_plant(pid="t1")
+    assert p["water_log"] == ["2026-01-01", date.today().isoformat()]
+    _reset()
+
+
+def test_water_log_is_capped():
+    """달력 기록도 무한정 안 쌓인다."""
+    p = _plant(water_log=[f"2020-01-{i:02d}" for i in range(1, 10)] * 60)  # 540개
+    main._log_watered(p, "2099-12-31")
+    assert len(p["water_log"]) <= main.WATER_LOG_DAYS
+    assert p["water_log"][-1] == "2099-12-31"
+    _reset()
+
+
+def test_water_log_endpoint_counts_pots_per_day():
+    _plant()
+    _second_plant("t2", water_log=[date.today().isoformat()], last_watered=date.today().isoformat())
+    main.water_plant(pid="t1")
+    d = main.water_log()
+    today = date.today().isoformat()
+    day = next(x for x in d["days"] if x["date"] == today)
+    assert day["count"] == 2, day
+    _reset()
+
+
+def test_water_log_endpoint_filters_by_month():
+    p = _plant(water_log=["2026-01-15", "2026-02-01"], last_watered="2026-02-01")
+    d_jan = main.water_log(month="2026-01")
+    d_feb = main.water_log(month="2026-02")
+    assert [x["date"] for x in d_jan["days"]] == ["2026-01-15"]
+    assert [x["date"] for x in d_feb["days"]] == ["2026-02-01"]
+    _reset()
+
+
+def test_water_log_endpoint_on_an_empty_farm():
+    _reset()
+    assert main.water_log()["days"] == []
+
+
+def test_water_all_logs_every_plant_for_the_calendar():
+    _plant()
+    _second_plant("t2")
+    main.water_all_plants()
+    assert main.PLANTS["t1"]["water_log"] == [date.today().isoformat()]
+    assert main.PLANTS["t2"]["water_log"] == [date.today().isoformat()]
+    _reset()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:
