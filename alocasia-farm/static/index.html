@@ -110,6 +110,9 @@
     <label class="mbtn" style="display:block;padding:10px;border-radius:9px;border:1px solid rgba(120,180,140,.3);background:#24382c;color:#d7e8dc;font-size:13px;font-weight:600;cursor:pointer;text-align:center">
       📸 탑뷰 사진 스캔<input type="file" id="scanFile" accept="image/*" style="display:none">
     </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#9fb4a6;margin-top:7px;cursor:pointer">
+      <input type="checkbox" id="scanWithPots"> 🪴 화분도 같이 지정 (처음이거나 화분을 옮겼을 때)
+    </label>
     <label style="display:block;font-size:11px;color:#9fb4a6;margin:9px 0 4px">스캔할 때 기존 기록은</label>
     <select id="scanMode" style="width:100%;font-size:12.5px;padding:8px;background:#14201a;
       color:#e8f0ea;border:1px solid rgba(120,180,140,.3);border-radius:8px">
@@ -635,6 +638,14 @@ function scanMsg(d,how){
 }
 document.getElementById('scanFile').addEventListener('change',async(e)=>{
   const f=e.target.files[0]; if(!f)return;
+  // 화분 자리를 이 스캔 사진에서 같이 잡고 싶으면, 별도 사진 없이 지금 사진으로
+  // 먼저 모서리·화분 중심을 찍게 한 뒤 그 사진 그대로 스캔까지 잇는다.
+  if(document.getElementById('scanWithPots').checked){
+    CAL.mode='potscan'; CAL.files=[f]; CAL.i=0;
+    calWrap.style.display='flex'; showCal();
+    e.target.value='';
+    return;
+  }
   scanStatus.textContent='분석 중… (여러 개체를 묶는 중)';
   const fd=new FormData(); fd.append('file',f);
   fd.append('mode',document.getElementById('scanMode').value);
@@ -852,14 +863,18 @@ document.getElementById('multiFile').addEventListener('change',e=>{
   calWrap.style.display='flex'; showCal();
 });
 
+// 'pot'(화분 자리만 지정)과 'potscan'(같은 사진으로 지정 후 바로 스캔)은
+// 모서리·화분 클릭 단계가 완전히 같다 — 마지막에 스캔까지 이어지느냐만 다르다.
+function isPotMode(){ return CAL.mode==='pot'||CAL.mode==='potscan'; }
 function showCal(){
   CAL.pts=[]; CAL.pots=[]; CAL.refs=[]; CAL.pending=null; calNext.disabled=true;
   document.getElementById('refPick').style.display='none';
   const f=CAL.files[CAL.i];
   document.getElementById('regionLbl').style.display=(CAL.mode==='multi')?'':'none';
-  calNext.textContent=(CAL.mode==='pot')?'저장':(CAL.i===CAL.files.length-1?'완료':'다음 →');
+  calNext.textContent=isPotMode()?(CAL.mode==='potscan'?'저장 후 스캔':'저장'):(CAL.i===CAL.files.length-1?'완료':'다음 →');
   document.getElementById('calTitle').textContent=
     CAL.mode==='pot' ? '🪴 화분 자리 지정'
+    : CAL.mode==='potscan' ? '🪴📸 화분 지정 + 스캔'
     : CAL.mode==='ref' ? `🎯 화분 기준 — 사진 ${CAL.i+1} / ${CAL.files.length}`
     : `사진 ${CAL.i+1} / ${CAL.files.length} — ${f.name}`;
   // 2장이면 좌/우, 3장 이상이면 전체를 기본값으로 (사용자가 바꿀 수 있음)
@@ -882,7 +897,7 @@ function updCalStep(){
     return;
   }
   if(CAL.pts.length<4){ el.textContent=`${CAL.pts.length+1}번째: ${names[CAL.pts.length]} 모서리`; return; }
-  el.textContent=(CAL.mode==='pot')
+  el.textContent=isPotMode()
     ? `이제 화분 중심을 하나씩 클릭 — 현재 ${CAL.pots.length}개 (빈 화분도 찍어 두면 나중에 심었을 때 바로 잡힙니다)`
     : '네 점 완료 — [다음]을 누르세요';
 }
@@ -921,17 +936,17 @@ calCv.addEventListener('click',e=>{
     document.getElementById('refPick').style.display=left.length?'flex':'none';
     return;
   }
-  if(CAL.mode==='pot'&&CAL.pts.length>=4){ CAL.pots.push({dx,dy,x:dx*sx,y:dy*sy});
+  if(isPotMode()&&CAL.pts.length>=4){ CAL.pots.push({dx,dy,x:dx*sx,y:dy*sy});
     drawCal(); updCalStep(); calNext.disabled=CAL.pots.length<1; return; }
   if(CAL.pts.length>=4)return;
   CAL.pts.push({dx,dy,x:dx*sx,y:dy*sy});
   drawCal(); updCalStep();
-  calNext.disabled=(CAL.mode==='pot')?true:CAL.pts.length<4;
+  calNext.disabled=isPotMode()?true:CAL.pts.length<4;
 });
 document.getElementById('calUndo').addEventListener('click',()=>{
   CAL.pending=null; document.getElementById('refPick').style.display='none';
   if(CAL.mode==='ref'){ CAL.refs.pop(); calNext.disabled=CAL.refs.length<4; }
-  else if(CAL.mode==='pot'&&CAL.pots.length){ CAL.pots.pop(); calNext.disabled=!CAL.pots.length; }
+  else if(isPotMode()&&CAL.pots.length){ CAL.pots.pop(); calNext.disabled=!CAL.pots.length; }
   else { CAL.pts=[]; CAL.pots=[]; calNext.disabled=true; }
   drawCal(); updCalStep();
 });
@@ -960,7 +975,8 @@ calNext.addEventListener('click',async()=>{
     CAL.files=[]; CAL.mode='multi';
     return;
   }
-  if(CAL.mode==='pot'){
+  if(isPotMode()){
+    const scanAfter=CAL.mode==='potscan', scanFile2=CAL.files[0];
     calWrap.style.display='none';
     if(CAL.url){URL.revokeObjectURL(CAL.url);CAL.url=null;}
     const fd=new FormData();
@@ -968,13 +984,29 @@ calNext.addEventListener('click',async()=>{
     fd.append('corners',JSON.stringify(CAL.pts.map(p=>[p.x,p.y])));
     try{
       const r=await fetch('/api/pots',{method:'POST',body:fd});
-      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'저장 실패');}
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'화분 저장 실패');}
       const d=await r.json();
       CAL.potList=d.pots;
       document.getElementById('potInfo').innerHTML=
         `✅ 화분 ${d.count}개 지정됨${d.removed?` · 예전 자리 식물 ${d.removed}개 정리`:''} — 이제 스캔하면 이 자리로 갈립니다 <a href="#" id="potClear" style="color:#c98">지우기</a>`;
       bindPotClear(); showRefBtn(d.count>=4); showPotMap(true);
-    }catch(e){ document.getElementById('potInfo').textContent='⚠️ '+e.message; }
+
+      // 화분 지정 + 스캔: 두 번째 사진 없이, 방금 그 사진으로 바로 이어서 스캔한다
+      if(scanAfter){
+        scanStatus.textContent='분석 중… (화분 지정 + 스캔)';
+        const sfd=new FormData(); sfd.append('file',scanFile2);
+        sfd.append('mode',document.getElementById('scanMode').value);
+        const sr=await fetch('/api/scan',{method:'POST',body:sfd});
+        if(!sr.ok){const se=await sr.json().catch(()=>({}));throw new Error(se.detail||'스캔 실패');}
+        const sd=await sr.json();
+        await loadAll();
+        const how=({pot_preset:'지정한 화분자리',canopy:'캐노피',pot:'화분+생김새'})[sd.grouped_by]||'거리+생김새';
+        scanStatus.textContent=scanMsg(sd,how);
+      }
+    }catch(e){
+      if(scanAfter) scanStatus.textContent='⚠️ '+e.message;
+      else document.getElementById('potInfo').textContent='⚠️ '+e.message;
+    }
     CAL.files=[]; CAL.mode='multi';
     return;
   }
