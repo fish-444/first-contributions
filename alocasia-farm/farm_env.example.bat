@@ -5,7 +5,7 @@ rem  farm_env.bat 는 깃에 올라가지 않습니다 (키가 새 나가지 않
 rem ────────────────────────────────────────────────────────────────
 
 rem 로보플로우 Private API Key (공개키는 막힙니다)
-set ROBOFLOW_API_KEY=여기에_개인키
+set ROBOFLOW_API_KEY=npP6TPQd5KvbAAXiTLsl
 
 rem 워크플로 방식
 set ROBOFLOW_WORKSPACE=s-workspace-br86f
