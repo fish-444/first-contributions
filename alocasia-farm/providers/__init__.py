@@ -71,6 +71,17 @@ def select() -> Tuple[Detector, Detector]:
     workflow_url = os.environ.get("ROBOFLOW_WORKFLOW_URL", "")
     model_path = os.environ.get("MODEL_PATH", "yolov8n.pt")
 
+    # 앱이 실제로 어떤 키를 들고 있는지 앞 4자리만 찍는다. 키를 고쳤는데도 401 이
+    # 계속 날 때, 파일을 고쳤지만 앱이 못 읽고 있는 건지(예: 예제 파일을 고쳤거나
+    # 서버를 안 껐다 켬) 아니면 키 자체가 틀린 건지 이 한 줄로 갈린다.
+    # 로보플로우 대시보드도 키를 같은 방식(앞 4자리)으로 표시한다.
+    if api_key:
+        print(f"[키] {api_key[:4]}… ({len(api_key)}자)  ← 로보플로우 대시보드의 "
+              f"키 앞자리와 같은지 확인하세요")
+    else:
+        print("[키] 없음 — farm_env.bat 의 ROBOFLOW_API_KEY 가 비어 있습니다 "
+              "(farm_env.example.bat 이 아니라 farm_env.bat 입니다)")
+
     if api_key and (workflow_url or (workspace and workflow_id)):
         from .roboflow_workflow import WorkflowDetector
         one = WorkflowDetector(api_key, workspace, workflow_id, workflow_url)
