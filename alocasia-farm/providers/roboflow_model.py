@@ -29,7 +29,10 @@ class ModelDetector:
         except requests.RequestException:
             raise HTTPException(502, "로보플로우 서버 연결 실패 (인터넷 확인)")
         if resp.status_code in (401, 403):
-            raise HTTPException(401, "로보플로우 개인(Private) API 키를 확인하세요.")
+            detail = resp.text[:200].strip().replace("\n", " ")
+            print(f"[로보플로우 거부] HTTP {resp.status_code} · {detail}")
+            raise HTTPException(401, f"로보플로우가 거부했습니다 (HTTP {resp.status_code}). "
+                                     f"서버 창에 자세한 내용이 찍혔습니다.")
         if not resp.ok:
             raise HTTPException(502, f"로보플로우 오류: {resp.text[:150]}")
         preds = resp.json().get("predictions", [])

@@ -129,6 +129,42 @@ def test_url_candidates():
     assert all(u.startswith("http") for u in urls), urls
 
 
+# ── API 키 다듬기 ────────────────────────────────────────────────────────
+# 401 의 대부분은 키가 죽어서가 아니라 따옴표·공백이 값에 섞여서다.
+from providers import clean_api_key
+
+
+def test_batch_style_quotes_are_stripped_from_the_key():
+    """배치 파일에서 set X="k" 라고 쓰면 따옴표까지 값이 된다 — 걷어내고 알려 준다."""
+    key, warns = clean_api_key('"npP6secret"')
+    assert key == "npP6secret", key
+    assert len(warns) == 1 and "따옴표" in warns[0], warns
+
+
+def test_surrounding_whitespace_is_stripped():
+    key, warns = clean_api_key("  npP6secret\n")
+    assert key == "npP6secret", key
+    assert warns and "공백" in warns[0], warns
+
+
+def test_publishable_key_is_flagged():
+    """rf_ 로 시작하는 공개키는 워크플로에서 막힌다 — 미리 알려 준다."""
+    key, warns = clean_api_key("rf_xA9jIKod5mTyiC9YpmCc5LMu8fE2")
+    assert key == "rf_xA9jIKod5mTyiC9YpmCc5LMu8fE2"
+    assert any("공개" in w for w in warns), warns
+
+
+def test_a_clean_key_produces_no_noise():
+    key, warns = clean_api_key("npP6secret")
+    assert key == "npP6secret" and warns == [], warns
+
+
+def test_missing_key_is_not_an_error():
+    """키를 아예 안 넣은 건 데모 모드로 가는 정상 경로다 — 경고를 뿌리지 않는다."""
+    assert clean_api_key("") == ("", [])
+    assert clean_api_key(None) == ("", [])
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

@@ -106,7 +106,15 @@ class WorkflowDetector:
             if resp.status_code != 404:
                 break                  # 404 면 다른 경로 형식으로 한 번 더
         if resp.status_code in (401, 403):
-            raise HTTPException(401, "로보플로우 개인(Private) API 키를 확인하세요.")
+            # 401 과 403 은 원인이 다르다. 뭉뚱그리면 멀쩡한 키를 새로 발급받게 된다.
+            # 로보플로우가 보낸 본문에 진짜 이유가 들어 있으므로 그대로 보여 준다.
+            detail = resp.text[:200].strip().replace("\n", " ")
+            why = ("키가 다릅니다 — 오타·따옴표·줄 끝 공백을 확인하세요"
+                   if resp.status_code == 401 else
+                   "키는 맞지만 권한이 없습니다 — 크레딧 소진이거나 다른 워크스페이스의 키일 수 있어요")
+            print(f"[로보플로우 거부] HTTP {resp.status_code} · {detail}")
+            raise HTTPException(401, f"로보플로우가 거부했습니다 (HTTP {resp.status_code}). "
+                                     f"{why}. 서버 창에 자세한 내용이 찍혔습니다.")
         if resp.status_code == 404:
             raise HTTPException(502, "워크플로를 찾을 수 없어요. "
                                      "ROBOFLOW_WORKSPACE / ROBOFLOW_WORKFLOW_ID 확인")

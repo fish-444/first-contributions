@@ -21,6 +21,32 @@ from .common import boxes_from_predictions, jpeg_b64          # noqa: F401  (제
 CONFIDENCE = float(os.environ.get("CONFIDENCE", "25"))        # 0~100
 
 
+def clean_api_key(raw: str) -> Tuple[str, List[str]]:
+    """환경변수로 들어온 키를 다듬고, 사람이 읽을 경고를 함께 돌려준다.
+
+    윈도우 배치 파일에서 키를 넣다가 걸리는 함정이 늘 같다. 파워셸 습관대로
+    `set ROBOFLOW_API_KEY="npP6..."` 라고 쓰면 **따옴표까지 키 값이 된다**.
+    복사·붙여넣기하면 줄 끝 공백도 자주 딸려온다. 둘 다 401 로만 돌아와서
+    키가 죽은 줄 알고 새로 발급받게 되는데, 실제로는 글자 두 개 문제다.
+    그래서 조용히 걷어내고, 대신 무엇을 걷어냈는지 알려 준다.
+    """
+    warnings: List[str] = []
+    key = (raw or "").strip()
+    if key != (raw or ""):
+        warnings.append("키 앞뒤의 공백을 떼고 씁니다. farm_env.bat 에서도 지워 주세요.")
+    for q in ('"', "'"):
+        if len(key) >= 2 and key.startswith(q) and key.endswith(q):
+            key = key[1:-1].strip()
+            warnings.append(f"키를 감싼 {q} 를 떼고 씁니다 — 배치 파일에서는 "
+                            f"따옴표까지 키 값이 됩니다. farm_env.bat 에서도 지워 주세요.")
+    if key.startswith("rf_"):
+        warnings.append("rf_ 로 시작하는 키는 공개(publishable) 키라 막힙니다. "
+                        "Private API Key 를 넣으세요.")
+    if any(c.isspace() for c in key):
+        warnings.append("키 중간에 공백이 있습니다 — 붙여넣다 잘린 것 같습니다.")
+    return key, warnings
+
+
 class Detector(Protocol):
     """탐지 제공자가 지켜야 할 최소 약속."""
 
@@ -37,7 +63,9 @@ def select() -> Tuple[Detector, Detector]:
     둘이 같은 객체면 위쪽 코드가 추론을 한 번만 돌려 크레딧을 아낀다.
     우선순위: 로보플로우 워크플로 → 로보플로우 모델 → 로컬 .pt → 데모
     """
-    api_key = os.environ.get("ROBOFLOW_API_KEY", "")
+    api_key, key_warnings = clean_api_key(os.environ.get("ROBOFLOW_API_KEY", ""))
+    for w in key_warnings:
+        print(f"[키 경고] {w}")
     workspace = os.environ.get("ROBOFLOW_WORKSPACE", "")
     workflow_id = os.environ.get("ROBOFLOW_WORKFLOW_ID", "")
     workflow_url = os.environ.get("ROBOFLOW_WORKFLOW_URL", "")
