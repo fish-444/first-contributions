@@ -20,3 +20,7 @@ rem set CONFIDENCE=15
 
 rem 저장 파일 위치 (기본: 이 폴더의 farm.db)
 rem set FARM_DB=D:\백업\farm.db
+
+rem 포트 고정 (install.bat 이 자동으로 넣어 줍니다).
+rem 정해 두면 늘 이 포트를 쓰고, 안 정하면 8123 부터 빈 번호를 찾습니다.
+rem set FARM_PORT=8123

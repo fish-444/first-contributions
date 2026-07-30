@@ -14,17 +14,24 @@ if exist "farm_env.bat" (
     echo.
 )
 
-rem 8123 이 막혀 있으면 다음 번호로 넘어갑니다 (윈도우가 예약해 둔 포트가 있음)
-set PORT=8123
-netstat -ano | findstr ":%PORT% " >nul && set PORT=8234
-netstat -ano | findstr ":%PORT% " >nul && set PORT=8345
+rem 자동 시작(윈도우 시작프로그램)으로 뜬 경우엔 브라우저를 열지 않습니다.
+rem 부팅할 때마다 창이 뜨면 성가시니까요. 바탕화면 바로가기로 여시면 됩니다.
+if /i "%~1"=="/nobrowser" set FARM_NOBROWSER=1
 
-echo 브라우저를 엽니다 - http://127.0.0.1:%PORT%
+rem 포트: farm_env.bat 에서 FARM_PORT 를 정해 두면 늘 그 포트를 씁니다.
+rem (바탕화면 바로가기 주소가 고정되려면 포트도 고정이어야 합니다)
+rem 안 정했으면 8123 부터 비어 있는 번호를 찾습니다.
+set PORT=8123
+if defined FARM_PORT set PORT=%FARM_PORT%
+if not defined FARM_PORT netstat -ano | findstr ":%PORT% " >nul && set PORT=8234
+if not defined FARM_PORT netstat -ano | findstr ":%PORT% " >nul && set PORT=8345
+
+echo 주소 - http://127.0.0.1:%PORT%
 echo 끄려면 이 창에서 Ctrl+C 를 누르거나 창을 닫으세요.
 echo.
 
 rem 서버가 뜰 시간을 주고 브라우저를 띄웁니다
-start "" /b cmd /c "timeout /t 3 >nul & start http://127.0.0.1:%PORT%"
+if not defined FARM_NOBROWSER start "" /b cmd /c "timeout /t 3 >nul & start http://127.0.0.1:%PORT%"
 
 python -m uvicorn main:app --port %PORT%
 
