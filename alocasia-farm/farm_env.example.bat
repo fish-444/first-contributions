@@ -1,11 +1,18 @@
 @echo off
-rem ────────────────────────────────────────────────────────────────
-rem  이 파일을 farm_env.bat 로 복사한 뒤 개인키를 채우세요.
-rem  farm_env.bat 는 깃에 올라가지 않습니다 (키가 새 나가지 않게).
-rem ────────────────────────────────────────────────────────────────
+rem ════════════════════════════════════════════════════════════════
+rem  ⚠️  이 파일(farm_env.example.bat)에는 키를 넣지 마세요! ⚠️
+rem
+rem  이 파일은 **깃에 올라갑니다**. 여기에 키를 적으면 깃허브에 그대로
+rem  공개됩니다. .gitignore 가 막아 주는 건 farm_env.bat 하나뿐입니다.
+rem
+rem  올바른 순서:
+rem    1) 이 파일을 복사해서 이름을 farm_env.bat 로 바꾼다
+rem    2) 복사본(farm_env.bat)을 열어 키를 넣는다
+rem  start.bat 이 읽는 것도 farm_env.bat 입니다 — 이 파일이 아닙니다.
+rem ════════════════════════════════════════════════════════════════
 
-rem 로보플로우 Private API Key (공개키는 막힙니다)
-set ROBOFLOW_API_KEY=npP6TPQd5KvbAAXiTLsl
+rem 로보플로우 Private API Key (공개키는 막힙니다). 따옴표 없이 붙여넣으세요.
+set ROBOFLOW_API_KEY=여기에_개인키
 
 rem 워크플로 방식
 set ROBOFLOW_WORKSPACE=s-workspace-br86f
