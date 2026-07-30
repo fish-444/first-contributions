@@ -456,17 +456,44 @@ def group_by_pots_indexed(leaves: List[dict], pots: List[dict],
 # 중복 박스와 이웃 포기를 구분할 수 없다. 한 사진에서 캐노피 10개 중 5개가
 # 이웃에 흡수돼 화분 9개가 5개로 줄었다. 그래서 겹침 정리는 하지 않는다 —
 # 같은 박스를 두 번 잡는 진짜 중복은 모델 쪽 NMS 가 이미 걸러 준다.
+# 박스 경계에서 이만큼(잎 크기 배수) 안쪽이면 그 캐노피 것으로 본다.
+# 캐노피 박스는 잎 끝을 아슬아슬하게 자르는 일이 잦아서, 자기 잎인데 중심이
+# 몇 픽셀 밖으로 나가는 경우가 실제로 많다. 그런 잎까지 남남으로 두면
+# 캐노피가 통째로 빈 채로 남아 화분이 안 만들어진다.
+CANOPY_MARGIN = float(os.environ.get("CANOPY_MARGIN", "0.5"))
+
+# 잎이 하나도 안 든 캐노피를 화분으로 인정할 최소 확신도.
+# 잎이 든 캐노피는 잎 자체가 '거기 포기가 있다'는 증거지만, 빈 캐노피는 증거가
+# 박스 하나뿐이라 오탐일 확률이 높다. 그래서 문턱을 따로 높게 잡는다.
+CANOPY_EMPTY_CONF = float(os.environ.get("CANOPY_EMPTY_CONF", "0.6"))
+
+
+def _dist_to_box(box: dict, x: float, y: float) -> float:
+    """점에서 박스까지의 거리. 안에 있으면 0."""
+    dx = max(box["x1"] - x, 0.0, x - box["x2"])
+    dy = max(box["y1"] - y, 0.0, y - box["y2"])
+    return math.hypot(dx, dy)
+
+
 def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
                               feats: List[dict]) -> List[List[dict]]:
-    """캐노피 앵커 전용 그룹화 — 박스 '안'에 든 잎만 그 화분 몫으로 센다.
+    """캐노피 앵커 전용 그룹화 — 캐노피 하나가 화분 하나, 그 안의 잎이 그 화분 몫.
 
     화분(pot) 앵커와 규칙이 다르다. 화분은 작아서 잎이 밖으로 뻗는 게 정상이라
-    바깥 잎도 가까운 화분에 붙여 준다(group_by_pots_indexed). 캐노피는 그 식물의
-    잎 전체를 감싸는 박스라 '밖에 있다 = 그 식물 것이 아니다' 가 성립한다.
-    억지로 붙이면 한 화분의 잎 수가 부풀어, 캐노피로 잎 수를 세는 의미가 없어진다.
+    바깥 잎도 무조건 가장 가까운 화분에 붙여 준다(group_by_pots_indexed).
+    캐노피는 그 식물의 잎 전체를 감싸는 박스라 멀리 떨어진 잎까지 끌어오면
+    잎 수가 부풀어, 캐노피로 세는 의미가 없어진다.
 
-    어느 캐노피에도 안 든 잎은 버리지 않고 자기들끼리 거리+생김새로 묶는다 —
-    캐노피를 놓친 식물이 통째로 옆 화분 잎 수에 얹히는 걸 막는다.
+    그래서 세 단계로 나눈다:
+      1. 캐노피 안에 중심이 든 잎 → 그 화분 확정
+      2. 살짝 밖으로 나간 잎(제 크기의 CANOPY_MARGIN 배 이내) → 가장 가까운 캐노피
+         캐노피 박스가 잎 끝을 아슬아슬하게 자르는 일이 잦아서 필요하다
+      3. 어느 캐노피와도 먼 잎 → 자기들끼리 거리+생김새로 묶어 별도 포기로
+
+    잎이 하나도 안 든 캐노피도 화분으로 남긴다. 큰 잎에 가려 잎을 못 잡았을 뿐
+    포기는 거기 있기 때문이다 — 지정해 둔 화분을 '미검출'로 남기는 것과 같은 이유다
+    (_ensure_pot_slots). 이때 무리에는 캐노피 박스만 들어가는데, 잎 계수·크기 판정은
+    전부 NON_LEAF 를 걸러 내므로 잎 0장으로 잡힌다.
     """
     groups: List[List[dict]] = [[] for _ in canopies]
     strays, stray_feats = [], []
@@ -479,9 +506,27 @@ def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
         else:
             strays.append(lf)
             stray_feats.append(ft)
-    out = [g for g in groups if g]
-    if strays:
-        out.extend(group_by_distance_and_shape(strays, stray_feats))
+
+    # 2단계 — 경계 바로 밖의 잎 되찾기
+    far, far_feats = [], []
+    for lf, ft in zip(strays, stray_feats):
+        lx, ly = _center(lf)
+        reach = _span(lf) * CANOPY_MARGIN
+        near = [i for i, c in enumerate(canopies) if _dist_to_box(c, lx, ly) <= reach]
+        if near:
+            groups[min(near, key=lambda i: _dist_to_box(canopies[i], lx, ly))].append(lf)
+        else:
+            far.append(lf)
+            far_feats.append(ft)
+
+    out = []
+    for i, g in enumerate(groups):
+        if g:
+            out.append(g)
+        elif (canopies[i].get("conf") or 0) >= CANOPY_EMPTY_CONF:
+            out.append([canopies[i]])          # 잎은 못 잡았지만 포기는 있다
+    if far:
+        out.extend(group_by_distance_and_shape(far, far_feats))
     return out
 
 
@@ -742,6 +787,12 @@ def analyze_metrics(boxes: List[dict], img_area: float, cm_per_unit: float = Non
     """
     leaves = [b for b in boxes if b["cls"].lower() not in NON_LEAF]
     leaf_count = len(leaves)
+    if not leaf_count:
+        # 캐노피만 잡히고 잎은 못 잡은 화분. '소품'으로 적으면 진짜 소품과
+        # 구분이 안 되므로 '미검출'로 둔다 (_ensure_pot_slots 와 같은 이유).
+        return {"size_class": "미검출", "leaf_max_cm": None, "leaf_count": 0,
+                "shoot_count": 0, "mature_count": 0, "old_count": 0,
+                "overlap_count": 0, "overlap_density": 0, "empty": True}
 
     # 단계별 개수 (Shoot / Mature / Old)
     counts = {"shoot": 0, "mature": 0, "old": 0}
@@ -986,7 +1037,8 @@ async def scan_farm(file: UploadFile = File(...), replace: str = Form(None),
     scan_id = "sc_" + uuid.uuid4().hex[:8]
     result = _register_groups(
         groups, space_w, space_h,
-        feat_of=lambda g: _mean_features([leaf_features(image, b, box_to_px) for b in g]),
+        feat_of=lambda g: _mean_features([leaf_features(image, b, box_to_px) for b in g
+                                          if b["cls"].lower() not in NON_LEAF]),
         per_plant_area=img_area / len(groups),      # 식물 1개 몫 — 대/중/소엽 기준
         img_area=img_area,
         slot_of=(lambda g: slots.get(id(g))) if slots else None,
@@ -1036,6 +1088,9 @@ def _merge_keep(old: dict, new: dict) -> tuple:
         for k in ("shoot_count", "mature_count", "old_count", "leaf_count", "size_class"):
             if k in old:
                 out[k] = old[k]
+        # 이번엔 잎을 못 잡았어도 기존 잎 수를 지켰으면 '빈 화분'이 아니다.
+        # 안 그러면 잎 5장을 그대로 들고 있으면서 미검출로 표시된다.
+        out.pop("empty", None)
     return out, added
 
 
@@ -1324,7 +1379,8 @@ async def scan_multi(files: List[UploadFile] = File(...), corners: str = Form(No
     feat_of_box = {id(merged[i]): feats[i] for i in keep}
 
     def feat_of(group):
-        return _mean_features([feat_of_box[id(b)] for b in group])
+        return _mean_features([feat_of_box[id(b)] for b in group
+                               if b["cls"].lower() not in NON_LEAF])
 
     def leaf_extra_of(b):
         """합친 좌표 말고 원본 사진 어디서 온 잎인지도 남긴다."""

@@ -113,12 +113,17 @@ def test_canopy_is_never_counted_as_a_leaf():
     assert analyze_metrics(groups[0], 10000)["leaf_count"] == 1
 
 
-def test_a_leaf_deep_inside_the_overlap_of_two_canopies_still_lands_somewhere():
-    """캐노피끼리 겹쳐도(밀집된 트레이 흔한 상황) 죽지 않고 가장 가까운 쪽으로 간다."""
+def test_a_leaf_deep_inside_the_overlap_of_two_canopies_lands_in_exactly_one():
+    """캐노피끼리 겹쳐도(밀집된 트레이 흔한 상황) 잎이 양쪽에 중복으로 세이면 안 된다.
+
+    잎을 못 받은 쪽도 화분으로는 남는다 — 캐노피가 있으면 포기도 있는 것이다.
+    """
     canopy = [box(200, 200, 400, 400, cls="canopy"), box(500, 200, 400, 400, cls="canopy")]
     leaf = [box(340, 200, 40, 40)]          # 두 캐노피가 겹치는 구간, 왼쪽에 더 가까움
     groups = group_leaves(canopy + leaf)
-    assert len(groups) == 1 and len(groups[0]) == 1
+    assert len(groups) == 2, [len(g) for g in groups]
+    counted = [analyze_metrics(g, 10000)["leaf_count"] for g in groups]
+    assert sorted(counted) == [0, 1], counted
 
 
 def test_grouped_by_reports_canopy_distinctly_from_pot():
@@ -138,6 +143,36 @@ def test_leaf_count_per_pot_is_exactly_what_the_canopy_box_holds():
     in_canopy = max(groups, key=len)
     assert len(in_canopy) == 3, [len(g) for g in groups]
     assert analyze_metrics(in_canopy, 10000)["leaf_count"] == 3
+
+
+def test_leaf_just_outside_its_own_canopy_still_joins_it():
+    """캐노피 박스는 잎 끝을 아슬아슬하게 자른다 — 중심이 살짝 나간 잎도 제 화분 것."""
+    canopy = [box(200, 200, 200, 200, cls="canopy")]     # x 100~300
+    leaves = [box(180, 200, 40, 40),                     # 안
+              box(315, 200, 40, 40)]                     # 15px 밖 (제 크기보다 훨씬 가까움)
+    groups = group_leaves(canopy + leaves)
+    assert len(groups) == 1 and len(groups[0]) == 2, [len(g) for g in groups]
+
+
+def test_canopy_with_no_detected_leaf_is_still_a_pot():
+    """큰 잎에 가려 잎을 못 잡아도 포기는 거기 있다 — 화분이 사라지면 안 된다."""
+    boxes = [box(200, 200, 200, 200, cls="canopy"),
+             box(900, 200, 200, 200, cls="canopy"),      # 잎이 하나도 안 잡힘
+             box(200, 200, 40, 40)]
+    groups = group_leaves(boxes)
+    assert len(groups) == 2, [len(g) for g in groups]
+    empty = next(g for g in groups if all(b["cls"] == "canopy" for b in g))
+    m = analyze_metrics(empty, 10000)
+    assert m["leaf_count"] == 0 and m["size_class"] == "미검출", m
+
+
+def test_a_faint_empty_canopy_is_not_promoted_to_a_pot():
+    """빈 캐노피는 증거가 박스 하나뿐이라 오탐이기 쉽다 — 확신도가 낮으면 버린다."""
+    boxes = [box(200, 200, 200, 200, cls="canopy"),
+             box(200, 200, 40, 40)]
+    faint = box(900, 200, 200, 200, cls="canopy"); faint["conf"] = 0.3
+    groups = group_leaves(boxes + [faint])
+    assert len(groups) == 1, [len(g) for g in groups]
 
 
 def test_leaf_outside_every_canopy_does_not_inflate_a_pots_count():
