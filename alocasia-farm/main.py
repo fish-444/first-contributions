@@ -33,6 +33,7 @@ import base64
 import io
 import math
 import os
+import re
 import time
 import uuid
 from datetime import date
@@ -47,6 +48,53 @@ import placement
 import providers
 
 # --------------------------------------------------------------------------- 설정
+def _report_env_file() -> None:
+    """키가 안 잡힐 때, 설정 파일 쪽인지 전달 쪽인지 갈라 준다.
+
+    "[키] 없음" 만으로는 원인을 못 좁힌다. 파일이 없는 건지, 파일은 있는데 키
+    줄이 빈 건지, 파일엔 키가 멀쩡히 있는데 앱까지 안 넘어온 건지가 전부 다른
+    문제인데 증상이 같다. 마지막 경우가 특히 헷갈린다 — 파일을 고쳐 놓고
+    저장을 안 했거나, 다른 폴더의 파일을 고쳤거나, start.bat 을 안 거치고
+    uvicorn 을 직접 띄운 경우다.
+    """
+    here = os.getcwd()
+    env_file = os.path.join(here, "farm_env.bat")
+    has_env = bool(os.environ.get("ROBOFLOW_API_KEY", "").strip())
+
+    if not os.path.exists(env_file):
+        print(f"[설정] farm_env.bat 이 없습니다 — {here}")
+        print("[설정]   farm_env.example.bat 을 farm_env.bat 으로 복사하고 키를 넣으세요.")
+        print("[설정]   (메모장 '다른 이름으로 저장' 은 farm_env.bat.txt 를 만들기 쉽습니다. "
+              "파일 형식을 '모든 파일' 로 두세요)")
+        return
+
+    in_file = ""
+    try:
+        with open(env_file, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.match(r"\s*set\s+ROBOFLOW_API_KEY\s*=(.*)", line, re.I)
+                if m:
+                    in_file = m.group(1).strip()
+    except OSError as e:
+        print(f"[설정] farm_env.bat 을 읽을 수 없습니다: {e}")
+        return
+
+    if has_env:
+        return                                   # 정상 — [키] 줄이 이미 알려 준다
+    if not in_file:
+        print(f"[설정] farm_env.bat 에 키가 비어 있습니다 — {env_file}")
+        print("[설정]   set ROBOFLOW_API_KEY=... 줄에 Private API Key 를 넣으세요.")
+    else:
+        # 여기가 핵심 — 파일엔 있는데 앱까지 안 왔다
+        print(f"[설정] farm_env.bat 에는 키가 있는데({in_file[:4]}…) 앱까지 오지 않았습니다.")
+        print(f"[설정]   파일: {env_file}")
+        print("[설정]   1) 메모장에서 Ctrl+S 로 저장하셨나요?")
+        print("[설정]   2) start.bat 으로 켜셨나요? uvicorn 을 직접 띄우면 이 파일을 안 읽습니다.")
+        print("[설정]   3) 다른 폴더의 farm_env.bat 을 고치신 건 아닌가요?")
+
+
+_report_env_file()
+
 # 탐지기는 providers 패키지가 환경변수를 보고 골라 준다.
 # 로보플로우를 걷어내고 로컬 모델로 갈아탈 때도 이 파일은 손대지 않는다.
 DETECT_TOP, DETECT_STAGE = providers.select()
