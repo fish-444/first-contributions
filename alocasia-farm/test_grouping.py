@@ -202,6 +202,25 @@ def test_size_class_comes_from_the_canopy_not_the_biggest_leaf():
     assert graded == {5.0: "소품", 20.0: "중품"}, graded
 
 
+def test_the_3d_size_follows_the_canopy_too():
+    """3D 온실이 그리는 크기(top_leaf_size)가 소/중/대품 칩과 따로 놀면 안 된다.
+
+    analyze_top 은 '사진에서 가장 위쪽 잎' 하나로 그 값을 정한다. 맨 위 잎이
+    그 포기의 큰 잎이라는 보장이 없어서, 큰 포기인데 위쪽에 걸린 잎이 작으면
+    3D 에서 작게 그려졌다 — "뒤에 있는 큰 식물이 작게 나온다" 가 이 경로다.
+    """
+    boxes = [box(600, 600, 1000, 1000, cls="canopy"),   # 포기 전체는 크다
+             box(300, 150, 80, 80),                     # 맨 위 잎은 작다
+             box(600, 800, 700, 700), box(800, 700, 600, 600)]
+    g = group_leaves(boxes)[0]
+    old_way = analyze_top(g, 1200 * 800, ref_area=1200 * 800 / 3)
+    assert old_way["top_leaf_size"] == "소엽", old_way      # 예전 방식은 작다고 본다
+
+    m = analyze_metrics(g, 1200 * 800, cm_per_unit=60.0 / 1200)
+    assert m["size_class"] == "대품", m
+    assert m["top_leaf_size"] == "대엽", m                  # 3D 도 같이 커진다
+
+
 def test_canopy_cm_is_reported_so_thresholds_can_be_tuned():
     """모달에 실측 cm 이 떠야 기준치를 본인 농장에 맞출 수 있다."""
     boxes = [box(200, 200, 600, 300, cls="canopy"), box(200, 200, 60, 60)]

@@ -894,12 +894,21 @@ def analyze_metrics(boxes: List[dict], img_area: float, cm_per_unit: float = Non
         else:
             size_class = "대품" if pct > 18 else ("중품" if pct > 8 else "소품")
 
-    return {"size_class": size_class, "leaf_max_cm": leaf_max_cm,
-            "canopy_cm": canopy_cm,
-            "leaf_count": leaf_count,
-            "shoot_count": counts["shoot"], "mature_count": counts["mature"],
-            "old_count": counts["old"], "overlap_count": overlap_count,
-            "overlap_density": overlap_density}
+    out = {"size_class": size_class, "leaf_max_cm": leaf_max_cm,
+           "canopy_cm": canopy_cm,
+           "leaf_count": leaf_count,
+           "shoot_count": counts["shoot"], "mature_count": counts["mature"],
+           "old_count": counts["old"], "overlap_count": overlap_count,
+           "overlap_density": overlap_density}
+
+    # 3D 온실이 그리는 크기는 top_leaf_size 를 본다 — size_class 와는 다른 필드다.
+    # analyze_top 이 '사진에서 가장 위쪽 잎' 하나의 면적으로 그 값을 정하는데,
+    # 맨 위 잎이 그 포기의 큰 잎이라는 보장이 없다. 큰 포기인데 위쪽에 걸린 잎이
+    # 작으면 3D 에서 작게 그려진다 — "뒤에 있는 큰 식물이 작게 나온다" 가 이거다.
+    # 캐노피를 쟀으면 그 등급을 3D 에도 그대로 물려, 화면과 칩이 따로 놀지 않게 한다.
+    if canopy is not None:
+        out["top_leaf_size"] = SIZE_TO_TOP_LEAF.get(size_class, "중엽")
+    return out
 
 
 def _recompute_shape_groups() -> None:
