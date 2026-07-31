@@ -19,7 +19,8 @@ alocasia-farm/
 │   ├── roboflow_model.py
 │   ├── local_yolo.py
 │   └── demo.py
-├── install.bat         ← 더블클릭 설치 (자동 시작 + 바로가기)
+├── install.ps1         ← 파워셸 한 줄 설치 (내려받기부터 전부)
+├── install.bat         ← 더블클릭 설치 (이미 받아 뒀을 때)
 ├── uninstall.bat       ← 자동 시작 해제
 ├── start.bat / start.sh ← 더블클릭 실행
 ├── requirements.txt
@@ -55,10 +56,31 @@ detector.detect(image) -> (boxes_px, img_area_px)
 px ──(원근 변환)──> canvas ──(/CANVAS)──> uv ──(x_W − W/2)──> cm
 ```
 
-## ▶️ 설치 — `install.bat` 더블클릭 (처음 한 번, 권장)
+## ▶️ 설치 — 파워셸 한 줄 (권장)
+아무것도 미리 받아 둘 필요가 없습니다. 파워셸을 열고 이 한 줄만 붙여넣으세요.
+
+```powershell
+irm https://raw.githubusercontent.com/fish-444/first-contributions/refs/heads/claude/alocasia-canopy-deployment-check-0u21bk/alocasia-farm/install.ps1 | iex
+```
+
+순서대로 해 줍니다:
+
+1. 파이썬 확인 (없으면 어디서 받는지 알려 줍니다)
+2. 설치 폴더 물어보기 (그냥 엔터 = 홈 폴더)
+3. 코드 내려받기 — `git` 이 있으면 clone, 없으면 ZIP
+4. 필요한 패키지 설치 (1~2분)
+5. `farm_env.bat` 생성 + 자동 시작 등록 + 바탕화면 바로가기
+
+마지막에 메모장이 열리면 `여기에_개인키` 자리에 Private API Key 를 넣고 저장하세요.
+
+> **이미 설치돼 있으면 최신 코드만 받아 갱신합니다.** `farm_env.bat`(키)과
+> `farm.db`(식물 정보)는 건드리지 않으니 다시 실행하셔도 안전합니다.
+> 관리자 권한도, 실행 정책 변경도 필요 없습니다.
+
+### 설치 — `install.bat` 더블클릭 (이미 받아 두셨다면)
 명령어를 한 줄도 안 쳐도 됩니다. 관리자 권한도 필요 없습니다.
 
-**`install.bat` 을 더블클릭**하면 순서대로 해 줍니다:
+저장소를 이미 받아 두셨다면 **`install.bat` 더블클릭**으로도 됩니다:
 
 1. 파이썬이 있는지 확인 (없으면 어디서 받는지 알려 줍니다)
 2. 필요한 패키지 설치 (1~2분)
