@@ -13,3 +13,4 @@ farm_env*.bat
 farm_env*.sh
 !farm_env.example.bat
 !farm_env.example.sh
+farm_env*.bak
