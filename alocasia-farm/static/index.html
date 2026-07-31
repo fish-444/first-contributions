@@ -1079,7 +1079,7 @@ function openModal(p){
   document.getElementById('mTopSize').textContent=p.top_leaf_size||'–';
   document.getElementById('mTopPct').textContent=(p.top_leaf_pct?('· 화면의 '+p.top_leaf_pct+'%'):'');
   const sz=document.getElementById('mSize');
-  sz.textContent=p.size_class+(p.leaf_max_cm?` · 잎 ${p.leaf_max_cm}cm`:'');
+  sz.textContent=p.size_class+(p.canopy_cm?` · 포기 ${p.canopy_cm}cm`:(p.leaf_max_cm?` · 잎 ${p.leaf_max_cm}cm`:''));
   sz.style.background=(p.size_class==='미검출')?'#7a5c22':'#2e7d32';
   document.getElementById('mManual').style.display=p.manual?'inline-block':'none';
   [...document.querySelectorAll('#mSizePick button')].forEach(b=>

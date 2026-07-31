@@ -519,10 +519,13 @@ def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
             far.append(lf)
             far_feats.append(ft)
 
+    # 캐노피 박스를 무리에 같이 넣어 보낸다. 크기 등급(소/중/대품)을 잎 한 장이
+    # 아니라 포기 전체 폭으로 매기려면 아래쪽에서 그 박스가 필요하다. 잎 계수·
+    # 생김새·자리 계산은 전부 NON_LEAF 를 걸러 내므로 섞여 들어갈 일은 없다.
     out = []
     for i, g in enumerate(groups):
         if g:
-            out.append(g)
+            out.append(g + [canopies[i]])
         elif (canopies[i].get("conf") or 0) >= CANOPY_EMPTY_CONF:
             out.append([canopies[i]])          # 잎은 못 잡았지만 포기는 있다
     if far:
@@ -673,6 +676,12 @@ def _leaf_fix_for(u_uv: float, v_uv: float):
     return best["pot_slot"] if best else None
 
 
+def _leaves_of(group: List[dict]) -> List[dict]:
+    """무리에서 잎만. 캐노피 박스가 크기 등급용으로 같이 실려 오기 때문에,
+    자리·낱개 기록처럼 '잎마다 하나씩' 도는 곳에서는 이걸로 걸러야 한다."""
+    return [b for b in group if b["cls"].lower() not in NON_LEAF]
+
+
 def assign_leaves(groups: List[List[dict]], slots: dict,
                   space_w: float, space_h: float) -> tuple:
     """(무리, 무리→자리) → 잎 낱개까지 소속을 정한 (무리, 무리→자리, 박스별 판정).
@@ -690,7 +699,7 @@ def assign_leaves(groups: List[List[dict]], slots: dict,
     verdicts, by_slot = {}, {}
     for g in groups:
         group_slot = slots.get(id(g))
-        for b in g:
+        for b in _leaves_of(g):
             cx_space, cy_space = _center(b)
             u_uv = min(max(cx_space / space_w, 0.0), 1.0) if space_w else 0.5
             v_uv = min(max(cy_space / space_h, 0.0), 1.0) if space_h else 0.5
@@ -717,7 +726,7 @@ def _record_leaves(plant: dict, group: List[dict], verdicts: dict, scan_id: str,
     for lid in [k for k, v in LEAVES.items() if v.get("plant_id") == pid]:
         del LEAVES[lid]
     ids = []
-    for i, b in enumerate(group):
+    for i, b in enumerate(_leaves_of(group)):
         verdict = verdicts.get(id(b))
         if verdict is None:
             continue
@@ -815,14 +824,30 @@ def analyze_metrics(boxes: List[dict], img_area: float, cm_per_unit: float = Non
     if biggest is not None and cm_per_unit:
         leaf_max_cm = round(_leaf_long_side(biggest) * cm_per_unit, 1)
 
-    if leaf_max_cm is not None:
-        size_class = grade_by_leaf_cm(leaf_max_cm)
+    # 크기 등급 — 캐노피가 있으면 그걸로 잰다.
+    # 잎 한 장은 그 포기의 크기를 대표하지 못한다. 큰 잎 한 장만 달린 어린 포기와
+    # 같은 크기 잎이 여덟 장 달린 다 큰 포기가 같은 등급이 돼 버린다. 캐노피는
+    # 잎 전체 퍼짐을 담고 있어서 '포기가 얼마나 큰가'에 훨씬 가깝다.
+    canopy = max((b for b in boxes if b["cls"].lower() in CANOPY_CLASSES),
+                 key=_leaf_long_side, default=None)
+    canopy_cm = (round(_leaf_long_side(canopy) * cm_per_unit, 1)
+                 if (canopy is not None and cm_per_unit) else None)
+
+    if canopy_cm is not None:
+        size_class = grade_by_canopy_cm(canopy_cm)
+    elif leaf_max_cm is not None:
+        size_class = grade_by_leaf_cm(leaf_max_cm)          # 캐노피를 못 잡은 경우
     else:
         # 실측 배율을 모르는 경우(개체 사진 1장 등)엔 화면 대비 비율로 대신한다
-        pct = (biggest["area"] / img_area * 100) if (biggest and img_area) else 0
-        size_class = "대품" if pct > 18 else ("중품" if pct > 8 else "소품")
+        ref = canopy or biggest
+        pct = (ref["area"] / img_area * 100) if (ref and img_area) else 0
+        if canopy is not None:
+            size_class = "대품" if pct > 30 else ("중품" if pct > 12 else "소품")
+        else:
+            size_class = "대품" if pct > 18 else ("중품" if pct > 8 else "소품")
 
     return {"size_class": size_class, "leaf_max_cm": leaf_max_cm,
+            "canopy_cm": canopy_cm,
             "leaf_count": leaf_count,
             "shoot_count": counts["shoot"], "mature_count": counts["mature"],
             "old_count": counts["old"], "overlap_count": overlap_count,
@@ -1183,14 +1208,20 @@ def _register_groups(groups: List[List[dict]], space_w: float, space_h: float,
     사진의 일부라 흐릿하고 작아서 모달에 보여줄 만하지 않다 — 개체 사진(POST
     /api/plants)이나 '새 사진으로 갱신'으로 직접 올린 사진만 썸네일로 쓴다.
     """
-    groups.sort(key=lambda g: sum(_center(b)[1] for b in g) / len(g))
+    # 자리는 잎 무리의 무게중심으로 정한다. 캐노피 박스까지 넣으면 중심이
+    # 밀리므로 뺀다 — 잎이 하나도 없는 빈 화분일 때만 캐노피 중심을 쓴다.
+    def _anchor(g):
+        return _leaves_of(g) or g
+
+    groups.sort(key=lambda g: sum(_center(b)[1] for b in _anchor(g)) / len(_anchor(g)))
     occupied = {p["pos"] for p in PLANTS.values()}
     claimed = set()
     by_slot = {p["pos"]: p for p in PLANTS.values()}
     result = []
     for g in groups:
-        cx_space = sum(_center(b)[0] for b in g) / len(g)
-        cy_space = sum(_center(b)[1] for b in g) / len(g)
+        pts = _anchor(g)
+        cx_space = sum(_center(b)[0] for b in pts) / len(pts)
+        cy_space = sum(_center(b)[1] for b in pts) / len(pts)
         u_uv = min(max(cx_space / space_w, 0.0), 1.0) if space_w else 0.5
         v_uv = min(max(cy_space / space_h, 0.0), 1.0) if space_h else 0.5
         x_cm, z_cm = (u_uv - 0.5) * _W, (v_uv - 0.5) * _D
@@ -1523,6 +1554,18 @@ def grade_by_leaf_cm(leaf_cm: float) -> str:
     if leaf_cm <= LEAF_SMALL_CM:
         return "소품"
     return "중품" if leaf_cm <= LEAF_LARGE_CM else "대품"
+
+
+# 캐노피(포기 전체 폭) 기준 등급. 잎 한 장보다 훨씬 크므로 기준치도 따로 둔다.
+# 모달에 실측 cm 이 함께 뜨니, 그 값을 보고 본인 기준에 맞춰 조정하시면 된다.
+CANOPY_SMALL_CM = float(os.environ.get("CANOPY_SMALL_CM", "12"))   # 이하 → 소품
+CANOPY_LARGE_CM = float(os.environ.get("CANOPY_LARGE_CM", "22"))   # 초과 → 대품
+
+
+def grade_by_canopy_cm(canopy_cm: float) -> str:
+    if canopy_cm <= CANOPY_SMALL_CM:
+        return "소품"
+    return "중품" if canopy_cm <= CANOPY_LARGE_CM else "대품"
 
 
 @app.patch("/api/plants/{pid}")

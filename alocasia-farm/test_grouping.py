@@ -17,6 +17,16 @@ def leaves_only(boxes):
     return [b for b in boxes if b["cls"] != "pot"]
 
 
+def n_leaves(group):
+    """무리의 잎 수. 캐노피 박스는 크기 등급용으로 같이 실려 오므로 뺀다."""
+    from main import NON_LEAF
+    return sum(1 for b in group if b["cls"].lower() not in NON_LEAF)
+
+
+def leaf_sizes(groups):
+    return sorted(n_leaves(g) for g in groups)
+
+
 def box(cx, cy, w, h, cls="leaf"):
     return {"cls": cls, "conf": 0.9,
             "x1": cx - w / 2, "y1": cy - h / 2, "x2": cx + w / 2, "y2": cy + h / 2,
@@ -102,14 +112,13 @@ def test_canopy_box_anchors_leaves_like_a_pot_does():
     leaves = [box(120, 120, 60, 60), box(180, 180, 60, 60),   # 왼쪽 캐노피 안
              box(680, 130, 60, 60)]                            # 오른쪽 캐노피 안
     groups = group_leaves(canopy + leaves)
-    sizes = sorted(len(g) for g in groups)
-    assert sizes == [1, 2], sizes
+    assert leaf_sizes(groups) == [1, 2], leaf_sizes(groups)
 
 
 def test_canopy_is_never_counted_as_a_leaf():
     boxes = [box(150, 150, 300, 300, cls="canopy"), box(150, 150, 60, 60, cls="mature leaf")]
     groups = group_leaves(boxes)
-    assert len(groups) == 1 and len(groups[0]) == 1
+    assert len(groups) == 1 and n_leaves(groups[0]) == 1
     assert analyze_metrics(groups[0], 10000)["leaf_count"] == 1
 
 
@@ -140,8 +149,8 @@ def test_leaf_count_per_pot_is_exactly_what_the_canopy_box_holds():
     inside = [box(120, 120, 40, 40), box(200, 200, 40, 40), box(300, 300, 40, 40)]
     far = [box(900, 900, 40, 40)]                          # 캐노피 밖 (딴 포기)
     groups = group_leaves(canopy + inside + far)
-    in_canopy = max(groups, key=len)
-    assert len(in_canopy) == 3, [len(g) for g in groups]
+    in_canopy = max(groups, key=n_leaves)
+    assert n_leaves(in_canopy) == 3, leaf_sizes(groups)
     assert analyze_metrics(in_canopy, 10000)["leaf_count"] == 3
 
 
@@ -151,7 +160,7 @@ def test_leaf_just_outside_its_own_canopy_still_joins_it():
     leaves = [box(180, 200, 40, 40),                     # 안
               box(315, 200, 40, 40)]                     # 15px 밖 (제 크기보다 훨씬 가까움)
     groups = group_leaves(canopy + leaves)
-    assert len(groups) == 1 and len(groups[0]) == 2, [len(g) for g in groups]
+    assert len(groups) == 1 and n_leaves(groups[0]) == 2, leaf_sizes(groups)
 
 
 def test_canopy_with_no_detected_leaf_is_still_a_pot():
@@ -175,13 +184,48 @@ def test_a_faint_empty_canopy_is_not_promoted_to_a_pot():
     assert len(groups) == 1, [len(g) for g in groups]
 
 
+# ── 크기 등급은 캐노피(포기 전체 폭)로 ────────────────────────────────────
+def test_size_class_comes_from_the_canopy_not_the_biggest_leaf():
+    """잎 한 장은 포기 크기를 대표하지 못한다 — 캐노피 폭으로 매긴다."""
+    import main
+    # 큰 잎 한 장만 달린 어린 포기 (캐노피가 작다)
+    small = [box(200, 200, 100, 100, cls="canopy"), box(200, 200, 90, 90)]
+    # 같은 크기 잎이 여러 장인 다 큰 포기 (캐노피가 크다)
+    big = [box(1000, 200, 400, 400, cls="canopy"),
+           box(880, 120, 90, 90), box(1050, 250, 90, 90), box(1100, 150, 90, 90)]
+    groups = group_leaves(small + big)
+    cm = 60.0 / 1200                              # 선반 60cm ↔ 박스 폭 1200
+    graded = {}
+    for g in groups:
+        m = analyze_metrics(g, 1200 * 800, cm_per_unit=cm)
+        graded[m["canopy_cm"]] = m["size_class"]
+    assert graded == {5.0: "소품", 20.0: "중품"}, graded
+
+
+def test_canopy_cm_is_reported_so_thresholds_can_be_tuned():
+    """모달에 실측 cm 이 떠야 기준치를 본인 농장에 맞출 수 있다."""
+    boxes = [box(200, 200, 600, 300, cls="canopy"), box(200, 200, 60, 60)]
+    g = group_leaves(boxes)[0]
+    m = analyze_metrics(g, 1200 * 800, cm_per_unit=60.0 / 1200)
+    assert m["canopy_cm"] == 30.0, m           # 긴 변 600px × 0.05cm/px
+    assert m["size_class"] == "대품", m
+
+
+def test_falls_back_to_leaf_size_when_no_canopy_was_detected():
+    """캐노피를 못 잡은 사진(개체 근접 촬영 등)에서는 예전처럼 잎으로 잰다."""
+    g = group_leaves([box(200, 200, 60, 60)])[0]
+    m = analyze_metrics(g, 1200 * 800, cm_per_unit=60.0 / 1200)
+    assert m["canopy_cm"] is None, m
+    assert m["size_class"] == "소품", m        # 잎 긴 변 3cm
+
+
 def test_leaf_outside_every_canopy_does_not_inflate_a_pots_count():
     """캐노피를 놓친 포기가 통째로 옆 화분 잎 수에 얹히면 안 된다."""
     canopy = [box(200, 200, 200, 200, cls="canopy")]       # x 100~300, y 100~300
     inside = [box(180, 180, 40, 40), box(230, 230, 40, 40)]
     missed = [box(500, 200, 40, 40), box(540, 220, 40, 40)]  # 캐노피가 안 잡힌 포기
     groups = group_leaves(canopy + inside + missed)
-    assert sorted(len(g) for g in groups) == [2, 2], [len(g) for g in groups]
+    assert leaf_sizes(groups) == [2, 2], leaf_sizes(groups)
 
 
 def test_a_small_canopy_inside_a_big_one_stays_its_own_pot():
@@ -192,7 +236,7 @@ def test_a_small_canopy_inside_a_big_one_stays_its_own_pot():
     leaves = [box(110, 110, 30, 30),                       # 작은 캐노피 몫
               box(300, 300, 30, 30), box(280, 260, 30, 30)]  # 큰 캐노피 몫
     groups = group_leaves(canopy + leaves)
-    assert sorted(len(g) for g in groups) == [1, 2], [len(g) for g in groups]
+    assert leaf_sizes(groups) == [1, 2], leaf_sizes(groups)
 
 
 def test_canopy_wins_over_a_pot_box_on_the_same_plant():
@@ -201,7 +245,7 @@ def test_canopy_wins_over_a_pot_box_on_the_same_plant():
              box(200, 400, 80, 80, cls="pot"),             # 같은 포기의 화분
              box(150, 200, 40, 40), box(250, 250, 40, 40), box(200, 400, 40, 40)]
     groups = group_leaves(boxes)
-    assert len(groups) == 1 and len(groups[0]) == 3, [len(g) for g in groups]
+    assert len(groups) == 1 and n_leaves(groups[0]) == 3, leaf_sizes(groups)
 
 
 def test_every_canopy_holding_a_leaf_becomes_its_own_pot():
