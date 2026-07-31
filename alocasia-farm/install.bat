@@ -95,11 +95,13 @@ if defined NEEDKEY (
     echo  [!] 아직 할 일이 하나 있습니다 - 로보플로우 키 넣기.
     echo      안 넣으면 데모 모드로 돌아갑니다 ^(사진과 무관한 가짜 결과^).
     echo.
-    echo      이어서 키 입력 창을 띄웁니다. 나중에 하시려면 그냥 닫으세요 -
-    echo      set_key.bat 을 더블클릭하면 언제든 다시 넣을 수 있습니다.
+    echo      이어서 farm_env.bat 를 메모장으로 엽니다.
+    echo        1^) "여기에_개인키" 를 지우고 Private API Key 를 붙여넣기
+    echo        2^) 따옴표는 넣지 마세요 - 배치는 따옴표까지 키 값으로 씁니다
+    echo        3^) 저장^(Ctrl+S^) 후 메모장 닫기
     echo.
     pause
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0set_key.ps1"
+    notepad "farm_env.bat"
     echo.
 )
 echo  다음부터는:
