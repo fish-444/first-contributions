@@ -92,15 +92,14 @@ echo    설치가 끝났습니다.
 echo ==========================================================
 echo.
 if defined NEEDKEY (
-    echo  [!] 아직 할 일이 하나 있습니다.
+    echo  [!] 아직 할 일이 하나 있습니다 - 로보플로우 키 넣기.
+    echo      안 넣으면 데모 모드로 돌아갑니다 ^(사진과 무관한 가짜 결과^).
     echo.
-    echo      farm_env.bat 를 메모장으로 열어
-    echo      "여기에_개인키" 자리에 로보플로우 Private API Key 를 넣으세요.
-    echo      안 넣으면 데모 모드로 돌아갑니다.
+    echo      이어서 키 입력 창을 띄웁니다. 나중에 하시려면 그냥 닫으세요 -
+    echo      set_key.bat 을 더블클릭하면 언제든 다시 넣을 수 있습니다.
     echo.
-    echo      지금 메모장으로 열어 드릴까요? 창이 뜨면 키를 넣고 저장하세요.
     pause
-    notepad "farm_env.bat"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0set_key.ps1"
     echo.
 )
 echo  다음부터는:
