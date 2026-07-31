@@ -1142,7 +1142,7 @@ document.getElementById('waterAllBtn').addEventListener('click',async()=>{
 // ===== 물주기 달력 =====
 // 매번 언제 물을 줬는지 잊어버리니, 하루에 몇 화분 줬는지 달로 훑어볼 수 있게 한다.
 const now0=new Date();
-const WCAL={y:now0.getFullYear(), m:now0.getMonth()+1};   // m 은 1~12
+const WCAL={y:now0.getFullYear(), m:now0.getMonth()+1, sel:null};   // m 은 1~12, sel 은 고른 날짜
 async function renderWaterCal(){
   const mm=String(WCAL.m).padStart(2,'0');
   document.getElementById('waterCalTitle').textContent=`${WCAL.y}년 ${WCAL.m}월`;
@@ -1158,33 +1158,84 @@ async function renderWaterCal(){
   });
   const startDow=new Date(WCAL.y,WCAL.m-1,1).getDay();
   const daysInMonth=new Date(WCAL.y,WCAL.m,0).getDate();
-  const todayStr=new Date().toISOString().slice(0,10);
+  const todayStr=localToday();
   for(let i=0;i<startDow;i++) grid.appendChild(document.createElement('div'));
   for(let d=1; d<=daysInMonth; d++){
     const dateStr=`${WCAL.y}-${mm}-${String(d).padStart(2,'0')}`;
     const cnt=counts[dateStr]||0;
+    const future=dateStr>todayStr;          // 아직 안 준 물은 적을 수 없다
+    const picked=dateStr===WCAL.sel;
     const cell=document.createElement('div');
-    cell.style.cssText=`text-align:center;padding:5px 2px;border-radius:6px;cursor:${cnt?'pointer':'default'};
-      background:${cnt?'#1d3324':'#14201a'};
-      border:1px solid ${dateStr===todayStr?'#7ddb9a':'rgba(120,180,140,.15)'};color:#e8f0ea`;
+    cell.style.cssText=`text-align:center;padding:5px 2px;border-radius:6px;
+      cursor:${future?'not-allowed':'pointer'};opacity:${future?.35:1};
+      background:${picked?'#2a5238':(cnt?'#1d3324':'#14201a')};
+      border:1px solid ${picked?'#7ddb9a':(dateStr===todayStr?'#7ddb9a':'rgba(120,180,140,.15)')};
+      color:#e8f0ea`;
     cell.innerHTML=`<div>${d}</div>`+(cnt?`<div style="font-size:9px;color:#7ddb9a">💧${cnt}</div>`:'');
-    if(cnt) cell.addEventListener('click',()=>{
-      document.getElementById('waterCalInfo').textContent=`${dateStr} — 화분 ${cnt}개에 물을 줬어요`;
-    });
+    if(!future) cell.addEventListener('click',()=>{ WCAL.sel=dateStr; renderWaterCal(); });
     grid.appendChild(cell);
   }
+  drawWaterCalActions(counts);
+}
+
+// 날짜를 고르면 그날로 물주기를 남기거나 되돌릴 수 있다.
+// 물은 줬는데 앱을 안 켠 날이 생기므로, 오늘만 기록되면 달력이 비어 버린다.
+function drawWaterCalActions(counts){
+  const info=document.getElementById('waterCalInfo');
+  info.innerHTML='';
+  if(!WCAL.sel){
+    info.textContent='날짜를 누르면 그날로 물 준 기록을 남기거나 지울 수 있어요.';
+    return;
+  }
+  const cnt=counts[WCAL.sel]||0;
+  const label=document.createElement('div');
+  label.style.cssText='margin-bottom:6px';
+  label.textContent=cnt?`${WCAL.sel} — 화분 ${cnt}개에 물을 줬어요`
+                       :`${WCAL.sel} — 물 준 기록이 없어요`;
+  info.appendChild(label);
+
+  const row=document.createElement('div');
+  row.style.cssText='display:flex;gap:6px;flex-wrap:wrap';
+  const mk=(text,handler,danger)=>{
+    const b=document.createElement('button');
+    b.type='button'; b.textContent=text;
+    b.style.cssText=`padding:5px 10px;border-radius:6px;cursor:pointer;font-size:11px;
+      border:1px solid ${danger?'#7a3b3b':'#3d6b4a'};background:${danger?'#2a1a1a':'#1d3324'};color:#e8f0ea`;
+    b.addEventListener('click',()=>handler(b));
+    return b;
+  };
+  row.appendChild(mk('💧 이 날짜로 전체 물주기 기록', async(b)=>{
+    b.disabled=true; label.textContent='기록 중…';
+    const fd=new FormData(); fd.append('day',WCAL.sel);
+    const r=await fetch('/api/water-all',{method:'POST',body:fd});
+    if(!r.ok){ label.textContent='⚠️ '+((await r.json().catch(()=>({}))).detail||'실패'); b.disabled=false; return; }
+    await loadAll(); renderWaterCal();
+  }));
+  if(cnt) row.appendChild(mk('🗑 이 날 기록 지우기', async(b)=>{
+    b.disabled=true; label.textContent='지우는 중…';
+    const r=await fetch(`/api/water-all?day=${WCAL.sel}`,{method:'DELETE'});
+    if(!r.ok){ label.textContent='⚠️ 실패'; b.disabled=false; return; }
+    await loadAll(); renderWaterCal();
+  }, true));
+  info.appendChild(row);
+}
+
+// toISOString 은 UTC 라 한국 시간 아침엔 하루 전 날짜가 나온다.
+function localToday(){
+  const n=new Date();
+  return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
 }
 document.getElementById('waterCalPrev').addEventListener('click',()=>{
-  WCAL.m--; if(WCAL.m<1){WCAL.m=12;WCAL.y--;} renderWaterCal();
+  WCAL.m--; if(WCAL.m<1){WCAL.m=12;WCAL.y--;} WCAL.sel=null; renderWaterCal();
 });
 document.getElementById('waterCalNext').addEventListener('click',()=>{
-  WCAL.m++; if(WCAL.m>12){WCAL.m=1;WCAL.y++;} renderWaterCal();
+  WCAL.m++; if(WCAL.m>12){WCAL.m=1;WCAL.y++;} WCAL.sel=null; renderWaterCal();
 });
 document.getElementById('waterCalClose').addEventListener('click',()=>{
   document.getElementById('waterCalWrap').style.display='none';
 });
 document.getElementById('waterCalBtn').addEventListener('click',()=>{
-  const n=new Date(); WCAL.y=n.getFullYear(); WCAL.m=n.getMonth()+1;
+  const n=new Date(); WCAL.y=n.getFullYear(); WCAL.m=n.getMonth()+1; WCAL.sel=localToday();
   document.getElementById('waterCalWrap').style.display='flex';
   renderWaterCal();
 });

@@ -362,6 +362,92 @@ def test_leaf_log_is_capped():
 from datetime import date, timedelta
 
 
+def test_watering_a_past_date_from_the_calendar():
+    """물은 줬는데 앱을 안 켠 날이 생긴다 — 달력에서 지난 날짜를 골라 적을 수 있어야."""
+    _plant()
+    ago = (date.today() - timedelta(days=2)).isoformat()
+    p = main.water_plant(pid="t1", day=ago)
+    assert p["last_watered"] == ago, p
+    assert p["days_since_watered"] == 2, p
+    _reset()
+
+
+def test_a_late_entry_does_not_overwrite_a_more_recent_watering():
+    """5일 전을 뒤늦게 적었다고 어제 준 기록이 밀려나면 안 된다."""
+    _plant()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    long_ago = (date.today() - timedelta(days=5)).isoformat()
+    main.water_plant(pid="t1", day=yesterday)
+    p = main.water_plant(pid="t1", day=long_ago)
+    assert p["last_watered"] == yesterday, p
+    assert p["water_log"] == [long_ago, yesterday], p    # 날짜순으로 유지
+    _reset()
+
+
+def test_future_dates_are_refused():
+    """아직 안 준 물을 적어 두면 마름 경고가 그만큼 늦게 뜬다."""
+    _plant()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    try:
+        main.water_plant(pid="t1", day=tomorrow)
+        assert False, "미래 날짜가 통과했다"
+    except HTTPException as e:
+        assert e.status_code == 400, e
+    _reset()
+
+
+def test_a_bad_date_string_is_refused():
+    _plant()
+    try:
+        main.water_plant(pid="t1", day="2026/07/31")
+        assert False, "이상한 날짜 형식이 통과했다"
+    except HTTPException as e:
+        assert e.status_code == 400, e
+    _reset()
+
+
+def test_the_same_day_is_logged_once():
+    _plant()
+    ago = (date.today() - timedelta(days=3)).isoformat()
+    main.water_plant(pid="t1", day=ago)
+    p = main.water_plant(pid="t1", day=ago)
+    assert p["water_log"] == [ago], p
+    _reset()
+
+
+def test_undoing_a_days_watering():
+    """잘못 누른 날을 되돌릴 수 있어야 한다."""
+    _plant()
+    ago = (date.today() - timedelta(days=2)).isoformat()
+    main.water_plant(pid="t1", day=ago)
+    main.water_plant(pid="t1")                      # 오늘도 기록
+    p = main.unwater_plant(pid="t1", day=ago)
+    assert p["water_log"] == [date.today().isoformat()], p
+    assert p["last_watered"] == date.today().isoformat(), p
+    _reset()
+
+
+def test_undoing_the_only_watering_clears_last_watered():
+    _plant()
+    main.water_plant(pid="t1")
+    p = main.unwater_plant(pid="t1", day=date.today().isoformat())
+    assert p["last_watered"] is None, p
+    assert p["days_since_watered"] is None, p       # '기록 없음' 으로 돌아간다
+    _reset()
+
+
+def test_water_all_accepts_a_date_and_can_be_undone():
+    _plant()
+    ago = (date.today() - timedelta(days=4)).isoformat()
+    res = main.water_all_plants(day=ago)
+    assert res["watered"] == 1 and res["date"] == ago, res
+    assert main.PLANTS["t1"]["last_watered"] == ago
+    undo = main.unwater_all_plants(day=ago)
+    assert undo["undone"] == 1, undo
+    assert main.PLANTS["t1"]["last_watered"] is None
+    _reset()
+
+
 def test_watering_today_starts_the_count_at_zero():
     _plant()
     p = main.water_plant(pid="t1")

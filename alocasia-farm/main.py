@@ -1483,22 +1483,75 @@ def _augment_water(p: dict) -> None:
     p["soil_dry"] = bool(days is not None and days > WATER_DRY_DAYS)
 
 
-def _log_watered(p: dict, today: str) -> None:
-    """오늘 물 줬다고 기록 — 하루에 여러 번 눌러도 그날은 한 번만 남는다."""
+def _water_date(raw: str = None) -> str:
+    """물 준 날짜를 정리한다. 안 주면 오늘.
+
+    달력에서 지난 날짜를 골라 뒤늦게 적을 수 있어야 한다 — 물은 줬는데 앱을
+    안 켠 날이 생기기 때문이다. 대신 미래 날짜는 막는다. 아직 안 준 물을
+    적어 두면 마름 경고가 그만큼 늦게 떠서, 정작 필요한 날 알림이 안 온다.
+    """
+    # 파이썬에서 이 함수를 직접 부르면 FastAPI 의 Form(None) 기본값이 그대로
+    # 넘어온다(None 이 아니다). 문자열이 아니면 '안 준 것'으로 본다.
+    if not raw or not isinstance(raw, str) or not raw.strip():
+        return date.today().isoformat()
+    try:
+        d = date.fromisoformat(raw.strip())
+    except (ValueError, AttributeError):
+        raise HTTPException(400, "날짜는 YYYY-MM-DD 형식이어야 해요.")
+    if d > date.today():
+        raise HTTPException(400, "아직 오지 않은 날짜에는 물 준 기록을 남길 수 없어요.")
+    return d.isoformat()
+
+
+def _log_watered(p: dict, day: str) -> None:
+    """그날 물 줬다고 기록 — 같은 날을 여러 번 눌러도 하루는 한 번만 남는다.
+
+    지난 날짜를 뒤늦게 넣을 수 있으므로 끝에 붙이지 않고 날짜순을 유지한다.
+    last_watered 는 기록 중 가장 최근 날짜다 — 방금 넣은 날짜가 아니다.
+    5일 전을 뒤늦게 적었다고 어제 준 기록이 밀려나면 안 된다.
+    """
     log = p.setdefault("water_log", [])
-    if not log or log[-1] != today:
-        log.append(today)
+    if day not in log:
+        log.append(day)
+        log.sort()
         del log[:-WATER_LOG_DAYS]
-    p["last_watered"] = today
+    p["last_watered"] = log[-1] if log else day
+
+
+def _unlog_watered(p: dict, day: str) -> bool:
+    """그날 물 준 기록을 지운다. 잘못 누른 날을 되돌리는 자리."""
+    log = p.get("water_log") or []
+    if day not in log:
+        return False
+    log.remove(day)
+    p["last_watered"] = log[-1] if log else None
+    return True
 
 
 @app.post("/api/plants/{pid}/water")
-def water_plant(pid: str):
-    """오늘 물을 줬다고 기록한다. 흙 마름 표시가 여기서부터 다시 3일을 센다."""
+def water_plant(pid: str, day: str = Form(None)):
+    """물을 줬다고 기록한다. day(YYYY-MM-DD)를 주면 그날, 안 주면 오늘.
+
+    흙 마름 표시는 기록 중 가장 최근 날짜부터 다시 센다.
+    """
     if pid not in PLANTS:
         raise HTTPException(404, "없는 식물")
     p = PLANTS[pid]
-    _log_watered(p, date.today().isoformat())
+    _log_watered(p, _water_date(day))
+    p["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _augment_water(p)
+    save_state()
+    return p
+
+
+@app.delete("/api/plants/{pid}/water")
+def unwater_plant(pid: str, day: str):
+    """잘못 남긴 물주기 기록을 지운다 (날짜 필수)."""
+    if pid not in PLANTS:
+        raise HTTPException(404, "없는 식물")
+    p = PLANTS[pid]
+    if not _unlog_watered(p, _water_date(day)):
+        raise HTTPException(404, "그날 물 준 기록이 없어요.")
     p["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     _augment_water(p)
     save_state()
@@ -1506,21 +1559,39 @@ def water_plant(pid: str):
 
 
 @app.post("/api/water-all")
-def water_all_plants():
-    """화분 전체 구역에 한 번에 오늘 물을 줬다고 기록한다.
+def water_all_plants(day: str = Form(None)):
+    """화분 전체 구역에 한 번에 물을 줬다고 기록한다.
 
     한 포기씩 모달을 열어 누르는 대신, 트레이를 통째로 준 실제 물주기를 한 번에
     반영하는 자리다. '미검출'(잎이 안 잡힌) 화분도 물리적으로는 물을 받으므로
     똑같이 기록한다.
+
+    day(YYYY-MM-DD)를 주면 그날로 남긴다 — 달력에서 지난 날짜를 골라 뒤늦게
+    적는 경우다. 안 주면 오늘.
     """
-    today = date.today().isoformat()
+    when = _water_date(day)
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     for p in PLANTS.values():
-        _log_watered(p, today)
+        _log_watered(p, when)
         p["updated"] = now
         _augment_water(p)
     save_state()
-    return {"ok": True, "watered": len(PLANTS)}
+    return {"ok": True, "watered": len(PLANTS), "date": when}
+
+
+@app.delete("/api/water-all")
+def unwater_all_plants(day: str):
+    """그날 남긴 전체 물주기 기록을 되돌린다 (날짜 필수)."""
+    when = _water_date(day)
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    undone = 0
+    for p in PLANTS.values():
+        if _unlog_watered(p, when):
+            undone += 1
+            p["updated"] = now
+        _augment_water(p)
+    save_state()
+    return {"ok": True, "undone": undone, "date": when}
 
 
 @app.get("/api/water-log")
