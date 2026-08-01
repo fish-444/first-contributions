@@ -234,6 +234,27 @@ def test_without_a_canopy_nothing_is_dropped():
     assert focus_on_center_canopy(boxes, W, H) == boxes
 
 
+def test_topview_keeps_every_canopy_while_a_closeup_keeps_one():
+    """두 경로가 반대로 동작해야 한다 — 섞이면 한쪽이 통째로 틀린다.
+
+    · 탑뷰 전체 사진: 캐노피 하나하나가 화분이다. 전부 센다.
+    · 개별 사진: 찍으려던 포기 하나만. 프레임에 걸린 옆 포기는 버린다.
+    """
+    scene = [box(300, 300, 300, 300, cls="canopy"), box(300, 300, 60, 60),
+             box(500, 500, 300, 300, cls="canopy"), box(500, 500, 60, 60),
+             box(800, 800, 300, 300, cls="canopy"), box(800, 800, 60, 60)]
+
+    # 탑뷰 — 캐노피 3개 = 화분 3개
+    groups = group_leaves(scene)
+    assert len(groups) == 3, leaf_sizes(groups)
+    assert leaf_sizes(groups) == [1, 1, 1], leaf_sizes(groups)
+
+    # 개별 사진 — 가운데(500,500) 포기 하나만
+    kept = focus_on_center_canopy(scene, W, H)
+    assert len([b for b in kept if b["cls"] == "canopy"]) == 1, kept
+    assert n_leaves(kept) == 1, kept
+
+
 # ── 크기 등급은 캐노피(포기 전체 폭)로 ────────────────────────────────────
 def test_size_class_comes_from_the_canopy_not_the_biggest_leaf():
     """잎 한 장은 포기 크기를 대표하지 못한다 — 캐노피 폭으로 매긴다."""
