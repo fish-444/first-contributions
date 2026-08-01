@@ -50,3 +50,6 @@ This document explains what a .gitignore file does, why to use it and how to cre
 
 ### [Storing Credentials](storing-credentials.md)
 This document explains how to store your credentials for repositories. This can be a security concern, so please follow the security policies of your place of work/study.
+
+### [Environment Variables and Secrets](environment-variables-and-secrets.md)
+This document explains what environment variables are, why secrets such as API keys and passwords must be kept out of Git, and how to handle them safely with `.env` files, `.env.example` templates, and encrypted CI secrets.
