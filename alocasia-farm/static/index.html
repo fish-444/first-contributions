@@ -94,6 +94,14 @@
   <div>
     <h1>🌿 알로카시아 스마트팜</h1>
     <div class="eng">분석 엔진: <b id="eng">…</b> · 3D 온실</div>
+    <div id="demoWarn" style="display:none;margin-top:8px;padding:9px 11px;border-radius:8px;
+         background:#4a2318;border:1px solid #c4643a;color:#ffd9c7;font-size:11.5px;line-height:1.5">
+      <b>⚠️ 데모 모드입니다 — 지금 보이는 결과는 사진과 무관한 가짜입니다.</b><br>
+      로보플로우 키가 안 읽혀서 난수로 박스를 찍고 있습니다.
+      잎 개수·크기·자리 전부 의미가 없습니다.<br>
+      <span style="opacity:.85">서버 창의 <code>[설정]</code> 줄을 보시고
+      <code>farm_env.bat</code> 의 키를 채운 뒤 서버를 껐다 켜세요.</span>
+    </div>
   </div>
   <div class="form">
     <label>① 식물 이름</label>
@@ -581,6 +589,9 @@ function rebuildObj(p){removeObj(p.id);buildObj(p);}
 async function loadAll(){
   const d=await(await fetch('/api/plants')).json();
   document.getElementById('eng').textContent=d.engine;
+  // 데모 모드는 사진과 무관한 난수를 뱉는다. 작은 라벨 하나로는 그냥 지나치게 돼서
+  // (실제로 그 상태로 탐지 품질을 여러 번 판단했다) 눈에 띄는 경고를 띄운다.
+  document.getElementById('demoWarn').style.display = (d.engine==='demo') ? 'block' : 'none';
   Object.keys(objs).forEach(removeObj);
   computePotFit(d.plants);
   d.plants.forEach(buildObj); refreshList(); await refreshSlots(); await loadLeaves(); await loadPlacement();
