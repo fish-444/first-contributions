@@ -184,6 +184,56 @@ def test_a_faint_empty_canopy_is_not_promoted_to_a_pot():
     assert len(groups) == 1, [len(g) for g in groups]
 
 
+# ── 개별 사진: 가운데 포기만 ──────────────────────────────────────────────
+# 개체를 가까이 찍으면 프레임에 옆 포기 잎이 같이 들어온다. 그대로 세면 부풀어난다.
+from main import focus_on_center_canopy
+
+W = H = 1000
+
+
+def test_only_the_center_plant_survives_in_a_closeup():
+    """가운데 캐노피와 거기 딸린 잎만 남는다 — 옆 포기는 캐노피째 버린다."""
+    boxes = [box(500, 500, 400, 400, cls="canopy"),          # 찍으려던 포기
+             box(480, 480, 80, 80), box(560, 540, 80, 80),   # 그 안의 잎
+             box(80, 80, 300, 300, cls="canopy"),            # 왼쪽 위 옆 포기
+             box(80, 80, 90, 90), box(150, 120, 90, 90),     # 옆 포기의 잎
+             box(950, 950, 60, 60)]                          # 멀리 떨어진 잎
+    kept = focus_on_center_canopy(boxes, W, H)
+    canopies = [b for b in kept if b["cls"] == "canopy"]
+    assert len(canopies) == 1 and canopies[0]["x1"] == 300, canopies
+    assert n_leaves(kept) == 2, [b["cls"] for b in kept]
+    assert analyze_metrics(kept, W * H)["leaf_count"] == 2
+
+
+def test_a_leaf_just_outside_the_center_canopy_still_counts():
+    """캐노피 박스가 잎 끝을 자르므로, 붙어 있는 잎은 이 포기 것으로 본다."""
+    boxes = [box(500, 500, 400, 400, cls="canopy"),   # x 300~700
+             box(720, 500, 60, 60)]                   # 20px 밖 (제 크기의 절반보다 가깝다)
+    assert n_leaves(focus_on_center_canopy(boxes, W, H)) == 1
+
+
+def test_a_far_leaf_is_dropped_even_without_a_neighbour_canopy():
+    boxes = [box(500, 500, 200, 200, cls="canopy"),   # x 400~600
+             box(950, 950, 60, 60)]                   # 한참 떨어짐
+    assert n_leaves(focus_on_center_canopy(boxes, W, H)) == 0
+
+
+def test_the_canopy_holding_the_center_wins_over_a_closer_one():
+    """가운데를 품은 캐노피가 있으면, 중심이 더 가까운 작은 옆 포기보다 우선한다."""
+    big = box(500, 500, 900, 900, cls="canopy")       # 가운데를 품는다
+    near = box(520, 520, 80, 80, cls="canopy")        # 중심은 더 가깝지만 가운데를 못 품음
+    near["x1"], near["y1"], near["x2"], near["y2"] = 560, 560, 640, 640
+    kept = focus_on_center_canopy([big, near], W, H)
+    canopies = [b for b in kept if b["cls"] == "canopy"]
+    assert len(canopies) == 1 and canopies[0] is big, canopies
+
+
+def test_without_a_canopy_nothing_is_dropped():
+    """캐노피를 못 잡으면 고를 기준이 없다 — 잘못 버리느니 예전처럼 다 센다."""
+    boxes = [box(100, 100, 60, 60), box(900, 900, 60, 60)]
+    assert focus_on_center_canopy(boxes, W, H) == boxes
+
+
 # ── 크기 등급은 캐노피(포기 전체 폭)로 ────────────────────────────────────
 def test_size_class_comes_from_the_canopy_not_the_biggest_leaf():
     """잎 한 장은 포기 크기를 대표하지 못한다 — 캐노피 폭으로 매긴다."""

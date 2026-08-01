@@ -581,6 +581,39 @@ def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
     return out
 
 
+def focus_on_center_canopy(boxes: List[dict], det_w: float, det_h: float) -> List[dict]:
+    """개별 사진용 — 사진 가운데 포기 하나만 남긴다.
+
+    개체를 가까이 찍으면 프레임 안에 옆 포기 잎이 같이 들어온다. 그대로 세면
+    이 포기 잎이 아닌 것까지 얹혀 잎 수가 부풀고, 크기도 남의 캐노피로 매겨진다.
+    가운데 있는 포기가 찍으려던 포기라고 보고, 그 캐노피와 거기 딸린 잎만 남긴다.
+
+    딸린 잎의 기준은 탑뷰 그룹화와 같다 — 박스 안에 들었거나, 제 크기의
+    CANOPY_MARGIN 배 이내로 붙어 있으면 그 포기 것이다(캐노피 박스는 잎 끝을
+    아슬아슬하게 자른다).
+
+    캐노피를 못 잡았으면 고를 기준이 없으므로 그대로 둔다 — 잘못 골라 버리느니
+    예전처럼 다 세는 편이 낫다.
+    """
+    canopies = [b for b in boxes if b["cls"].lower() in CANOPY_CLASSES]
+    if not canopies:
+        return boxes
+
+    cx, cy = det_w / 2, det_h / 2
+    # 가운데를 품은 캐노피가 있으면 그중에서, 없으면 전체에서 가장 가까운 것
+    holding = [c for c in canopies if _contains(c, cx, cy)]
+    main = min(holding or canopies, key=lambda c: math.dist(_center(c), (cx, cy)))
+
+    kept = [main]
+    for b in boxes:
+        if b["cls"].lower() in NON_LEAF:
+            continue                       # 다른 캐노피·화분 박스는 버린다
+        lx, ly = _center(b)
+        if _contains(main, lx, ly) or _dist_to_box(main, lx, ly) <= _span(b) * CANOPY_MARGIN:
+            kept.append(b)
+    return kept
+
+
 def group_by_pots_and_shape(leaves: List[dict], pots: List[dict], feats: List[dict]) -> List[List[dict]]:
     """화분 + 생김새를 함께 쓰는 그룹화.
 
@@ -931,6 +964,15 @@ def _analyze_file(raw: bytes) -> dict:
         boxes_stage, _ = detect_boxes(image, DETECT_STAGE)
     else:
         boxes_stage = boxes_top
+
+    # 개별 사진은 '이 포기 하나' 를 찍은 것이다. 프레임에 걸린 옆 포기 잎까지
+    # 세면 잎 수가 부풀므로, 가운데 캐노피와 거기 딸린 잎만 남긴다.
+    # 박스 좌표계는 사진 픽셀과 다를 수 있어(워크플로 리사이즈) 면적에서 되돌린다.
+    det_w = math.sqrt(img_area * (image.width / image.height)) if img_area else image.width
+    det_h = (img_area / det_w) if det_w else image.height
+    boxes_top = focus_on_center_canopy(boxes_top, det_w, det_h)
+    boxes_stage = (boxes_top if boxes_stage is boxes_top
+                   else focus_on_center_canopy(boxes_stage, det_w, det_h))
 
     metrics = {}
     metrics.update(analyze_top(boxes_top, img_area))        # 모델1 → 3D
