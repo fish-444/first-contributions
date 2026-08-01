@@ -48,6 +48,49 @@ import placement
 import providers
 
 # --------------------------------------------------------------------------- 설정
+def _load_env_file() -> str:
+    """farm_env.bat / farm_env.sh 를 앱이 직접 읽어 환경변수로 올린다.
+
+    지금까지는 start.bat 이 call 로 불러 주는 것에 기대고 있었다. 그래서
+    `uvicorn main:app` 을 직접 띄우면 설정이 통째로 무시돼 조용히 데모 모드로
+    떨어졌다 — README 의 '명령어로 실행' 절이 바로 그 경로를 안내하고 있었다.
+    실행 방법에 따라 결과가 달라지는 건 고쳐야 할 쪽이 앱이다.
+
+    이미 환경에 있는 값은 덮지 않는다. 파워셸에서 직접 지정했거나 start.bat 이
+    먼저 불러 준 값이 우선이어야 한다.
+
+    돌려주는 값: 실제로 읽은 파일 경로 (없으면 빈 문자열)
+    """
+    for name in ("farm_env.bat", "farm_env.sh"):
+        path = os.path.join(os.getcwd(), name)
+        if not os.path.exists(path):
+            continue
+        loaded = []
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith(("rem ", "REM ", "::", "#", "@")):
+                        continue
+                    m = re.match(r"(?:set\s+|export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)", line)
+                    if not m:
+                        continue
+                    key, val = m.group(1), m.group(2).strip()
+                    if key in os.environ:          # 이미 지정된 값이 우선
+                        continue
+                    os.environ[key] = val
+                    loaded.append(key)
+        except OSError:
+            return ""
+        if loaded:
+            print(f"[설정] {name} 에서 {len(loaded)}개 값을 읽었습니다: {', '.join(loaded)}")
+        return path
+    return ""
+
+
+ENV_FILE = _load_env_file()
+
+
 def _report_env_file() -> None:
     """키가 안 잡힐 때, 설정 파일 쪽인지 전달 쪽인지 갈라 준다.
 
@@ -88,9 +131,8 @@ def _report_env_file() -> None:
         # 여기가 핵심 — 파일엔 있는데 앱까지 안 왔다
         print(f"[설정] farm_env.bat 에는 키가 있는데({in_file[:4]}…) 앱까지 오지 않았습니다.")
         print(f"[설정]   파일: {env_file}")
-        print("[설정]   1) 메모장에서 Ctrl+S 로 저장하셨나요?")
-        print("[설정]   2) start.bat 으로 켜셨나요? uvicorn 을 직접 띄우면 이 파일을 안 읽습니다.")
-        print("[설정]   3) 다른 폴더의 farm_env.bat 을 고치신 건 아닌가요?")
+        print("[설정]   ROBOFLOW_API_KEY 가 빈 값으로 환경에 이미 있으면 파일 값이 무시됩니다.")
+        print("[설정]   그 창을 닫고 새로 여신 뒤 다시 켜 보세요.")
 
 
 _report_env_file()

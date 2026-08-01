@@ -165,6 +165,79 @@ def test_missing_key_is_not_an_error():
     assert clean_api_key(None) == ("", [])
 
 
+# ── 설정 파일 읽기 ────────────────────────────────────────────────────────
+# start.bat 이 call 로 불러 주는 것에만 기대면, uvicorn 을 직접 띄웠을 때
+# 설정이 통째로 무시돼 조용히 데모 모드로 떨어진다.
+import os
+import tempfile
+from main import _load_env_file
+
+
+def _with_env_file(text, env=None, name="farm_env.bat"):
+    """임시 폴더에 설정 파일을 두고 _load_env_file 을 돌려 본다."""
+    before = dict(os.environ)
+    cwd = os.getcwd()
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                f.write(text)
+            os.chdir(d)
+            for k in ("ROBOFLOW_API_KEY", "ROBOFLOW_WORKSPACE", "FARM_PORT"):
+                os.environ.pop(k, None)
+            os.environ.update(env or {})
+            _load_env_file()
+            return {k: os.environ.get(k) for k in
+                    ("ROBOFLOW_API_KEY", "ROBOFLOW_WORKSPACE", "FARM_PORT")}
+    finally:
+        os.chdir(cwd)
+        os.environ.clear()
+        os.environ.update(before)
+
+
+def test_the_app_reads_farm_env_itself():
+    """uvicorn 을 직접 띄워도 키가 잡혀야 한다 — 실행 방법에 따라 달라지면 안 된다."""
+    got = _with_env_file("@echo off\n"
+                         "set ROBOFLOW_API_KEY=cuxIsecret\n"
+                         "set ROBOFLOW_WORKSPACE=s-workspace-br86f\n")
+    assert got["ROBOFLOW_API_KEY"] == "cuxIsecret", got
+    assert got["ROBOFLOW_WORKSPACE"] == "s-workspace-br86f", got
+
+
+def test_comments_are_skipped():
+    got = _with_env_file("@echo off\n"
+                         "rem set ROBOFLOW_API_KEY=주석이라_무시\n"
+                         ":: set ROBOFLOW_WORKSPACE=이것도\n"
+                         "set ROBOFLOW_API_KEY=cuxIreal\n")
+    assert got["ROBOFLOW_API_KEY"] == "cuxIreal", got
+    assert got["ROBOFLOW_WORKSPACE"] is None, got
+
+
+def test_an_already_set_variable_wins():
+    """파워셸에서 직접 지정했거나 start.bat 이 먼저 넣어 준 값이 우선이어야 한다."""
+    got = _with_env_file("set ROBOFLOW_API_KEY=fromFile\n",
+                         env={"ROBOFLOW_API_KEY": "fromShell"})
+    assert got["ROBOFLOW_API_KEY"] == "fromShell", got
+
+
+def test_shell_style_env_file_also_works():
+    """맥·리눅스의 farm_env.sh 는 export 형식이다."""
+    got = _with_env_file("#!/bin/sh\nexport ROBOFLOW_API_KEY=cuxIsh\nFARM_PORT=8123\n",
+                         name="farm_env.sh")
+    assert got["ROBOFLOW_API_KEY"] == "cuxIsh", got
+    assert got["FARM_PORT"] == "8123", got
+
+
+def test_no_env_file_is_not_an_error():
+    before = dict(os.environ)
+    cwd = os.getcwd()
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            os.chdir(d)
+            assert _load_env_file() == ""
+    finally:
+        os.chdir(cwd); os.environ.clear(); os.environ.update(before)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

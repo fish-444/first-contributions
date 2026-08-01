@@ -149,10 +149,18 @@ https://app.roboflow.com/{워크스페이스}/settings/api
 ## ▶️ 실행 — 명령어로
 ```bash
 cd 경로/first-contributions/alocasia-farm
-python3 -m pip install -r requirements.txt     # 처음 한 번 (Windows: python)
-python3 -m uvicorn main:app --reload           # 서버 실행
+python3 -m pip install -r requirements.txt              # 처음 한 번 (Windows: python)
+python3 -m uvicorn main:app --reload --port 8123        # 서버 실행
 ```
-브라우저에서 **http://127.0.0.1:8000** 접속.
+브라우저에서 **http://127.0.0.1:8123** 접속.
+
+> **`--port` 를 빼면 uvicorn 기본값인 8000 으로 뜹니다.** `start.bat` 은 8123 을
+> 쓰므로, 바탕화면 바로가기(`http://localhost:8123`)로 열면 안 열립니다.
+> 어느 포트로 떴는지는 uvicorn 이 시작할 때 찍어 줍니다.
+
+> **키는 앱이 `farm_env.bat` 을 직접 읽습니다.** `start.bat` 을 안 거쳐도
+> 같은 폴더에 그 파일이 있으면 알아서 불러옵니다(맥·리눅스는 `farm_env.sh`).
+> 환경변수로 이미 지정한 값이 있으면 그쪽이 우선입니다.
 
 > **`Form data requires "python-multipart" to be installed`** 로 안 뜬다면
 > 설치가 중간에 끊긴 겁니다. 이것만 다시 실행하세요:
