@@ -135,34 +135,40 @@ def test_a_leaf_deep_inside_the_overlap_of_two_canopies_lands_in_exactly_one():
     assert sorted(counted) == [0, 1], counted
 
 
-def test_the_canopy_that_wraps_the_leaf_wins_over_the_closer_one():
-    """겹친 구간에서는 잎을 더 온전히 감싼 캐노피가 임자다.
+def test_a_canopy_sitting_inside_another_keeps_its_own_leaves():
+    """캐노피가 캐노피 안에 들어앉으면 안쪽이 임자다 — 바깥에서는 뺀다.
 
-    중심 거리만 보면, 잎을 절반밖에 안 덮는 작은 캐노피가 '중심이 가깝다' 는
-    이유로 이긴다. 캐노피가 포기 전체를 못 감싸고 일부만 잡혔을 때 실제로 난다.
+    포기가 다닥다닥 붙으면 작은 포기의 캐노피가 큰 포기 박스 안에 통째로
+    들어간다. 그때 안쪽 포기의 잎까지 바깥 몫으로 세면 잎 수가 부푼다.
+    집합으로 쓰면  own(바깥) = 바깥에 든 잎 − 안쪽에 든 잎.
     """
-    leaf = box(500, 500, 200, 200)                       # 400~600
-    big = box(900, 550, 1000, 300, cls="canopy")         # 400~1400 × 400~700, 잎을 통째로 품음
-    small = box(550, 550, 200, 200, cls="canopy")        # 450~650, 잎의 절반만 덮음
-    groups = group_leaves([big, small, leaf])
+    outer = box(600, 500, 1000, 600, cls="canopy")      # 100~1100 × 200~800
+    inner = box(800, 500, 200, 200, cls="canopy")       # 700~900 × 400~600
+    outer_leaf = box(300, 400, 120, 120)                # 바깥에만
+    inner_leaf = box(800, 500, 120, 120)                # 안쪽에 (바깥에도 들어감)
 
-    owner = next(g for g in groups if n_leaves(g) == 1)
-    canopy = next(b for b in owner if b["cls"] == "canopy")
-    assert canopy is big, "잎을 절반만 덮는 캐노피가 이겼다"
+    groups = group_leaves([outer, inner, outer_leaf, inner_leaf])
+    by_canopy = {id(next(b for b in g if b["cls"] == "canopy")): n_leaves(g)
+                 for g in groups}
+    assert by_canopy[id(outer)] == 1, by_canopy      # 안쪽 잎은 빠진다
+    assert by_canopy[id(inner)] == 1, by_canopy
 
     import main
-    assert main._covered_by(leaf, big) == 1.0
-    assert main._covered_by(leaf, small) < 0.6
+    assert main._nested_pairs([outer, inner]) == {0: [1]}
 
 
-def test_equally_wrapping_canopies_fall_back_to_the_nearer_centre():
-    """둘 다 잎을 통째로 품었으면 더 이상 덮임으로는 못 가른다 — 중심 거리로."""
-    leaf = box(500, 500, 40, 40)
-    near = box(520, 500, 300, 300, cls="canopy")
-    far = box(650, 500, 700, 300, cls="canopy")
-    groups = group_leaves([near, far, leaf])
+def test_side_by_side_canopies_split_by_how_fully_they_wrap_the_leaf():
+    """나란히 걸친 캐노피 사이에서는 잎을 더 온전히 감싼 쪽이 임자다."""
+    import main
+    left = box(500, 550, 600, 300, cls="canopy")        # 200~800
+    right = box(1000, 550, 600, 300, cls="canopy")      # 700~1300
+    assert main._nested_pairs([left, right]) == {}, "나란히 걸친 것이어야 한다"
+
+    leaf = box(700, 550, 300, 100)                      # 550~850, 중심은 양쪽 다 안
+    groups = group_leaves([left, right, leaf])
     owner = next(g for g in groups if n_leaves(g) == 1)
-    assert next(b for b in owner if b["cls"] == "canopy") is near
+    assert next(b for b in owner if b["cls"] == "canopy") is left
+    assert main._covered_by(leaf, left) > main._covered_by(leaf, right)
 
 
 def test_grouped_by_reports_canopy_distinctly_from_pot():

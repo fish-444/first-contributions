@@ -578,6 +578,49 @@ def _covered_by(leaf: dict, canopy: dict) -> float:
     return (iw * ih) / leaf["area"] if leaf["area"] > 0 else 0.0
 
 
+# 캐노피가 다른 캐노피에 이만큼 덮이면 '안에 들어앉았다' 로 본다.
+CANOPY_NESTED_IN = float(os.environ.get("CANOPY_NESTED_IN", "0.8"))
+
+
+def _nested_pairs(canopies: List[dict]) -> Dict[int, List[int]]:
+    """{바깥 캐노피 index: [그 안에 들어앉은 캐노피 index들]}.
+
+    포기가 다닥다닥 붙으면 작은 포기의 캐노피가 큰 포기의 박스 안에 통째로
+    들어간다. 이때 안쪽 포기의 잎까지 바깥 몫으로 세면 잎 수가 부푼다.
+    """
+    nested: Dict[int, List[int]] = {}
+    for i, outer in enumerate(canopies):
+        for j, inner in enumerate(canopies):
+            if i == j or inner["area"] >= outer["area"]:
+                continue
+            if _covered_by(inner, outer) >= CANOPY_NESTED_IN:
+                nested.setdefault(i, []).append(j)
+    return nested
+
+
+def _canopy_owner(leaf: dict, canopies: List[dict], inside: List[int],
+                  nested: Dict[int, List[int]]) -> int:
+    """이 잎이 어느 캐노피 몫인지. inside 는 잎 중심을 품은 캐노피 index 목록.
+
+    두 경우를 나눈다:
+
+    · **캐노피가 캐노피 안에 들어앉음** — 안쪽이 임자다. 바깥에서는 뺀다.
+      집합으로 쓰면 own(바깥) = 안에 든 잎 − 안쪽 캐노피에 든 잎.
+      옆 포기가 큰 포기 박스에 잡아먹히는 걸 막는 게 목적이라, 여기서는
+      '누가 더 감쌌나' 를 따지지 않는다 — 안쪽에 들었으면 안쪽 것이다.
+
+    · **나란히 걸침** (어느 쪽도 상대를 품지 않음) — 잎을 더 온전히 감싼 쪽.
+      캐노피가 포기 일부만 잡히는 일이 잦아, 중심 거리로는 잘못 고른다.
+    """
+    lx, ly = _center(leaf)
+    # 후보 중 '다른 후보를 품고 있지 않은' 가장 안쪽 캐노피들만 남긴다
+    innermost = [i for i in inside
+                 if not any(j in inside for j in nested.get(i, ()))]
+    pool = innermost or inside
+    return max(pool, key=lambda i: (_covered_by(leaf, canopies[i]),
+                                    -math.dist(_center(canopies[i]), (lx, ly))))
+
+
 def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
                               feats: List[dict]) -> List[List[dict]]:
     """캐노피 앵커 전용 그룹화 — 캐노피 하나가 화분 하나, 그 안의 잎이 그 화분 몫.
@@ -601,15 +644,13 @@ def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
     전부 NON_LEAF 를 걸러 내므로 잎 0장으로 잡힌다.
     """
     groups: List[List[dict]] = [[] for _ in canopies]
+    nested = _nested_pairs(canopies)
     strays, stray_feats = [], []
     for lf, ft in zip(leaves, feats):
         lx, ly = _center(lf)
         inside = [i for i, c in enumerate(canopies) if _contains(c, lx, ly)]
         if inside:
-            # 겹치는 구간이면 잎을 더 온전히 감싼 캐노피가 임자다.
-            # 똑같이 감쌌으면(둘 다 통째로 품었으면) 중심이 가까운 쪽으로 가른다.
-            groups[max(inside, key=lambda i: (_covered_by(lf, canopies[i]),
-                                              -math.dist(_center(canopies[i]), (lx, ly))))].append(lf)
+            groups[_canopy_owner(lf, canopies, inside, nested)].append(lf)
         else:
             strays.append(lf)
             stray_feats.append(ft)
@@ -662,13 +703,24 @@ def focus_on_center_canopy(boxes: List[dict], det_w: float, det_h: float) -> Lis
     # 가운데를 품은 캐노피가 있으면 그중에서, 없으면 전체에서 가장 가까운 것
     holding = [c for c in canopies if _contains(c, cx, cy)]
     main = min(holding or canopies, key=lambda c: math.dist(_center(c), (cx, cy)))
+    nested = _nested_pairs(canopies)
 
     kept = [main]
     for b in boxes:
         if b["cls"].lower() in NON_LEAF:
             continue                       # 다른 캐노피·화분 박스는 버린다
         lx, ly = _center(b)
-        if _contains(main, lx, ly) or _dist_to_box(main, lx, ly) <= _span(b) * CANOPY_MARGIN:
+        inside = [i for i, c in enumerate(canopies) if _contains(c, lx, ly)]
+        if inside:
+            # 가운데 캐노피 안에 있다고 다 이 포기 것은 아니다. 옆 포기의 캐노피가
+            # 이 안에 들어앉아 있으면 그 포기 잎까지 흡수해 잎 수가 부푼다.
+            # 임자는 탑뷰와 같은 규칙으로 가른다 (_canopy_owner).
+            if canopies[_canopy_owner(b, canopies, inside, nested)] is main:
+                kept.append(b)
+            continue
+        # 어느 캐노피에도 안 들었으면, 가운데 캐노피에 붙어 있을 때만 받는다
+        if (_dist_to_box(main, lx, ly) <= _span(b) * CANOPY_MARGIN
+                and min(canopies, key=lambda c: _dist_to_box(c, lx, ly)) is main):
             kept.append(b)
     return kept
 
