@@ -681,7 +681,48 @@ def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
     return out
 
 
-def focus_on_center_canopy(boxes: List[dict], det_w: float, det_h: float) -> List[dict]:
+# 근접 촬영에서 '배경 화분' 을 걸러 낼 초점 기준.
+# 주인공보다 이 배수만큼 덜 또렷하면 배경으로 본다. 0 이면 이 판정을 끈다.
+LEAF_FOCUS_MIN = float(os.environ.get("LEAF_FOCUS_MIN", "0.35"))
+
+
+def _sharpness(image: Image.Image, box: dict, box_to_px: float) -> float:
+    """잎 박스 안이 얼마나 또렷한지. 가장자리 세기의 표준편차로 잰다.
+
+    근접 촬영에서는 주인공 포기에 초점이 맞고 뒤쪽 화분은 흐리게 날아간다.
+    캐노피 박스가 프레임을 거의 덮을 만큼 크면 배경 잎도 그 안에 들어와
+    같이 세어지는데, 위치·크기로는 갈라낼 수 없고 또렷함으로는 갈린다.
+    """
+    from PIL import ImageFilter, ImageStat
+
+    x1, y1 = max(0, box["x1"] * box_to_px), max(0, box["y1"] * box_to_px)
+    x2, y2 = min(image.width, box["x2"] * box_to_px), min(image.height, box["y2"] * box_to_px)
+    if x2 - x1 < 8 or y2 - y1 < 8:
+        return 0.0
+    crop = image.crop((int(x1), int(y1), int(x2), int(y2))).convert("L")
+    crop.thumbnail((160, 160))                     # 큰 잎도 같은 잣대로 재려고 줄인다
+    return ImageStat.Stat(crop.filter(ImageFilter.FIND_EDGES)).stddev[0]
+
+
+def _drop_out_of_focus(leaves: List[dict], image: Image.Image,
+                       box_to_px: float) -> List[dict]:
+    """또렷한 잎만 남긴다. 다 비슷하게 또렷하면 아무것도 안 버린다.
+
+    배경이 흐리지 않은 사진(전부 초점이 맞은 경우)에서는 최대·최소 차이가
+    작아 자동으로 통과된다 — 잘못 버리는 것보다 다 세는 편이 낫다.
+    """
+    if LEAF_FOCUS_MIN <= 0 or image is None or len(leaves) < 2:
+        return leaves
+    sharp = [(_sharpness(image, b, box_to_px), b) for b in leaves]
+    top = max(v for v, _ in sharp)
+    if top <= 0:
+        return leaves
+    return [b for v, b in sharp if v >= top * LEAF_FOCUS_MIN]
+
+
+def focus_on_center_canopy(boxes: List[dict], det_w: float, det_h: float,
+                           image: Image.Image = None,
+                           box_to_px: float = 1.0) -> List[dict]:
     """개별 사진용 — 사진 가운데 포기 하나만 남긴다.
 
     개체를 가까이 찍으면 프레임 안에 옆 포기 잎이 같이 들어온다. 그대로 세면
@@ -722,7 +763,11 @@ def focus_on_center_canopy(boxes: List[dict], det_w: float, det_h: float) -> Lis
         if (_dist_to_box(main, lx, ly) <= _span(b) * CANOPY_MARGIN
                 and min(canopies, key=lambda c: _dist_to_box(c, lx, ly)) is main):
             kept.append(b)
-    return kept
+
+    # 뒤쪽 화분이 캐노피 안에 걸쳐 들어오는 건 위치로는 못 거른다. 초점으로 거른다.
+    leaves = [b for b in kept if b["cls"].lower() not in NON_LEAF]
+    focused = _drop_out_of_focus(leaves, image, box_to_px)
+    return [main] + focused
 
 
 def group_by_pots_and_shape(leaves: List[dict], pots: List[dict], feats: List[dict]) -> List[List[dict]]:
@@ -1116,9 +1161,11 @@ def _analyze_file(raw: bytes) -> dict:
     det_w = math.sqrt(img_area * (image.width / image.height)) if img_area else image.width
     det_h = (img_area / det_w) if det_w else image.height
     same_detector = boxes_stage is boxes_top
-    kept_top = focus_on_center_canopy(boxes_top, det_w, det_h)
+    box_to_px = (image.width / det_w) if det_w else 1.0
+    kept_top = focus_on_center_canopy(boxes_top, det_w, det_h, image, box_to_px)
     dropped = [b for b in boxes_top if not any(b is k for k in kept_top)]
-    boxes_stage = kept_top if same_detector else focus_on_center_canopy(boxes_stage, det_w, det_h)
+    boxes_stage = (kept_top if same_detector
+                   else focus_on_center_canopy(boxes_stage, det_w, det_h, image, box_to_px))
     boxes_top = kept_top
 
     metrics = {}

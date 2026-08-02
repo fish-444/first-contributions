@@ -299,6 +299,62 @@ def test_the_canopy_holding_the_center_wins_over_a_closer_one():
     assert len(canopies) == 1 and canopies[0] is big, canopies
 
 
+# ── 근접 촬영에서 배경 화분 걸러내기 ──────────────────────────────────────
+def _focus_scene(blur_background=True):
+    """주인공 잎 4장(또렷) + 배경 잎 2장, 캐노피는 프레임을 거의 덮는다."""
+    from PIL import Image, ImageDraw, ImageFilter
+
+    def bx(x1, y1, x2, y2, cls="leaf"):
+        return {"cls": cls, "conf": 0.9, "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                "area": float((x2 - x1) * (y2 - y1))}
+
+    subject = [bx(300, 150, 520, 380), bx(120, 420, 420, 720),
+               bx(560, 400, 880, 700), bx(430, 120, 620, 300)]
+    bg = [bx(60, 60, 220, 200), bx(800, 60, 960, 220)]
+    canopy = bx(50, 50, 970, 760, cls="canopy")
+
+    img = Image.new("RGB", (1000, 1000), (30, 45, 35))
+    d = ImageDraw.Draw(img)
+    for b in subject + bg:
+        d.rounded_rectangle([b["x1"], b["y1"], b["x2"], b["y2"]], radius=30, fill=(55, 130, 65))
+        for i in range(int(b["x1"]), int(b["x2"]), 9):
+            d.line([(i, b["y1"]), (i, b["y2"])], fill=(70, 150, 80), width=2)
+        for j in range(int(b["y1"]), int(b["y2"]), 9):
+            d.line([(b["x1"], j), (b["x2"], j)], fill=(40, 110, 55), width=2)
+    if blur_background:
+        mask = Image.new("L", (1000, 1000), 0)
+        md = ImageDraw.Draw(mask)
+        for b in bg:
+            md.rounded_rectangle([b["x1"] - 12, b["y1"] - 12, b["x2"] + 12, b["y2"] + 12],
+                                 radius=30, fill=255)
+        img = Image.composite(img.filter(ImageFilter.GaussianBlur(9)), img, mask)
+    return [canopy] + subject + bg, img
+
+
+def test_blurred_background_plants_are_not_counted():
+    """근접 촬영에서 뒤쪽 화분 잎이 캐노피 안에 걸쳐 들어와도 세면 안 된다.
+
+    위치·크기로는 못 가른다 — 캐노피가 프레임을 거의 덮으니 배경 잎도 그 안이다.
+    주인공은 초점이 맞고 배경은 날아간다는 차이로 가른다.
+    """
+    scene, img = _focus_scene(blur_background=True)
+    kept = focus_on_center_canopy(scene, 1000, 1000, img, 1.0)
+    assert n_leaves(kept) == 4, n_leaves(kept)
+
+
+def test_an_all_sharp_photo_loses_nothing():
+    """전부 초점이 맞은 사진에서는 아무것도 안 버린다 — 잘못 버리느니 다 센다."""
+    scene, img = _focus_scene(blur_background=False)
+    kept = focus_on_center_canopy(scene, 1000, 1000, img, 1.0)
+    assert n_leaves(kept) == 6, n_leaves(kept)
+
+
+def test_without_an_image_the_focus_check_is_skipped():
+    """탑뷰 경로는 이미지를 안 넘긴다 — 그때는 이 판정이 아예 안 돈다."""
+    scene, _ = _focus_scene(blur_background=True)
+    assert n_leaves(focus_on_center_canopy(scene, 1000, 1000)) == 6
+
+
 def test_without_a_canopy_nothing_is_dropped():
     """캐노피를 못 잡으면 고를 기준이 없다 — 잘못 버리느니 예전처럼 다 센다."""
     boxes = [box(100, 100, 60, 60), box(900, 900, 60, 60)]
