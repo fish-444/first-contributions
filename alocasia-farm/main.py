@@ -993,6 +993,40 @@ def _recompute_shape_groups() -> None:
         _label_shape_groups([PLANTS[pid] for pid in ids], [FEATS[pid] for pid in ids])
 
 
+# 클래스별 색 — 모달 사진 위에 그리는 박스.
+BOX_COLORS = {"canopy": (255, 150, 40), "shoot": (90, 220, 255),
+              "old": (240, 210, 60), "mature": (90, 230, 120)}
+
+
+def _draw_boxes(image: Image.Image, kept: List[dict], dropped: List[dict],
+                img_area: float, size: int = 520) -> Image.Image:
+    """센 박스를 사진 위에 그린다. 버린 박스는 흐린 회색으로 같이 보여 준다.
+
+    개수가 이상할 때 '무엇이 세어졌는지' 를 볼 수 있어야 한다. 숫자만 있으면
+    모델이 못 잡은 건지, 옆 포기가 섞인 건지, 앱이 버린 건지 구분이 안 된다.
+    """
+    from PIL import ImageDraw
+
+    out = image.copy()
+    out.thumbnail((size, size))
+    # 박스는 탐지 좌표계에 있다. 줄어든 썸네일 좌표로 옮긴다.
+    det_w = math.sqrt(img_area * (image.width / image.height)) if img_area else image.width
+    scale = (out.width / det_w) if det_w else 1.0
+    d = ImageDraw.Draw(out, "RGBA")
+
+    for b in dropped:                       # 버린 것 먼저 (아래 깔리게)
+        d.rectangle([b["x1"] * scale, b["y1"] * scale, b["x2"] * scale, b["y2"] * scale],
+                    outline=(150, 150, 150, 110), width=1)
+    for b in kept:
+        cls = b["cls"].lower()
+        color = BOX_COLORS.get("canopy" if cls in CANOPY_CLASSES else _stage(cls),
+                               (90, 230, 120))
+        wide = 3 if cls in CANOPY_CLASSES else 2
+        d.rectangle([b["x1"] * scale, b["y1"] * scale, b["x2"] * scale, b["y2"] * scale],
+                    outline=color + (255,), width=wide)
+    return out
+
+
 def _analyze_file(raw: bytes) -> dict:
     try:
         image = Image.open(io.BytesIO(raw)).convert("RGB")
@@ -1012,16 +1046,20 @@ def _analyze_file(raw: bytes) -> dict:
     # 박스 좌표계는 사진 픽셀과 다를 수 있어(워크플로 리사이즈) 면적에서 되돌린다.
     det_w = math.sqrt(img_area * (image.width / image.height)) if img_area else image.width
     det_h = (img_area / det_w) if det_w else image.height
-    boxes_top = focus_on_center_canopy(boxes_top, det_w, det_h)
-    boxes_stage = (boxes_top if boxes_stage is boxes_top
-                   else focus_on_center_canopy(boxes_stage, det_w, det_h))
+    same_detector = boxes_stage is boxes_top
+    kept_top = focus_on_center_canopy(boxes_top, det_w, det_h)
+    dropped = [b for b in boxes_top if not any(b is k for k in kept_top)]
+    boxes_stage = kept_top if same_detector else focus_on_center_canopy(boxes_stage, det_w, det_h)
+    boxes_top = kept_top
 
     metrics = {}
     metrics.update(analyze_top(boxes_top, img_area))        # 모델1 → 3D
     metrics.update(analyze_metrics(boxes_stage, img_area))  # 모델2 → 모달
 
-    thumb = image.copy(); thumb.thumbnail((260, 260))
-    tb = io.BytesIO(); thumb.save(tb, format="JPEG", quality=72)
+    # 무엇이 세어졌는지 사진 위에 그려 준다. 숫자만 보여 주면 개수가 이상해도
+    # 어디서 틀렸는지 확인할 방법이 없어서, 매번 코드를 뒤져야 했다.
+    thumb = _draw_boxes(image, boxes_top, dropped, img_area)
+    tb = io.BytesIO(); thumb.save(tb, format="JPEG", quality=80)
     metrics["thumb"] = "data:image/jpeg;base64," + base64.b64encode(tb.getvalue()).decode()
 
     # 이 식물의 생김새 = 잎들의 특징 평균 (모양 그룹 딱지 계산에 쓰임)

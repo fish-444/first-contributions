@@ -255,6 +255,31 @@ def test_topview_keeps_every_canopy_while_a_closeup_keeps_one():
     assert n_leaves(kept) == 1, kept
 
 
+def test_the_thumbnail_shows_what_was_counted():
+    """개수가 이상할 때 무엇이 세어졌는지 볼 수 있어야 한다 — 숫자만으론 못 따진다."""
+    import io, base64, main
+    from PIL import Image
+
+    scene = [box(450, 450, 400, 400, cls="canopy"),
+             box(380, 380, 140, 140), box(520, 500, 140, 140),
+             box(120, 120, 250, 250, cls="canopy"),   # 옆 포기 — 버려져야 한다
+             box(110, 110, 110, 110)]
+    orig = main.detect_boxes
+    main.detect_boxes = lambda im, det=None: (list(scene), float(900 * 900))
+    try:
+        buf = io.BytesIO()
+        Image.new("RGB", (900, 900), (18, 40, 26)).save(buf, format="JPEG")
+        m, _ = main._analyze_file(buf.getvalue())
+    finally:
+        main.detect_boxes = orig
+
+    assert m["leaf_count"] == 2, m                       # 가운데 포기 잎만
+    assert m["thumb"].startswith("data:image/jpeg;base64,"), m["thumb"][:40]
+    png = base64.b64decode(m["thumb"].split(",", 1)[1])
+    im = Image.open(io.BytesIO(png))
+    assert max(im.size) <= 520, im.size                  # 모달에 넣을 크기
+
+
 # ── 크기 등급은 캐노피(포기 전체 폭)로 ────────────────────────────────────
 def test_size_class_comes_from_the_canopy_not_the_biggest_leaf():
     """잎 한 장은 포기 크기를 대표하지 못한다 — 캐노피 폭으로 매긴다."""
