@@ -248,6 +248,41 @@ def test_a_leaf_just_outside_the_center_canopy_still_counts():
     assert n_leaves(focus_on_center_canopy(boxes, W, H)) == 1
 
 
+def test_a_closeup_drops_leaves_of_a_canopy_nested_inside_the_center_one():
+    """가운데 캐노피 안에 옆 포기 캐노피가 들어앉으면, 그 잎까지 세면 안 된다.
+
+    탑뷰와 같은 규칙(_canopy_owner)을 쓴다. 개별 사진 경로가 가운데 캐노피
+    하나만 보고 판정하던 시절에는 안쪽 포기의 잎을 통째로 흡수했다.
+    """
+    import main
+    center = box(500, 500, 800, 800, cls="canopy")      # 100~900
+    inner = box(750, 700, 200, 200, cls="canopy")       # 650~850 × 600~800
+    mine = [box(300, 300, 100, 100), box(400, 550, 100, 100)]
+    theirs = [box(750, 700, 80, 80)]                    # 안쪽 캐노피 것
+
+    assert main._nested_pairs([center, inner]) == {0: [1]}
+    kept = focus_on_center_canopy([center, inner] + mine + theirs, W, H)
+    assert n_leaves(kept) == 2, [b["cls"] for b in kept]
+    assert not any(b is theirs[0] for b in kept), "안쪽 포기 잎이 섞였다"
+
+
+def test_both_paths_share_the_same_ownership_rule():
+    """탑뷰와 개별 사진이 같은 규칙으로 임자를 가려야 한다 — 갈리면 한쪽이 틀린다."""
+    center = box(500, 500, 800, 800, cls="canopy")
+    inner = box(750, 700, 200, 200, cls="canopy")
+    mine = box(300, 300, 100, 100)
+    theirs = box(750, 700, 80, 80)
+    scene = [center, inner, mine, theirs]
+
+    # 탑뷰 — 두 화분으로 갈리고 잎이 하나씩
+    groups = group_leaves(scene)
+    assert leaf_sizes(groups) == [1, 1], leaf_sizes(groups)
+
+    # 개별 사진 — 가운데 포기 잎만
+    kept = focus_on_center_canopy(scene, W, H)
+    assert n_leaves(kept) == 1 and any(b is mine for b in kept), kept
+
+
 def test_a_far_leaf_is_dropped_even_without_a_neighbour_canopy():
     boxes = [box(500, 500, 200, 200, cls="canopy"),   # x 400~600
              box(950, 950, 60, 60)]                   # 한참 떨어짐
