@@ -48,7 +48,7 @@ import placement
 import providers
 
 # --------------------------------------------------------------------------- 설정
-def _load_env_file() -> str:
+def _load_env_file() -> None:
     """farm_env.bat / farm_env.sh 를 앱이 직접 읽어 환경변수로 올린다.
 
     지금까지는 start.bat 이 call 로 불러 주는 것에 기대고 있었다. 그래서
@@ -58,8 +58,6 @@ def _load_env_file() -> str:
 
     이미 환경에 있는 값은 덮지 않는다. 파워셸에서 직접 지정했거나 start.bat 이
     먼저 불러 준 값이 우선이어야 한다.
-
-    돌려주는 값: 실제로 읽은 파일 경로 (없으면 빈 문자열)
     """
     for name in ("farm_env.bat", "farm_env.sh"):
         path = os.path.join(os.getcwd(), name)
@@ -81,14 +79,13 @@ def _load_env_file() -> str:
                     os.environ[key] = val
                     loaded.append(key)
         except OSError:
-            return ""
+            return
         if loaded:
             print(f"[설정] {name} 에서 {len(loaded)}개 값을 읽었습니다: {', '.join(loaded)}")
-        return path
-    return ""
+        return
 
 
-ENV_FILE = _load_env_file()
+_load_env_file()
 
 
 def _report_env_file() -> None:
@@ -425,7 +422,7 @@ def leaf_features(image: Image.Image, box: dict, box_to_px: float = 1.0) -> dict
     return feat
 
 
-def shape_similarity(a: dict, b: dict, size_ref: float = None) -> float:
+def shape_similarity(a: dict, b: dict) -> float:
     """잎 두 장이 얼마나 닮았는지 0(전혀)~1(똑같이).
 
     모양(긴변/짧은변 비율)·크기·색을 함께 본다. 색 정보가 없으면 모양·크기만.
@@ -770,18 +767,6 @@ def focus_on_center_canopy(boxes: List[dict], det_w: float, det_h: float,
     return [main] + focused
 
 
-def group_by_pots_and_shape(leaves: List[dict], pots: List[dict], feats: List[dict]) -> List[List[dict]]:
-    """화분 + 생김새를 함께 쓰는 그룹화.
-
-    · 화분 박스 '안'에 있는 잎 → 그 화분으로 확정 (씨앗)
-    · 화분 밖으로 뻗은 잎 → 가까움 + 씨앗 잎과의 닮은 정도를 함께 보고 배정
-
-    알로카시아는 잎이 화분 밖으로 멀리 뻗어서, 거리만 보면 옆 화분에 잘못 붙는다.
-    이때 '같은 식물 잎끼리는 닮았다'는 성질이 교정해 준다.
-    """
-    return [g for _, g in group_by_pots_indexed(leaves, pots, feats)]
-
-
 def group_by_distance_and_shape(leaves: List[dict], feats: List[dict],
                                 gap: float = None) -> List[List[dict]]:
     """화분이 없을 때: 거리 + 생김새를 함께 본다.
@@ -819,20 +804,13 @@ def group_by_distance_and_shape(leaves: List[dict], feats: List[dict],
     return list(buckets.values())
 
 
-def group_leaves(boxes: List[dict], image: Image.Image = None,
-                 box_to_px: float = 1.0, feats: List[dict] = None) -> List[List[dict]]:
-    """탐지 박스 전체 → 식물별 잎 묶음.
-
-    화분이 잡히면 화분+생김새, 아니면 거리+생김새로 묶는다.
-    image 를 주면 잎을 잘라 색까지 보고, 없으면 박스 비율·크기만으로 판단한다.
-    feats 를 주면 그걸 쓴다 — 사진이 여러 장이라 박스마다 원본이 다를 때 필요.
-    """
-    return group_plants(boxes, image, box_to_px, feats)[0]
-
-
 def group_plants(boxes: List[dict], image: Image.Image = None, box_to_px: float = 1.0,
                  feats: List[dict] = None, canvas: tuple = None) -> tuple:
-    """(무리 목록, 무리→고정자리) 를 돌려준다.
+    """탐지 박스 전체 → (식물별 잎 묶음, 무리→고정자리).
+
+    캐노피가 잡히면 캐노피, 아니면 화분+생김새, 그것도 없으면 거리+생김새로 묶는다.
+    image 를 주면 잎을 잘라 색까지 보고, 없으면 박스 비율·크기만으로 판단한다.
+    feats 를 주면 그걸 쓴다 — 사진이 여러 장이라 박스마다 원본이 다를 때 필요.
 
     canvas(=(폭, 높이)) 를 주고 화분 자리를 미리 지정해 뒀으면, 모델이 화분을
     못 잡아도 그 자리를 화분으로 삼는다. 이때 무리마다 자리가 고정된다.

@@ -155,7 +155,7 @@ Write-Host '    - 컴퓨터를 켜면 서버가 알아서 뜹니다 (작업표�
 Write-Host '    - 바탕화면의 "알로카시아 온실" 을 더블클릭하면 열립니다'
 Write-Host ''
 Write-Host '  서버 창 맨 위 두 줄로 키가 제대로 들어갔는지 확인하세요:'
-Say '    [키] npP6... (20자)   <- 대시보드의 키 앞자리와 같아야 합니다' DarkGray
+Say '    [키] abcd... (20자)   <- 대시보드의 키 앞자리와 같아야 합니다' DarkGray
 Say '    [분석 엔진] workflow · find-old-leaf-and-others' DarkGray
 Write-Host ''
 

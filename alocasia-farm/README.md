@@ -115,7 +115,7 @@ https://app.roboflow.com/{워크스페이스}/settings/api
 고친 뒤 **서버를 껐다 켜야** 반영됩니다. 서버 창 맨 위 두 줄로 확인하세요:
 
 ```
-[키] npP6… (20자)  ← 대시보드의 키 앞자리와 같아야 합니다
+[키] abcd… (20자)  ← 대시보드의 키 앞자리와 같아야 합니다
 [분석 엔진] workflow · find-old-leaf-and-others
 ```
 

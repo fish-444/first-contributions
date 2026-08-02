@@ -106,7 +106,7 @@ def _circle_overlap(r1_cm: float, r2_cm: float, d_cm: float) -> float:
 
 
 # --------------------------------------------------------------------------- 점수
-def _need_light(plant: dict, r_cm: float) -> float:
+def _need_light(r_cm: float) -> float:
     """잎이 넓을수록 빛을 많이 써야 한다 (잎면적에 대략 비례)."""
     return max(0.35, min(1.0, (r_cm / 20.0) ** 1.5))
 
@@ -162,7 +162,7 @@ def score_layout(spots: List[dict], lights=None, geo: dict = None) -> dict:
     out, totals = [], []
     for i, s in enumerate(spots):
         got_light, shade = lit[i]
-        need_l = _need_light(s["plant"], s["r_cm"])
+        need_l = _need_light(s["r_cm"])
         light_ok = min(1.0, got_light / need_l) if need_l else 1.0
         totals.append(light_ok)
         out.append({"slot": s["slot"], "plant_id": s["plant"].get("id"),
@@ -205,7 +205,7 @@ def optimize(spots: List[dict], lights=None, rounds: int = 40) -> dict:
     plants = [s["plant"] for s in spots]
     shapes = [(s["r_cm"], s["h_cm"]) for s in spots]
     # 필요한 빛은 식물에 딸린 값이라 자리를 옮겨도 그대로다
-    needs = [_need_light(plants[k], shapes[k][0]) for k in range(n)]
+    needs = [_need_light(shapes[k][0]) for k in range(n)]
 
     def rate(order):
         radii = [shapes[order[i]][0] for i in range(n)]

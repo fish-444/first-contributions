@@ -136,14 +136,14 @@ from providers import clean_api_key
 
 def test_batch_style_quotes_are_stripped_from_the_key():
     """배치 파일에서 set X="k" 라고 쓰면 따옴표까지 값이 된다 — 걷어내고 알려 준다."""
-    key, warns = clean_api_key('"npP6secret"')
-    assert key == "npP6secret", key
+    key, warns = clean_api_key('"abcdsecret"')
+    assert key == "abcdsecret", key
     assert len(warns) == 1 and "따옴표" in warns[0], warns
 
 
 def test_surrounding_whitespace_is_stripped():
-    key, warns = clean_api_key("  npP6secret\n")
-    assert key == "npP6secret", key
+    key, warns = clean_api_key("  abcdsecret\n")
+    assert key == "abcdsecret", key
     assert warns and "공백" in warns[0], warns
 
 
@@ -155,8 +155,8 @@ def test_publishable_key_is_flagged():
 
 
 def test_a_clean_key_produces_no_noise():
-    key, warns = clean_api_key("npP6secret")
-    assert key == "npP6secret" and warns == [], warns
+    key, warns = clean_api_key("abcdsecret")
+    assert key == "abcdsecret" and warns == [], warns
 
 
 def test_missing_key_is_not_an_error():
@@ -233,7 +233,7 @@ def test_no_env_file_is_not_an_error():
     try:
         with tempfile.TemporaryDirectory() as d:
             os.chdir(d)
-            assert _load_env_file() == ""
+            assert _load_env_file() is None      # 조용히 지나가기만 하면 된다
     finally:
         os.chdir(cwd); os.environ.clear(); os.environ.update(before)
 

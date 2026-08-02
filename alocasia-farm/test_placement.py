@@ -101,7 +101,7 @@ def test_score_reports_every_spot():
 
 
 def test_a_big_plant_needs_more_light():
-    assert placement._need_light({}, 20.0) > placement._need_light({}, 7.0)
+    assert placement._need_light(20.0) > placement._need_light(7.0)
 
 
 def test_measured_leaf_beats_the_grade():

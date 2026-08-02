@@ -16,8 +16,6 @@ from typing import List, Protocol, Tuple
 
 from PIL import Image
 
-from .common import boxes_from_predictions, jpeg_b64          # noqa: F401  (제공자들이 씀)
-
 CONFIDENCE = float(os.environ.get("CONFIDENCE", "25"))        # 0~100
 
 
@@ -25,7 +23,7 @@ def clean_api_key(raw: str) -> Tuple[str, List[str]]:
     """환경변수로 들어온 키를 다듬고, 사람이 읽을 경고를 함께 돌려준다.
 
     윈도우 배치 파일에서 키를 넣다가 걸리는 함정이 늘 같다. 파워셸 습관대로
-    `set ROBOFLOW_API_KEY="npP6..."` 라고 쓰면 **따옴표까지 키 값이 된다**.
+    `set ROBOFLOW_API_KEY="abcd..."` 라고 쓰면 **따옴표까지 키 값이 된다**.
     복사·붙여넣기하면 줄 끝 공백도 자주 딸려온다. 둘 다 401 로만 돌아와서
     키가 죽은 줄 알고 새로 발급받게 되는데, 실제로는 글자 두 개 문제다.
     그래서 조용히 걷어내고, 대신 무엇을 걷어냈는지 알려 준다.

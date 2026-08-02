@@ -8,8 +8,22 @@
 import os
 os.environ["FARM_DB"] = ""      # 테스트는 파일에 저장하지 않는다
 
-from main import (analyze_metrics, analyze_top, group_by_pots_and_shape, group_leaves,
+from main import (analyze_metrics, analyze_top, group_by_pots_indexed, group_plants,
                   leaf_features, shape_similarity, _label_shape_groups)
+
+
+def group_leaves(boxes, image=None, box_to_px=1.0, feats=None):
+    """무리 목록만 꺼내는 테스트용 껍데기.
+
+    앱은 group_plants 로 '무리 + 무리별 고정자리'를 함께 받는다. 여기 테스트는
+    자리를 안 보므로 앞쪽만 쓴다.
+    """
+    return group_plants(boxes, image, box_to_px, feats)[0]
+
+
+def group_by_pots_and_shape(leaves, pots, feats):
+    """화분 번호를 뺀 무리 목록만. group_leaves 와 같은 이유의 껍데기."""
+    return [g for _, g in group_by_pots_indexed(leaves, pots, feats)]
 
 
 def leaves_only(boxes):
