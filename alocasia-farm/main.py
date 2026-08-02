@@ -565,6 +565,19 @@ def _dist_to_box(box: dict, x: float, y: float) -> float:
     return math.hypot(dx, dy)
 
 
+def _covered_by(leaf: dict, canopy: dict) -> float:
+    """잎 박스가 캐노피에 얼마나 덮이는지 (0~1).
+
+    겹친 캐노피 중에서 임자를 고를 때 쓴다. 중심점 하나만 보면, 잎을 절반밖에
+    안 감싸는 캐노피가 중심이 가깝다는 이유로 이기는 일이 생긴다. 캐노피는
+    '그 포기의 잎을 감싸는 박스' 이므로, 잎을 더 온전히 담은 쪽이 임자다.
+    """
+    ix1, iy1 = max(leaf["x1"], canopy["x1"]), max(leaf["y1"], canopy["y1"])
+    ix2, iy2 = min(leaf["x2"], canopy["x2"]), min(leaf["y2"], canopy["y2"])
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    return (iw * ih) / leaf["area"] if leaf["area"] > 0 else 0.0
+
+
 def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
                               feats: List[dict]) -> List[List[dict]]:
     """캐노피 앵커 전용 그룹화 — 캐노피 하나가 화분 하나, 그 안의 잎이 그 화분 몫.
@@ -575,7 +588,9 @@ def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
     잎 수가 부풀어, 캐노피로 세는 의미가 없어진다.
 
     그래서 세 단계로 나눈다:
-      1. 캐노피 안에 중심이 든 잎 → 그 화분 확정
+      1. 캐노피 안에 중심이 든 잎 → 그 화분 확정.
+         겹쳐서 후보가 여럿이면 **잎을 더 온전히 감싼 캐노피**가 임자다 —
+         중심 거리만 보면 잎을 절반만 덮는 캐노피가 이기는 일이 생긴다
       2. 살짝 밖으로 나간 잎(제 크기의 CANOPY_MARGIN 배 이내) → 가장 가까운 캐노피
          캐노피 박스가 잎 끝을 아슬아슬하게 자르는 일이 잦아서 필요하다
       3. 어느 캐노피와도 먼 잎 → 자기들끼리 거리+생김새로 묶어 별도 포기로
@@ -591,8 +606,10 @@ def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
         lx, ly = _center(lf)
         inside = [i for i, c in enumerate(canopies) if _contains(c, lx, ly)]
         if inside:
-            # 캐노피끼리 겹치는 구간이면 중심이 가까운 쪽이 임자다
-            groups[min(inside, key=lambda i: math.dist(_center(canopies[i]), (lx, ly)))].append(lf)
+            # 겹치는 구간이면 잎을 더 온전히 감싼 캐노피가 임자다.
+            # 똑같이 감쌌으면(둘 다 통째로 품었으면) 중심이 가까운 쪽으로 가른다.
+            groups[max(inside, key=lambda i: (_covered_by(lf, canopies[i]),
+                                              -math.dist(_center(canopies[i]), (lx, ly))))].append(lf)
         else:
             strays.append(lf)
             stray_feats.append(ft)

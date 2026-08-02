@@ -135,6 +135,36 @@ def test_a_leaf_deep_inside_the_overlap_of_two_canopies_lands_in_exactly_one():
     assert sorted(counted) == [0, 1], counted
 
 
+def test_the_canopy_that_wraps_the_leaf_wins_over_the_closer_one():
+    """겹친 구간에서는 잎을 더 온전히 감싼 캐노피가 임자다.
+
+    중심 거리만 보면, 잎을 절반밖에 안 덮는 작은 캐노피가 '중심이 가깝다' 는
+    이유로 이긴다. 캐노피가 포기 전체를 못 감싸고 일부만 잡혔을 때 실제로 난다.
+    """
+    leaf = box(500, 500, 200, 200)                       # 400~600
+    big = box(900, 550, 1000, 300, cls="canopy")         # 400~1400 × 400~700, 잎을 통째로 품음
+    small = box(550, 550, 200, 200, cls="canopy")        # 450~650, 잎의 절반만 덮음
+    groups = group_leaves([big, small, leaf])
+
+    owner = next(g for g in groups if n_leaves(g) == 1)
+    canopy = next(b for b in owner if b["cls"] == "canopy")
+    assert canopy is big, "잎을 절반만 덮는 캐노피가 이겼다"
+
+    import main
+    assert main._covered_by(leaf, big) == 1.0
+    assert main._covered_by(leaf, small) < 0.6
+
+
+def test_equally_wrapping_canopies_fall_back_to_the_nearer_centre():
+    """둘 다 잎을 통째로 품었으면 더 이상 덮임으로는 못 가른다 — 중심 거리로."""
+    leaf = box(500, 500, 40, 40)
+    near = box(520, 500, 300, 300, cls="canopy")
+    far = box(650, 500, 700, 300, cls="canopy")
+    groups = group_leaves([near, far, leaf])
+    owner = next(g for g in groups if n_leaves(g) == 1)
+    assert next(b for b in owner if b["cls"] == "canopy") is near
+
+
 def test_grouped_by_reports_canopy_distinctly_from_pot():
     import main
     assert main._grouped_by([box(0, 0, 10, 10, cls="canopy")], {}) == "canopy"
