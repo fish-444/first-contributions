@@ -554,6 +554,13 @@ CANOPY_MARGIN = float(os.environ.get("CANOPY_MARGIN", "0.5"))
 # 박스 하나뿐이라 오탐일 확률이 높다. 그래서 문턱을 따로 높게 잡는다.
 CANOPY_EMPTY_CONF = float(os.environ.get("CANOPY_EMPTY_CONF", "0.6"))
 
+# 빈 캐노피를 인정하려면 잎이 최소한 이만큼은 걸쳐 있어야 한다.
+# 빈 캐노피를 남겨 두는 명분은 "큰 잎에 가려 잎을 못 잡았을 뿐 포기는 있다"였다.
+# 그 말이 성립하려면 가리는 잎이 실제로 그 자리에 걸쳐 있어야 한다. 잎 박스가
+# 스치지도 않는 빈 캐노피는 가려진 포기가 아니라 허공에 그려진 상자다.
+# 실제 사진에서 이 둘이 깨끗하게 갈린다(bench_real.py 참고).
+CANOPY_TOUCH = float(os.environ.get("CANOPY_TOUCH", "0.05"))
+
 
 def _dist_to_box(box: dict, x: float, y: float) -> float:
     """점에서 박스까지의 거리. 안에 있으면 0."""
@@ -635,10 +642,11 @@ def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
          캐노피 박스가 잎 끝을 아슬아슬하게 자르는 일이 잦아서 필요하다
       3. 어느 캐노피와도 먼 잎 → 자기들끼리 거리+생김새로 묶어 별도 포기로
 
-    잎이 하나도 안 든 캐노피도 화분으로 남긴다. 큰 잎에 가려 잎을 못 잡았을 뿐
-    포기는 거기 있기 때문이다 — 지정해 둔 화분을 '미검출'로 남기는 것과 같은 이유다
-    (_ensure_pot_slots). 이때 무리에는 캐노피 박스만 들어가는데, 잎 계수·크기 판정은
-    전부 NON_LEAF 를 걸러 내므로 잎 0장으로 잡힌다.
+    잎이 하나도 안 든 캐노피도, **잎이 걸쳐 있기만 하면** 화분으로 남긴다. 큰 잎에
+    가려 잎을 못 잡았을 뿐 포기는 거기 있기 때문이다 — 지정해 둔 화분을 '미검출'로
+    남기는 것과 같은 이유다(_ensure_pot_slots). 반대로 잎 박스가 스치지도 않는
+    빈 캐노피는 가려진 포기가 아니라 오탐이라 버린다. 이때 무리에는 캐노피 박스만
+    들어가는데, 잎 계수·크기 판정은 전부 NON_LEAF 를 걸러 내므로 잎 0장으로 잡힌다.
     """
     groups: List[List[dict]] = [[] for _ in canopies]
     nested = _nested_pairs(canopies)
@@ -671,8 +679,9 @@ def group_by_canopies_indexed(leaves: List[dict], canopies: List[dict],
     for i, g in enumerate(groups):
         if g:
             out.append(g + [canopies[i]])
-        elif (canopies[i].get("conf") or 0) >= CANOPY_EMPTY_CONF:
-            out.append([canopies[i]])          # 잎은 못 잡았지만 포기는 있다
+        elif ((canopies[i].get("conf") or 0) >= CANOPY_EMPTY_CONF
+                and any(_covered_by(lf, canopies[i]) > CANOPY_TOUCH for lf in leaves)):
+            out.append([canopies[i]])          # 잎에 가려졌을 뿐 포기는 있다
     if far:
         out.extend(group_by_distance_and_shape(far, far_feats))
     return out

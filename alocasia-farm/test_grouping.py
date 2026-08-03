@@ -213,25 +213,40 @@ def test_leaf_just_outside_its_own_canopy_still_joins_it():
     assert len(groups) == 1 and n_leaves(groups[0]) == 2, leaf_sizes(groups)
 
 
-def test_canopy_with_no_detected_leaf_is_still_a_pot():
-    """큰 잎에 가려 잎을 못 잡아도 포기는 거기 있다 — 화분이 사라지면 안 된다."""
+def test_canopy_hidden_under_a_big_leaf_is_still_a_pot():
+    """이웃의 큰 잎에 가려 제 잎을 못 잡아도 포기는 거기 있다 — 화분이 사라지면 안 된다."""
     boxes = [box(200, 200, 200, 200, cls="canopy"),
-             box(900, 200, 200, 200, cls="canopy"),      # 잎이 하나도 안 잡힘
-             box(200, 200, 40, 40)]
+             box(200, 200, 40, 40),
+             box(900, 200, 200, 200, cls="canopy"),      # 제 잎은 하나도 안 잡힘
+             box(250, 200, 1300, 60)]                    # 왼쪽 포기에서 뻗어 그 위를 덮은 큰 잎
     groups = group_leaves(boxes)
-    assert len(groups) == 2, [len(g) for g in groups]
-    empty = next(g for g in groups if all(b["cls"] == "canopy" for b in g))
+    assert len(groups) == 2, [n_leaves(g) for g in groups]
+    empty = next(g for g in groups if n_leaves(g) == 0)
     m = analyze_metrics(empty, 10000)
     assert m["leaf_count"] == 0 and m["size_class"] == "미검출", m
+
+
+def test_an_empty_canopy_in_bare_space_is_dropped():
+    """빈 캐노피를 남기는 명분은 '가려졌다' 인데, 잎이 스치지도 않으면 가릴 것이 없다.
+
+    실제 온실 사진에서 화분을 하나 더 세게 만든 오탐이 정확히 이 모양이었다 —
+    허공에 뜬 작은 캐노피 상자 하나(bench_real.py 의 b2X4).
+    """
+    boxes = [box(200, 200, 200, 200, cls="canopy"),
+             box(200, 200, 40, 40),
+             box(900, 200, 200, 200, cls="canopy")]      # 잎이 근처에도 없다
+    groups = group_leaves(boxes)
+    assert len(groups) == 1, [n_leaves(g) for g in groups]
 
 
 def test_a_faint_empty_canopy_is_not_promoted_to_a_pot():
     """빈 캐노피는 증거가 박스 하나뿐이라 오탐이기 쉽다 — 확신도가 낮으면 버린다."""
     boxes = [box(200, 200, 200, 200, cls="canopy"),
-             box(200, 200, 40, 40)]
-    faint = box(900, 200, 200, 200, cls="canopy"); faint["conf"] = 0.3
+             box(200, 200, 40, 40),
+             box(250, 200, 1300, 60)]                    # 가리는 잎은 있지만
+    faint = box(900, 200, 200, 200, cls="canopy"); faint["conf"] = 0.3   # 확신도가 낮다
     groups = group_leaves(boxes + [faint])
-    assert len(groups) == 1, [len(g) for g in groups]
+    assert len(groups) == 1, [n_leaves(g) for g in groups]
 
 
 # ── 개별 사진: 가운데 포기만 ──────────────────────────────────────────────
