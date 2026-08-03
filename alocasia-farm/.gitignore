@@ -14,3 +14,7 @@ farm_env*.sh
 !farm_env.example.bat
 !farm_env.example.sh
 farm_env*.bak
+
+# capture_boxes.py 가 만드는 정확도 측정 자료.
+# 사진마다 크기가 크고 사람마다 다른 사진을 쓰므로 각자 로컬에만 둔다.
+bench_data/

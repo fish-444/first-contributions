@@ -12,6 +12,8 @@ test_*.py 는 "규칙대로 도는가"를 본다. 이 파일은 다른 걸 본�
 재는 데는 같은 입력을 계속 쓰는 편이 오히려 정확하다.
 """
 
+import glob
+import json
 import os
 import sys
 
@@ -62,10 +64,27 @@ IMAGES = [
 
 CONF = float(os.environ.get("BENCH_CONF", "0.4"))       # 앱 기본 문턱과 맞춘다
 
+BENCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bench_data")
+
 
 def to_box(x, y, w, h, conf, cls):
     return {"cls": cls, "conf": conf, "x1": x - w / 2, "y1": y - h / 2,
             "x2": x + w / 2, "y2": y + h / 2, "area": float(w * h)}
+
+
+def cases():
+    """(이름, 정답화분, 정답잎, 박스목록) 을 차례로 낸다.
+
+    위에 박아 둔 v8 자료 + bench_data/*.json (capture_boxes.py 가 만든 것).
+    지금 배포된 모델로 잰 자료를 넣으면 나란히 비교된다.
+    """
+    for name, gp, gl, raw in IMAGES:
+        yield name, gp, gl, [to_box(*r) for r in raw if r[4] >= CONF], "v8"
+    for path in sorted(glob.glob(os.path.join(BENCH_DIR, "*.json"))):
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        boxes = [dict(b) for b in d["boxes"] if b["conf"] >= CONF]
+        yield d["name"], d["gt_pots"], d["gt_leaves"], boxes, d.get("detector", "?")[:10]
 
 
 def n_leaves(group):
@@ -74,26 +93,32 @@ def n_leaves(group):
 
 def run():
     rows, pot_err, leaf_err = [], 0, 0
-    for name, gt_pots, gt_leaves, raw in IMAGES:
-        boxes = [to_box(*r) for r in raw if r[4] >= CONF]
+    for name, gt_pots, gt_leaves, boxes, src in cases():
         groups, _ = group_plants(boxes)
         pots = len(groups)
         leaves = sum(n_leaves(g) for g in groups)
         dp, dl = pots - gt_pots, leaves - gt_leaves
-        pot_err += abs(dp)
-        leaf_err += abs(dl)
-        rows.append((name, gt_pots, pots, dp, gt_leaves, leaves, dl,
+        if src == "v8":                       # 기준선은 박아 둔 자료로만 잰다
+            pot_err += abs(dp)
+            leaf_err += abs(dl)
+        rows.append((name, src, gt_pots, pots, dp, gt_leaves, leaves, dl,
                      sorted((n_leaves(g) for g in groups), reverse=True)))
 
     print(f"\n실제 사진 정확도 (confidence >= {CONF})")
-    print("=" * 74)
-    print(f"{'사진':6} {'화분 GT':>7} {'측정':>5} {'차':>4}   "
+    print("=" * 88)
+    print(f"{'사진':14} {'모델':10} {'화분 GT':>7} {'측정':>5} {'차':>4}   "
           f"{'잎 GT':>6} {'측정':>5} {'차':>4}   포기별 잎")
-    print("-" * 74)
-    for name, gp, p, dp, gl, l, dl, dist in rows:
-        print(f"{name:6} {gp:7d} {p:5d} {dp:+4d}   {gl:6d} {l:5d} {dl:+4d}   {dist}")
-    print("-" * 74)
-    print(f"{'합계 오차':12} 화분 {pot_err}개    잎 {leaf_err}장")
+    print("-" * 88)
+    for name, src, gp, p, dp, gl, l, dl, dist in rows:
+        print(f"{name:14} {src:10} {gp:7d} {p:5d} {dp:+4d}   "
+              f"{gl:6d} {l:5d} {dl:+4d}   {dist}")
+    print("-" * 88)
+    print(f"{'기준선 오차':12} 화분 {pot_err}개    잎 {leaf_err}장   (v8 자료 기준)")
+    if not os.path.isdir(BENCH_DIR) or not os.listdir(BENCH_DIR):
+        print()
+        print("  ※ 위 자료는 v8 로 받은 것입니다. 지금 배포된 모델로 재려면:")
+        print("       python capture_boxes.py 사진.jpg --화분 10 --잎 27")
+        print("     bench_data/ 에 저장되고 다음 실행부터 함께 나옵니다.")
     print()
     return pot_err, leaf_err
 
@@ -104,6 +129,8 @@ if __name__ == "__main__":
     #   화분 0 — 그룹화가 화분 수를 정확히 맞춘다.
     #   잎  3 — b2X4 에서 모델이 잎 3장을 아예 못 냈다. 여기서 더 줄이려면
     #           규칙이 아니라 모델(학습 데이터)을 손대야 한다.
+    # bench_data/ 로 넣은 사진은 기준에 안 넣는다 — 모델이 바뀌면 절대 수치도
+    # 바뀌므로, 규칙이 나빠졌는지는 같은 입력(v8)으로만 판정해야 한다.
     budget_p = int(os.environ.get("BENCH_MAX_POT_ERR", "0"))
     budget_l = int(os.environ.get("BENCH_MAX_LEAF_ERR", "3"))
     if pe > budget_p or le > budget_l:
