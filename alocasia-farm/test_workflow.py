@@ -149,8 +149,8 @@ def test_surrounding_whitespace_is_stripped():
 
 def test_publishable_key_is_flagged():
     """rf_ 로 시작하는 공개키는 워크플로에서 막힌다 — 미리 알려 준다."""
-    key, warns = clean_api_key("rf_xA9jIKod5mTyiC9YpmCc5LMu8fE2")
-    assert key == "rf_xA9jIKod5mTyiC9YpmCc5LMu8fE2"
+    key, warns = clean_api_key("rf_workspaceid_example000000000")
+    assert key == "rf_workspaceid_example000000000"
     assert any("공개" in w for w in warns), warns
 
 
