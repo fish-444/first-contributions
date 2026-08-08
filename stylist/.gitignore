@@ -1,0 +1,5 @@
+# 네이버 오픈API 키. 절대 커밋하지 않는다.
+.naver_keys.json
+
+__pycache__/
+*.pyc
