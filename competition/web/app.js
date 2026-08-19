@@ -301,6 +301,82 @@ async function makeSchedule() {
   }
 }
 
+/* ── 성적 진단 · 처방 ──────────────────────────── */
+// 등급을 문장에 박는다. 회수량 큰 순으로만 세우면 횡단면 비교가 농장 내
+// 변화처럼 읽힌다 — 이 프로젝트가 실측/계산/가정을 구분해 온 것의 처방 버전.
+const GRADE_CLS = { A: "good", B: "", C: "mute" };
+
+async function runDiagnosis() {
+  const hint = $("#h-diag");
+  const perf = {
+    weaned: num("#d-wl"), npd: num("#d-npd"),
+    farrowing_rate: num("#d-fr"), wean_to_estrus: num("#d-we")
+  };
+  const sows = num("#d-sows") ?? 300;
+  hint.className = "hint"; hint.textContent = "진단 중…";
+  try {
+    const d = await api(`/api/diagnosis?sows=${Math.round(sows)}`, {
+      method: "POST", body: JSON.stringify(perf)
+    });
+    const g = d.diagnosis, p = d.priority;
+
+    $("#diag-head").innerHTML = `<div class="kpis">
+      <div class="kpi"><span class="v">${g.psy}</span><span class="k">내 PSY</span>
+        <span class="d">항등식으로 낸 값</span></div>
+      <div class="kpi"><span class="v">${g.psy_median_farm}</span><span class="k">중앙 농장</span>
+        <span class="d">지표별 중앙값을 항등식에 넣은 합성값</span></div>
+      <div class="kpi"><span class="v">${g.psy_gap > 0 ? "+" : ""}${g.psy_gap.toFixed(2)}두</span>
+        <span class="k">격차</span>
+        <span class="d">PSY 열 자체의 중앙은 ${g.psy_median_observed}</span></div></div>`;
+
+    $("#diag-rows").innerHTML = `<div class="tblwrap" style="margin-top:14px"><table>
+      <thead><tr><th>지표</th><th>내 값</th><th>중앙</th><th>거리</th>
+        <th>되돌리면</th></tr></thead><tbody>
+      ${g.rows.map(r => `<tr>
+        <td>${r.name_ko}</td><td class="d">${r.value}</td><td class="d">${r.median}</td>
+        <td class="d">IQR ${r.iqr_z > 0 ? "+" : ""}${r.iqr_z.toFixed(2)}
+          <span class="pill ${r.band.includes("좋") ? "good"
+            : (r.band.includes("나쁨") ? "stop" : "mute")}">${r.band}</span></td>
+        <td class="d">${r.psy_recover != null
+          ? (r.psy_recover > 0 ? "+" : "") + r.psy_recover.toFixed(2) + "두"
+          : "간접 지표"}</td></tr>`).join("")}
+      </tbody></table></div>
+      <p class="note" style="margin-top:10px"><b>순위가 아니라 거리입니다.</b>
+        IQR 단위로 중앙값에서 얼마나 떨어졌는지를 봅니다. 기준은
+        국내 202농장 × 4년 = 466행 실측입니다.</p>`;
+
+    // 처방 순서
+    $("#prio-panel").style.display = "";
+    $("#prio").innerHTML = p.rows.map((r, i) => `
+      <div class="lever${i === 0 ? " top" : ""}">
+        <span class="nm">${r.name}
+          <span class="pill ${GRADE_CLS[r.grade] ?? ""}">${r.grade} · ${r.axis}</span></span>
+        <span class="gain">${r.psy != null
+          ? (r.psy > 0 ? "+" : "") + r.psy.toFixed(2) + "두" : "—"}</span>
+        <span class="from">${r.target}</span>
+        <span class="won">${r.won_year != null ? man(r.won_year) + "/년" : "—"}</span>
+        ${r.note ? `<span class="how">${r.note}</span>` : ""}
+      </div>`).join("");
+
+    $("#prio-note").innerHTML =
+      `<b>[축이 둘이다]</b> ${Object.entries(p.axes)
+        .map(([k, v]) => `<br>· <b>${k}</b> — ${v}`).join("")}
+       <br><br><b>[근거 등급]</b> ${Object.entries(p.grades)
+        .map(([k, v]) => `<br>· <b>${k}</b> ${v[0]} — ${v[1]}`).join("")}`;
+    $("#prio-foot").innerHTML =
+      `<b>[합치지 않는다]</b> 개별 회수량 합 ${p.sum_of_parts}두 vs
+       총 격차 ${Math.abs(p.psy_gap).toFixed(2)}두. ${p.sum_note}
+       <br><br><b>${p.footer.replace(/\n/g, "<br>")}</b>`;
+
+    hint.className = "hint ok";
+    hint.textContent = `${d.given.length}개 지표로 진단 (비운 칸은 제외)`;
+  } catch (e) {
+    hint.className = "hint bad"; hint.textContent = e.message;
+    $("#diag-head").innerHTML = ""; $("#diag-rows").innerHTML = "";
+    $("#prio-panel").style.display = "none";
+  }
+}
+
 /* ── 농장 목록 ─────────────────────────────────── */
 async function loadFarms() {
   const box = $("#farmlist");
@@ -353,6 +429,13 @@ document.addEventListener("click", async e => {
     document.querySelectorAll(".tabpane").forEach(p =>
       p.classList.toggle("hidden", p.id !== "tab-" + t.dataset.tab));
     if (t.dataset.tab === "farms") loadFarms();
+    if (t.dataset.tab === "diagnosis") {
+      // 돈사 탭에 넣은 성적을 끌어온다 — 같은 농장인데 두 번 넣게 하지 않는다
+      const wl = num("#p-wl"), fr = num("#p-fr");
+      if (wl !== null) $("#d-wl").value = wl;
+      if (fr !== null) $("#d-fr").value = fr;
+      if (lastCap && lastCap.capacity.n_sows) $("#d-sows").value = lastCap.capacity.n_sows;
+    }
     return;
   }
   if (t.dataset.load) {
@@ -372,6 +455,7 @@ $("#b-preset").onclick = async () => { barns = await preset(300); drawBarns(); r
 $("#b-clear").onclick = () => { barns = {}; drawBarns(); refresh(); };
 $("#b-watch").onclick = runWatch;
 $("#b-sched").onclick = makeSchedule;
+$("#b-diag").onclick = runDiagnosis;
 $("#b-save").onclick = async () => {
   const hint = $("#h-save"), name = $("#f-name").value.trim();
   if (!name) { hint.className = "hint bad"; hint.textContent = "농장 이름을 넣으세요"; return; }

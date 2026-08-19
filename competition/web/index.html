@@ -18,6 +18,7 @@
     <nav class="tabs">
       <button class="tab on" data-tab="capacity">돈사 · 용량</button>
       <button class="tab" data-tab="breeding">번식 일정</button>
+      <button class="tab" data-tab="diagnosis">성적 · 처방</button>
       <button class="tab" data-tab="farms">등록 농장</button>
     </nav>
   </div>
@@ -164,6 +165,46 @@
         시점을 고정한 채 주기만 늘리면 CCTV가 부당하게 유리해집니다.</p></div>
     <div class="pbody">
       <div id="timing"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 성적 · 처방 ─────────────────────────────── -->
+<section id="tab-diagnosis" class="tabpane hidden">
+  <div class="panel">
+    <div class="ptop"><span class="step">466농장 실측 대비</span>
+      <h2>내 성적은 어디쯤이고, 무엇부터 고칠 것인가</h2>
+      <p>순위가 아니라 <b>거리</b>를 냅니다 — 중앙값에서 얼마나 떨어졌고,
+        되돌리면 PSY 가 얼마나 회수되는지. 기준은 국내 202농장 × 4년 = 466행입니다.</p></div>
+    <div class="pbody">
+      <div class="grid">
+        <label><span class="lb">복당 이유두수 <i>두</i></span>
+          <input id="d-wl" type="number" inputmode="decimal" step="0.1" min="5" max="18" value="10"></label>
+        <label><span class="lb">연간 비생산일수 <i>일</i></span>
+          <input id="d-npd" type="number" inputmode="decimal" step="0.1" min="0" max="200" value="62"></label>
+        <label><span class="lb">분만율 <i>%</i></span>
+          <input id="d-fr" type="number" inputmode="decimal" step="0.1" min="40" max="100" value="74"></label>
+        <label><span class="lb">재귀발정일 <i>일 · 모르면 비움</i></span>
+          <input id="d-we" type="number" inputmode="decimal" step="0.1" min="3" max="30"></label>
+        <label><span class="lb">상시 모돈수 <i>두</i></span>
+          <input id="d-sows" type="number" inputmode="numeric" min="1" max="20000" value="300"></label>
+      </div>
+      <div class="btns"><button class="act pri" id="b-diag">진단</button>
+        <span class="hint" id="h-diag">비운 칸은 중앙값으로 채우지 않고 진단에서 뺍니다</span></div>
+      <div id="diag-head"></div>
+      <div id="diag-rows"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="prio-panel" style="display:none">
+    <div class="ptop"><span class="step">처방 순서</span>
+      <h2>회수 · 방어 · 계절 — 축이 셋입니다</h2>
+      <p>회수량이 큰 순으로만 세우면 <b>횡단면 비교가 농장 내 변화처럼 읽힙니다.</b>
+        그래서 근거 등급을 표에 박습니다.</p></div>
+    <div class="pbody">
+      <div class="levers" id="prio"></div>
+      <div class="note" id="prio-note"></div>
+      <div class="note" id="prio-foot"></div>
     </div>
   </div>
 </section>

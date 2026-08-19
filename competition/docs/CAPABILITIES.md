@@ -7,7 +7,7 @@
 > 정본은 `STATUS.md` 다. 여기 수치는 전부 거기서 오고 `tools/check_docs.py`
 > 가 대조한다 — 손으로 고치면 테스트가 깨진다.
 
-**규모**: 도메인·모델 모듈 68개 · 대시보드 뷰 22개 · 테스트 78개 · 외부 연결 0
+**규모**: 도메인·모델 모듈 68개 · 대시보드 뷰 22개 · 테스트 79개 · 외부 연결 0
 
 ## 등급 — 문장마다 붙인다
 
@@ -231,6 +231,8 @@ data/     SQLite (farms.db · 미커밋)
 | `POST /api/capacity/watch` | 400일 배치 전이 감시 (7검사) |
 | `GET /api/capacity/sweep` | house 별 방 수 한계 |
 | `POST /api/breeding/schedule` | 이유일 하나 → 전 일정 + 주기 요약 |
+| `POST /api/diagnosis` | 성적 → 466농장 대비 격차 · 처방 순서(등급 A/B/C) |
+| `GET /api/diagnosis/farm/{id}` | 등록한 농장의 진단 |
 | `GET /api/breeding/checkpoints` | 교배일 → 임신진단 3단계 |
 | `GET /api/breeding/detection` | 점검 주기별 수태율 (각 주기의 최적 프로토콜) |
 | `GET /api/breeding/today` | 오늘 작업 큐 |
@@ -250,6 +252,14 @@ data/     SQLite (farms.db · 미커밋)
 되풀이한 것이다. `detection_value()` 로 바꿔 각 주기의 최적 프로토콜을 다시
 찾게 했다.
 
+**성능은 재 보고 고쳤다.** 400일 이산사건 시뮬레이션이 26ms 인데 날짜 계산만
+하는 일정 생성이 **540ms** 였다 — 20배 느렸다. 프로파일을 떠 보니
+`optimal_ai_times` 가 격자를 매번 다시 훑으며 `ai_efficacy` 를 5,486번 부르고
+그 안에서 `max` 가 260만 번 돌고 있었다. `(parity, wei_days)` 만으로 정해지는
+상수라 `lru_cache` 를 걸었다 — **540ms → 0.14ms**, 배치 20개는 10.8초 → 1.2ms.
+캐시는 성능 장치지 계산 장치가 아니므로, 캐시 있을 때와 없을 때가 같은 값인지를
+`test_timing_cache_is_transparent` 가 확인한다.
+
 ## H. 바로 돌려 보기
 
 ```bash
@@ -268,7 +278,7 @@ python competition/src/farm_gap.py --sows 300
 python competition/src/psy_priority.py --sows 300
 
 # 재현성
-python competition/tests/smoke_test.py     # 78/78 통과
+python competition/tests/smoke_test.py     # 79/79 통과
 python competition/tools/check_docs.py     # 문서 수치 대조
 
 # 백엔드 + 프론트 (선택 — 정적 뷰는 서버 없이도 돈다)

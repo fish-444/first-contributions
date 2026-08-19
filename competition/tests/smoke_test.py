@@ -3343,6 +3343,64 @@ def test_run_farm_from_setup() -> None:
     assert base["system"] == "WEEKLY" and "capacity" not in base
 
 
+def test_timing_cache_is_transparent() -> None:
+    """교배 적기 캐시가 **답을 바꾸지 않는가**.
+
+    일정 하나 만드는 데 540ms 가 걸렸다 — 400일 이산사건 시뮬레이션(26ms)
+    보다 20배 느렸다. 원인은 `optimal_ai_times` 가 격자를 매번 다시 훑으며
+    `ai_efficacy` 를 5,486번 부르는 것이었다. (parity, wei_days) 만으로
+    정해지는 상수라 `lru_cache` 를 걸었다.
+
+    캐시는 성능 장치지 계산 장치가 아니다. **캐시 있을 때와 없을 때가 같은
+    값**이어야 하고, 돌려준 dict 를 누가 고쳐 쓰면 캐시가 오염되므로 그것도
+    본다.
+    """
+    import breeding_timing as bt
+    import repro_calendar as rc
+
+    assert hasattr(bt.optimal_ai_times, "cache_clear"), "캐시가 안 걸려 있다"
+    assert hasattr(bt.insemination_window, "cache_clear")
+
+    # 1) 캐시를 비우고 잰 값 == 캐시된 값
+    for parity in ("sow", "primiparous"):
+        for wei in (4.0, 5.0, 7.0, 10.0):
+            bt.optimal_ai_times.cache_clear()
+            bt.insemination_window.cache_clear()
+            cold_w = dict(bt.insemination_window(parity, wei))
+            cold_t = bt.optimal_ai_times(parity, wei)
+            warm_w = bt.insemination_window(parity, wei)
+            warm_t = bt.optimal_ai_times(parity, wei)
+            assert cold_w == warm_w, (parity, wei, cold_w, warm_w)
+            assert cold_t == warm_t, (parity, wei)
+
+    # 2) 캐시된 dict 를 아무도 고쳐 쓰지 않는가 — 고치면 다음 호출이 오염된다
+    bt.insemination_window.cache_clear()
+    before = dict(bt.insemination_window("sow", 7.0))
+    rc.schedule_from_weaning("2026-08-19")
+    bt.detection_value(24.0)
+    after = bt.insemination_window("sow", 7.0)
+    assert before == after, (before, after)
+
+    # 3) 실제로 빨라졌는가 — 두 번째 호출이 첫 번째보다 훨씬 싸야 한다.
+    #    (절대 시간은 기계마다 다르므로 비율로만 본다)
+    import time
+    bt.optimal_ai_times.cache_clear()
+    bt.insemination_window.cache_clear()
+    t0 = time.perf_counter(); rc.schedule_from_weaning("2026-08-19")
+    cold = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    for i in range(10):
+        rc.schedule_from_weaning(f"2026-09-{i + 1:02d}")
+    warm = (time.perf_counter() - t0) / 10
+    assert warm < cold / 10, f"캐시가 안 듣는다 (cold {cold:.3f}s, warm {warm:.4f}s)"
+
+    # 4) 문서에 실린 수치가 그대로여야 한다 — 캐시가 값을 바꿨다면 여기서 깨진다
+    w = bt.insemination_window()
+    assert (w["ai1_h"], w["ai2_h"]) == (24.0, 32.0), w
+    for hrs, want in ((1.0, 0.893), (12.0, 0.862), (24.0, 0.805)):
+        assert bt.detection_value(hrs)["conception"] == want, hrs
+
+
 def test_server_api() -> None:
     """백엔드가 **도메인 모듈과 같은 답**을 하는가.
 
@@ -3452,7 +3510,32 @@ def test_server_api() -> None:
     assert c.post("/api/breeding/schedule",
                   json={"weaning_date": "안녕"}).status_code == 422
 
-    # 8) 농장 CRUD 가 왕복하는가
+    # 8) 진단·처방 — `farm_gap`·`psy_priority` 와 같은 값이어야 한다
+    import farm_gap as fg
+    import psy_priority as pp
+    perf = {"weaned": 10.0, "npd": 62.0, "farrowing_rate": 74.0}
+    dg = c.post("/api/diagnosis?sows=300", json=perf).json()
+    want_g = fg.diagnose(dict(perf), n_sows=300)
+    assert dg["diagnosis"]["psy"] == want_g["psy"]
+    assert dg["diagnosis"]["psy_gap"] == want_g["psy_gap"]
+    assert [r["metric"] for r in dg["diagnosis"]["rows"]] == \
+           [r["metric"] for r in want_g["rows"]]
+    want_p = pp.build(dict(perf), 300, None)
+    assert [r["name"] for r in dg["priority"]["rows"]] == \
+           [r["name"] for r in want_p["rows"]]
+    # **개입 효과를 주장하지 않는다** — 각주가 응답에 늘 붙어 있어야 한다
+    assert "개입 효과의 추정이 아니다" in dg["priority"]["footer"]
+    assert "실농장 개입 실험은 수행하지 않았다" in dg["priority"]["footer"]
+    # **합산 금지** — 개별 합과 총 격차를 나란히 두고 합을 주장하지 않는다
+    assert "합산해" in dg["priority"]["sum_note"]
+    assert dg["priority"]["sum_of_parts"] != abs(dg["priority"]["psy_gap"])
+    # 근거 등급이 행마다 붙는가 — 회수량 순으로만 세우면 횡단면 비교가
+    # 농장 내 변화처럼 읽힌다
+    assert all(r["grade"] in ("A", "B", "C") for r in dg["priority"]["rows"])
+    # **비운 성적을 중앙값으로 채우지 않는다** — 채우면 격차가 늘 0 이 된다
+    assert c.post("/api/diagnosis", json={}).status_code == 422
+
+    # 9) 농장 CRUD 가 왕복하는가
     f = c.post("/api/farms", json={"name": "T", "setup": setup})
     assert f.status_code == 201, f.text
     fid = f.json()["id"]
@@ -4246,7 +4329,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

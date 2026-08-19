@@ -21,6 +21,8 @@
 """
 from __future__ import annotations
 
+from functools import lru_cache
+
 import sys
 
 # 번식 주기 상수(일)
@@ -60,6 +62,7 @@ def ovulation_time(parity: str = "sow", wei_days: float = NORMAL_WEI) -> float:
     return estrus_duration(parity, wei_days) * OVULATION_FRAC
 
 
+@lru_cache(maxsize=256)
 def insemination_window(parity: str = "sow", wei_days: float = NORMAL_WEI,
                         frac: float = 0.5) -> dict:
     """발정 시작 기준 최적 수정 창(h)과 권장 2회 수정 시각.
@@ -119,6 +122,14 @@ def check_against_field_guide(parity: str = "sow",
             "no_early_ai": all(t >= FIELD_NO_AI_BEFORE_H for t in times)}
 
 
+# **격자 탐색을 매번 다시 하지 않는다.** 이 값은 (parity, wei_days) 만으로
+# 정해지는 상수인데, 일정을 하나 만들 때마다 `ai_efficacy` 를 5,486번 부르고
+# 그 안에서 `max` 가 260만 번 돌아 540ms 가 걸렸다 — 400일 이산사건
+# 시뮬레이션(26ms)보다 20배 느렸다. 순수 함수라 캐시가 답을 바꾸지 않는다.
+#
+# 돌려주는 값을 **고쳐 쓰면 안 된다**(캐시가 오염된다). 지금은 전부 읽기만
+# 하고, 그걸 테스트가 확인한다.
+@lru_cache(maxsize=256)
 def optimal_ai_times(parity: str = "sow", wei_days: float = NORMAL_WEI,
                      n_ai: int = 2, min_gap_h: float = 8.0) -> list:
     """수태율을 **최대화하는** 수정 시각을 탐색해 반환(h, 발정 시작 기준).
