@@ -29,7 +29,9 @@ DOCS = [os.path.join(COMP, "README.md"),
         # 다른 대화로 퍼 나른 뒤에 조용히 낡는다.
         os.path.join(COMP, "docs", "STATUS.md"),
         # 기능 목록도 모듈·뷰·테스트 수와 실측 성능을 인용한다.
-        os.path.join(COMP, "docs", "CAPABILITIES.md")]
+        os.path.join(COMP, "docs", "CAPABILITIES.md"),
+        # 인계 문서는 **다른 대화로 퍼 나르라고 만든 것**이라 특히 낡기 쉽다.
+        os.path.join(COMP, "docs", "HANDOFF.md")]
 
 
 # -- 실제값 수집 -----------------------------------------------------------
