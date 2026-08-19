@@ -3343,6 +3343,125 @@ def test_run_farm_from_setup() -> None:
     assert base["system"] == "WEEKLY" and "capacity" not in base
 
 
+def test_server_api() -> None:
+    """백엔드가 **도메인 모듈과 같은 답**을 하는가.
+
+    서버는 계산을 다시 구현하지 않기로 했다. 그 약속을 지키는지 확인하는
+    유일한 방법은 API 응답과 모듈 출력을 직접 대조하는 것이다 — 서버가
+    자기 산식을 갖는 순간 CLI 와 API 가 같은 농장에 다른 답을 한다.
+
+    fastapi 가 없으면 건너뛴다. requirements 에 넣긴 했지만 정적 뷰는
+    서버 없이도 돌아야 하므로, 없다고 전체 스위트를 실패시키지 않는다.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except (ImportError, RuntimeError) as e:
+        print(f"      (fastapi/httpx 없음 — 서버 테스트 건너뜀: "
+              f"{type(e).__name__})")
+        return
+
+    import tempfile
+    # `competition.server` 는 패키지 경로로 import 한다 — 리포지터리 루트가
+    # sys.path 에 있어야 한다(테스트는 competition/src 만 넣는다).
+    repo = os.path.dirname(ROOT)
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    os.environ["YANGDON_DB"] = os.path.join(tempfile.mkdtemp(), "t.db")
+    import batch_flow as bf
+    import breeding_timing as bt
+    import repro_calendar as rc
+    from competition.server import db as sdb
+    from competition.server.app import app
+    from competition.server.routers import farms as farms_router
+
+    farms_router._con = sdb.connect(os.environ["YANGDON_DB"])
+    c = TestClient(app)
+
+    # 1) 어휘는 farm_registry 것이어야 한다 — 서버가 새 낱말을 만들면
+    #    받아 준 값을 도메인 모듈이 거절한다
+    import farm_registry as fr
+    h = c.get("/api/health").json()
+    assert h["stages"] == list(fr.BARN_STAGES), h["stages"]
+    assert h["housings"] == list(fr.HOUSING), h["housings"]
+    # 프론트가 자기 상수를 갖지 않도록 서버가 내려 준다. 갈리면 안 된다
+    k = h["constants"]
+    assert k["farrow_rate_p10"] == bf.FARROW_RATE_P10
+    assert k["sow_turnover"] == bf.SOW_TURNOVER
+    assert k["downstream_days"] == bf.DOWNSTREAM_DAYS
+
+    # 2) **기본 구성이 자기 검사를 통과해야 한다.** 프론트가 이걸 직접
+    #    계산했다가 자돈사를 3방으로 잡아, 넣자마자 "막힘" 이 떴다
+    pre = c.get("/api/capacity/preset", params={"sows": 300}).json()
+    setup = {"n_sows": 300, "interval_days": 21, "lactation_days": 24,
+             "pre_farrow_days": 7, "washout_days": 7,
+             "barns": pre["barns"],
+             "performance": {"farrowing_rate": 74, "weaned": 10,
+                             "survival": 86}}
+    r = c.post("/api/capacity", json=setup)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["capacity"]["flows"], d["capacity"]["blocked"]
+
+    # 3) API 응답 == 모듈 출력. 여기가 이 테스트의 핵심이다
+    from competition.server.routers.capacity import _extra_rooms
+    from competition.server.schemas import FarmSetup
+    fs = FarmSetup(**setup)
+    pc = bf.capacity_from_rooms(
+        [b.model_dump() for b in fs.barns], 21.0, lactation=24,
+        pre_farrow=7, washdown=7, extra_rooms=_extra_rooms(fs),
+        weaned_per_crate=10.0)
+    pt = bf.throughput(pc, farrow_rate=0.74, weaned_per_litter=10.0,
+                       grow_survival=0.86)
+    for key in ("n_sows", "binding", "crates", "flows", "weaned_ceiling"):
+        assert d["capacity"][key] == pc[key], (key, d["capacity"][key], pc[key])
+    for key in ("now_year", "ceiling_year", "gap_year", "achieved",
+                "top_weaned", "sum_of_ways"):
+        assert d["throughput"][key] == pt[key], (key, d["throughput"][key])
+    assert [w["gain"] for w in d["throughput"]["ways"]] == \
+           [w["gain"] for w in pt["ways"]]
+
+    # 4) 돈사가 없으면 **두수를 지어내지 않는다**
+    assert c.post("/api/capacity", json={**setup, "barns": []}).status_code == 422
+
+    # 5) 비운 성적은 비운 채로 — 중앙값으로 채우면 격차가 늘 0 이 된다
+    blank = c.post("/api/capacity", json={**setup, "performance": {}}).json()
+    assert blank["given"] is False
+    assert blank["throughput"]["gap_year"] == 0, blank["throughput"]
+
+    # 6) 점검 주기 비교는 **각 주기의 최적 프로토콜**로 해야 한다.
+    #    고정 오프셋으로 재면 하루 2회가 연속 관찰보다 높게 나왔다
+    det = c.get("/api/breeding/detection").json()["rows"]
+    assert [x["label"] for x in det] == ["연속 관찰 (CCTV)", "하루 2회", "하루 1회"]
+    assert det[0]["conception"] > det[1]["conception"] > det[2]["conception"], det
+    for x, hrs in zip(det, (1.0, 12.0, 24.0)):
+        assert x["conception"] == bt.detection_value(hrs)["conception"]
+
+    # 7) 번식 일정은 repro_calendar 와 같아야 한다
+    sch = c.post("/api/breeding/schedule",
+                 json={"weaning_date": "2026-08-19"}).json()
+    want = rc.schedule_from_weaning("2026-08-19")
+    assert len(sch["tasks"]) == len(want)
+    # 모듈은 date 객체를 돌려주고 JSON 은 ISO 문자열이다. 직렬화 차이라
+    # 값이 다른 게 아니므로 문자열로 맞춰 비교한다.
+    ws = {k: (v.isoformat() if hasattr(v, "isoformat") else v)
+          for k, v in rc.cycle_summary(want).items()}
+    assert sch["summary"] == ws, (sch["summary"], ws)
+    assert [t["date"] for t in sch["tasks"]] == \
+           [t["date"].isoformat() if hasattr(t["date"], "isoformat")
+            else t["date"] for t in want]
+    assert c.post("/api/breeding/schedule",
+                  json={"weaning_date": "안녕"}).status_code == 422
+
+    # 8) 농장 CRUD 가 왕복하는가
+    f = c.post("/api/farms", json={"name": "T", "setup": setup})
+    assert f.status_code == 201, f.text
+    fid = f.json()["id"]
+    got = c.get(f"/api/farms/{fid}/capacity").json()
+    assert got["capacity"]["binding"] == pc["binding"]
+    assert c.delete(f"/api/farms/{fid}").status_code == 204
+    assert c.get(f"/api/farms/{fid}").status_code == 404
+
+
 def test_farm_diagnosis_view() -> None:
     """20번째 뷰 — 실측 진단이 화면에 올라왔는가.
 
@@ -4127,7 +4246,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

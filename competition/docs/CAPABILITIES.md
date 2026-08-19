@@ -7,7 +7,7 @@
 > 정본은 `STATUS.md` 다. 여기 수치는 전부 거기서 오고 `tools/check_docs.py`
 > 가 대조한다 — 손으로 고치면 테스트가 깨진다.
 
-**규모**: 도메인·모델 모듈 68개 · 대시보드 뷰 22개 · 테스트 77개 · 외부 연결 0
+**규모**: 도메인·모델 모듈 68개 · 대시보드 뷰 22개 · 테스트 78개 · 외부 연결 0
 
 ## 등급 — 문장마다 붙인다
 
@@ -212,6 +212,44 @@ WEI 6.9→6.77 · 임신 115.0→114.49 · 포유 24.8→24.28 · 분만율 0.82
 
 ---
 
+## H′. 백엔드 · 프론트엔드 `계산`
+
+정적 뷰 22개는 그대로 두고 **그 위에 얹었다.** 심사위원이 서버를 못 띄워도
+`dashboard/*.html` 을 브라우저로 열 수 있어야 하므로, 서버는 선택이다.
+
+```
+server/   FastAPI — 도메인 모듈 68개를 HTTP 로 노출
+web/      바닐라 JS — 빌드 단계 없음
+data/     SQLite (farms.db · 미커밋)
+```
+
+| 엔드포인트 | 하는 일 |
+|---|---|
+| `GET /api/health` | 어휘·상수 — **프론트가 자기 상수를 갖지 않게** 서버가 내려 준다 |
+| `GET /api/capacity/preset` | 모돈 두수 → 기본 돈사 구성 (`design_barns`) |
+| `POST /api/capacity` | 돈사 → 받을 수 있는 두수 · 병목 · 출하 상한 · 처방 |
+| `POST /api/capacity/watch` | 400일 배치 전이 감시 (7검사) |
+| `GET /api/capacity/sweep` | house 별 방 수 한계 |
+| `POST /api/breeding/schedule` | 이유일 하나 → 전 일정 + 주기 요약 |
+| `GET /api/breeding/checkpoints` | 교배일 → 임신진단 3단계 |
+| `GET /api/breeding/detection` | 점검 주기별 수태율 (각 주기의 최적 프로토콜) |
+| `GET /api/breeding/today` | 오늘 작업 큐 |
+| `/api/farms` CRUD | 농장 등록 저장 |
+
+**서버도 프론트도 계산을 다시 구현하지 않는다.** 라우터 안에는 입력 검증·
+모듈 호출·직렬화만 있고 산술이 없다. `test_server_api` 가 API 응답과 모듈
+출력을 직접 대조한다 — 갈리면 그 자리에서 깨진다.
+
+만들면서 그 원칙이 실제로 값을 했다. 프론트가 기본 구성을 직접 계산했더니
+자돈사를 3방으로 잡았는데 서버는 4방을 요구해서, **버튼을 누르자마자
+"막힘" 이 떴다** — 화면이 시뮬레이터의 방 수 보정을 모르기 때문이었다.
+설계를 `batch_flow.design_barns()` 로 올려 검사와 같은 보정을 쓰게 했다.
+
+그리고 점검 주기 비교에서 **하루 2회가 연속 관찰보다 높게** 나온 적이 있다.
+고정 오프셋으로 잰 탓인데, 이 프로젝트가 이미 한 번 고쳤던 오류를 서버에서
+되풀이한 것이다. `detection_value()` 로 바꿔 각 주기의 최적 프로토콜을 다시
+찾게 했다.
+
 ## H. 바로 돌려 보기
 
 ```bash
@@ -230,6 +268,12 @@ python competition/src/farm_gap.py --sows 300
 python competition/src/psy_priority.py --sows 300
 
 # 재현성
-python competition/tests/smoke_test.py     # 77/77 통과
+python competition/tests/smoke_test.py     # 78/78 통과
 python competition/tools/check_docs.py     # 문서 수치 대조
+
+# 백엔드 + 프론트 (선택 — 정적 뷰는 서버 없이도 돈다)
+pip install fastapi "uvicorn[standard]"
+python -m uvicorn competition.server.app:app --reload --port 8000
+#   http://localhost:8000/       운영 콘솔
+#   http://localhost:8000/docs   API 문서
 ```

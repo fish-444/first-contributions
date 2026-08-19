@@ -40,3 +40,8 @@ outputs/video_report_*.html
 outputs/video_*.webm
 data/*.npz
 data/work_log.csv
+
+# 서버 DB — 농장 이름·성적은 식별자다. 원자료 스프레드시트를 안 올리는 것과
+# 같은 이유로 커밋하지 않는다.
+data/farms.db
+data/*.db

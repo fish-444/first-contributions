@@ -1,0 +1,399 @@
+/* 양돈 운영 콘솔 — 프론트.
+ *
+ * **계산을 하지 않는다.** 용량·상한·처방·일정은 전부 API 응답을 그리기만
+ * 한다. 화면이 자기 산식을 갖는 순간 같은 농장에 대해 두 답이 생긴다 —
+ * 이 프로젝트가 이미 겪은 사고다(등록 화면의 분만사 단위, 복당 이유두수
+ * 12 vs 11). 유일한 예외는 preset() 인데, 그것도 서버가 내려준 상수만 쓴다.
+ */
+"use strict";
+
+const $ = s => document.querySelector(s);
+const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
+const n0 = x => Number(x).toLocaleString(undefined, { maximumFractionDigits: 0 });
+const man = won => n0(won / 1e4) + "만원";
+
+let CONST = null;              // /api/health 가 내려주는 상수
+let STAGES = [];
+let barns = {};                // {용도: {rooms, per}}
+let lastCap = null;
+
+async function api(path, opts) {
+  const r = await fetch(path, {
+    headers: { "Content-Type": "application/json" }, ...opts
+  });
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail ?? msg; } catch (e) { /* 본문 없음 */ }
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+/* ── 입력 수집 ─────────────────────────────────── */
+function num(id) { const v = parseFloat($(id).value); return isFinite(v) ? v : null; }
+
+function setup() {
+  const bs = STAGES.filter(s => barns[s] && barns[s].rooms > 0 && barns[s].per > 0)
+    .map(s => ({
+      name: s, stage: s, rooms: barns[s].rooms, per: barns[s].per,
+      housing: s === "분만사" ? "crate" : (s === "교배사" ? "stall"
+        : (["자돈사", "육성사", "비육사"].includes(s) ? "pen" : "group"))
+    }));
+  return {
+    name: $("#f-name").value || null,
+    n_sows: lastCap && lastCap.capacity.n_sows ? lastCap.capacity.n_sows : null,
+    interval_days: +$("#f-iv").value,
+    lactation_days: num("#f-lact") ?? 24,
+    pre_farrow_days: num("#f-pre") ?? 7,
+    washout_days: num("#f-wash") ?? 7,
+    barns: bs,
+    performance: {
+      farrowing_rate: num("#p-fr"), weaned: num("#p-wl"), survival: num("#p-gs")
+    }
+  };
+}
+
+/* ── 기본 구성 ───────────────────────────────── */
+// **서버가 짓는다.** 여기서 계산하면 서버의 방 수 보정(extra_rooms)을 모르는
+// 채로 구성을 만들게 되고, 넣자마자 "막힘" 이 뜬다 — 실제로 그랬다.
+async function preset(sows) {
+  const q = new URLSearchParams({
+    sows, interval_days: $("#f-iv").value,
+    lactation: num("#f-lact") ?? 24, pre_farrow: num("#f-pre") ?? 7,
+    washout: num("#f-wash") ?? 7, weaned: num("#p-wl") ?? 11
+  });
+  const r = await api("/api/capacity/preset?" + q);
+  const out = {};
+  for (const b of r.barns) out[b.stage] = { rooms: b.rooms, per: b.per };
+  return out;
+}
+
+/* ── 돈사 표 ───────────────────────────────────── */
+function drawBarns() {
+  const box = $("#barns");
+  box.innerHTML = STAGES.map(st => {
+    const b = barns[st] || { rooms: 0, per: 0 };
+    const tot = b.rooms * b.per;
+    return `<div class="brow${tot ? "" : " off"}">
+      <span class="use">${st}</span>
+      <input data-st="${st}" data-k="rooms" type="number" inputmode="numeric"
+        min="0" max="99" value="${b.rooms || ""}" placeholder="0" aria-label="${st} 방 수">
+      <input data-st="${st}" data-k="per" type="number" inputmode="numeric"
+        min="0" max="9999" value="${b.per || ""}" placeholder="0" aria-label="${st} 방당 자리">
+      <span class="cap">${tot ? n0(tot) : "—"}</span></div>`;
+  }).join("");
+  const n = STAGES.filter(s => barns[s] && barns[s].rooms && barns[s].per).length;
+  $("#h-barns").textContent = n
+    ? `${n}개 용도 · 방 ${STAGES.reduce((a, s) => a + ((barns[s] || {}).rooms || 0), 0)}개`
+    : "등록된 돈사가 없습니다.";
+}
+
+/* ── 그리기 (전부 API 응답) ────────────────────── */
+const FLOW = ["교배사", "임신사", "분만사", "자돈사", "육성사", "비육사"];
+
+function drawRail(cap) {
+  const rail = $("#rail"), note = $("#railnote");
+  const rows = FLOW.map(s => cap.rows.find(r => r.stage === s)).filter(Boolean);
+  if (!rows.length) {
+    rail.innerHTML = `<p class="empty">돈사를 등록하면 나옵니다.</p>`;
+    note.textContent = ""; return;
+  }
+  const max = Math.max(...rows.map(r => r.sows || 0), 1);
+  rail.innerHTML = rows.map(r => {
+    const cls = r.why ? "blocked" : (r.stage === cap.binding ? "bind" : "");
+    const tag = r.why ? `<span class="pill stop">막힘</span>`
+      : (r.stage === cap.binding ? `<span class="pill">병목</span>` : "");
+    const w = r.why ? 100 : Math.max(3, (r.sows / max) * 100);
+    return `<div class="stage ${cls}"><div class="spine"></div>
+      <span class="nm">${r.stage}${tag}</span>
+      <div class="track"><div class="bar-fill" style="width:${w}%"></div></div>
+      <span class="val">${r.why ? "막힘" : n0(r.sows) + "두"}</span></div>`;
+  }).join("");
+
+  if (!cap.flows) {
+    note.className = "note bad";
+    note.innerHTML = `<b>두수를 말하기 전에 막힌 곳이 있습니다 — ` +
+      `${cap.blocked.map(r => `${r.stage}(${r.why})`).join(" · ")}.</b>
+      자리가 남아도 회전이 안 되면 배치가 밀립니다.
+      <b>두수를 줄여도 안 풀립니다</b> — 방을 늘리거나 간격을 넓혀야 합니다.`;
+  } else if (cap.binding) {
+    const b = rows.find(r => r.stage === cap.binding);
+    const others = rows.filter(r => r.stage !== cap.binding && r.sows > 0);
+    const slack = others.length ? Math.min(...others.map(r => r.sows)) - b.sows : 0;
+    note.className = "note";
+    note.innerHTML = `이 농장의 규모는 <b>${n0(cap.n_sows)}두</b>이고 붙잡고 있는 건
+      <b>${cap.binding}</b>입니다.` +
+      (slack > 0 ? ` 다음으로 좁은 칸이 ${n0(slack)}두 더 받으므로,
+        <b>${cap.binding}를 넓히기 전까지는 다른 돈사를 키워도 두수가 안 늘어납니다.</b>` : "");
+  } else { note.textContent = ""; }
+}
+
+function drawGauge(d) {
+  const { capacity: cap, throughput: t, margin_per_pig: m, given } = d;
+  const g = $("#gauge");
+  if (!cap.flows || !cap.crates) {
+    g.innerHTML = `<p class="empty">${cap.flows
+      ? "분만사와 뒷단 돈사를 등록하면 출하 상한이 나옵니다."
+      : "막힌 돈사를 먼저 푸세요 — 흐름이 안 돌면 상한을 말할 수 없습니다."}</p>`;
+    $("#levers").innerHTML = ""; $("#caveat").innerHTML = ""; return;
+  }
+  const pct = Math.round(t.achieved * 100);
+  g.innerHTML = `<div class="gauge">
+    <div class="gtop"><span class="gbig">${n0(t.ceiling_year)}두</span>
+      <span class="gsub">연간 출하 <b>상한</b> — 분만틀 ${t.crates} × 배치 ${t.batches_per_year}회/년</span></div>
+    <div class="meter"><div class="fill" style="width:${Math.min(100, Math.max(0, pct))}%"></div>
+      <span class="cap" style="color:${pct > 22 ? "#fff" : "var(--ink)"}">지금 ${n0(t.now_year)}두 · ${pct}%</span></div>
+    <div class="gsub">${given
+      ? `상한까지 <b>${n0(t.gap_year)}두</b> 남았습니다 — 연 <b>${man(t.gap_year * m.margin)}</b>.`
+      : `<b>성적을 안 넣어서 ‘지금’은 우리 농장 값이 아닙니다</b> — 설계 기준으로 돌린 것이라 상한과 같게 나옵니다.`}
+      ${t.weaned_room_bound ? `<br>복당 이유두수 상한이 목표 ${CONST.ceiling.weaned}두가 아니라
+        <b>${t.top_weaned.toFixed(1)}두</b>입니다 — <b>방이 먼저 막습니다.</b>` : ""}</div>
+    <div class="eqn">연간 출하 = <b>${t.crates}</b><span class="fx">분만틀</span>
+      × <b>${(t.factors.fill * 100).toFixed(0)}%</b><span class="fx">채움률</span>
+      × <b>${t.factors.weaned.toFixed(1)}</b><span class="fx">복당이유</span>
+      × <b>${(t.factors.survival * 100).toFixed(0)}%</b><span class="fx">육성률</span>
+      × <b>${t.batches_per_year}</b><span class="fx">배치/년</span>
+      = <b>${n0(t.now_year)}두</b></div></div>`;
+
+  const sorted = [...t.ways].sort((a, b) => b.gain - a.gain);
+  $("#levers").innerHTML = sorted.map((w, i) => `
+    <div class="lever${w.at_target ? " done" : (i === 0 ? " top" : "")}">
+      <span class="nm">${w.name}</span>
+      <span class="gain">${w.at_target ? "도달" : "+" + n0(w.gain) + "두"}</span>
+      <span class="from">${w.now}${w.unit} → ${w.target}${w.unit}</span>
+      <span class="won">${w.at_target ? "—" : man(w.gain * m.margin) + "/년"}</span>
+      <span class="how">${w.how}</span></div>`).join("");
+
+  $("#caveat").className = "note";
+  $("#caveat").innerHTML = `<b>세 몫을 더하지 마세요.</b> 항이 곱해지므로 개별 합
+    ${n0(t.sum_of_ways)}두 ≠ 총 격차 ${n0(t.gap_year)}두입니다.
+    각 몫은 <b>그것 하나만</b> 설계 기준까지 올렸을 때의 값입니다.<br>
+    상한을 더 올리려면 성적이 아니라 <b>돈사</b>를 늘려야 합니다 —
+    지금 붙잡고 있는 건 <b>${cap.binding}</b>입니다.
+    원/년은 <b>한계 이익 ${n0(m.margin)}원/두</b> 기준이라 사료·약품·수송만 뺐습니다.
+    <b>증축 판단에는 쓸 수 없습니다.</b>`;
+}
+
+function drawVerdict(d) {
+  const cap = d.capacity, t = d.throughput;
+  const set = (id, v, cls) => {
+    const box = document.getElementById(id).parentElement;
+    box.className = "vitem" + (cls ? " " + cls : "");
+    document.getElementById(id).textContent = v;
+  };
+  set("v-sows", cap.n_sows ? n0(cap.n_sows) + "두" : (cap.blocked.length ? "막힘" : "—"),
+    cap.flows ? "" : "bad");
+  set("v-bind", cap.binding || "—", cap.binding ? (cap.flows ? "hot" : "bad") : "");
+  set("v-top", cap.crates ? n0(t.ceiling_year) + "두" : "—");
+  const pct = cap.crates ? Math.round(t.achieved * 100) : null;
+  set("v-pct", pct === null ? "—" : pct + "%",
+    pct !== null && pct < 85 && d.given ? "hot" : "");
+}
+
+/* ── 갱신 ──────────────────────────────────────── */
+let timer = null;
+function refresh() {
+  clearTimeout(timer);
+  timer = setTimeout(async () => {
+    const s = setup();
+    if (!s.barns.length) {
+      $("#rail").innerHTML = `<p class="empty">돈사를 등록하면 나옵니다.</p>`;
+      $("#gauge").innerHTML = ""; $("#levers").innerHTML = "";
+      $("#railnote").textContent = ""; $("#caveat").textContent = "";
+      return;
+    }
+    try {
+      const d = await api("/api/capacity", { method: "POST", body: JSON.stringify(s) });
+      lastCap = d;
+      drawVerdict(d); drawRail(d.capacity); drawGauge(d);
+    } catch (e) {
+      $("#railnote").className = "note bad";
+      $("#railnote").textContent = "계산 실패: " + e.message;
+    }
+  }, 180);
+}
+
+/* ── 시뮬레이션 ────────────────────────────────── */
+async function runWatch() {
+  const btn = $("#b-watch"), out = $("#watch"), hint = $("#h-watch");
+  btn.disabled = true; hint.className = "hint"; hint.textContent = "돌리는 중…";
+  try {
+    const r = await api("/api/capacity/watch?days=400",
+      { method: "POST", body: JSON.stringify(setup()) });
+    const bad = Object.entries(r.counts).filter(([k]) => k !== "유휴");
+    const cls = r.verdict === "정상" ? "good" : (r.verdict === "흐름 실패" ? "stop" : "");
+    out.innerHTML = `<div class="kpis">
+        <div class="kpi"><span class="v">${r.verdict}</span><span class="k">판정</span>
+          <span class="d">배치 ${r.batch_system} · 방당 분만틀 ${r.crate_count}</span></div>
+        <div class="kpi"><span class="v">${n0(r.n_transitions)}</span><span class="k">전이</span>
+          <span class="d">정상상태 ${n0(r.n_steady)}회</span></div>
+        <div class="kpi"><span class="v">${(r.utilization * 100).toFixed(0)}%</span>
+          <span class="k">방 가동률</span><span class="d">돈방 ${r.n_rooms}개</span></div>
+      </div>
+      <div class="chips" style="margin-top:12px">
+        ${Object.entries(r.counts).map(([k, v]) =>
+          `<span class="pill ${k === "유휴" ? "mute" : (v ? "stop" : "good")}">${k} ${v}회</span>`).join("")}
+      </div>
+      ${r.blocked && r.blocked.length ? `<p class="note bad" style="margin-top:10px">
+        <b>돌려 보기 전에 이미 막혔다</b> — ${r.blocked.map(b => b.msg).join(" · ")}<br>
+        위 ‘위반 0건’은 지켜져서가 아니라 <b>아무것도 움직이지 않아서</b>입니다.</p>` : ""}
+      ${r.notes.length ? `<p class="note" style="margin-top:10px">
+        ${r.notes.map(n => n.barn ? `· ${n.barn}(${n.stage}) — ${n.why}` : `· ${n.why}`).join("<br>")}</p>` : ""}`;
+    hint.className = "hint " + (r.verdict === "정상" ? "ok" : "bad");
+    hint.textContent = `판정 ${r.verdict} · 위반 ${bad.reduce((a, [, v]) => a + v, 0)}건`;
+  } catch (e) {
+    hint.className = "hint bad"; hint.textContent = e.message;
+    out.innerHTML = "";
+  } finally { btn.disabled = false; }
+}
+
+/* ── 번식 ──────────────────────────────────────── */
+async function makeSchedule() {
+  const hint = $("#h-sched");
+  const d = $("#w-date").value;
+  if (!d) { hint.className = "hint bad"; hint.textContent = "이유일을 넣으세요"; return; }
+  hint.className = "hint"; hint.textContent = "생성 중…";
+  try {
+    const r = await api("/api/breeding/schedule", {
+      method: "POST",
+      body: JSON.stringify({
+        weaning_date: d, parity: $("#w-parity").value,
+        season_hot: $("#w-hot").value === "1"
+      })
+    });
+    const s = r.summary;
+    $("#summary").innerHTML = `<div class="kpis">
+      <div class="kpi"><span class="v">${s.service_date}</span><span class="k">교배 예정</span>
+        <span class="d">재귀발정 ${s.wei_days}일</span></div>
+      <div class="kpi"><span class="v">${s.farrow_date}</span><span class="k">분만 예정</span>
+        <span class="d">임신 115일</span></div>
+      <div class="kpi"><span class="v">${s.cycle_days}일</span><span class="k">번식주기</span>
+        <span class="d">회전 ${s.turnover_per_year}/년</span></div>
+      <div class="kpi"><span class="v">${s.npd_days}일</span><span class="k">비생산일수</span>
+        <span class="d">이 주기분</span></div></div>`;
+    $("#tasks").innerHTML = `<div class="tblwrap" style="margin-top:14px"><table>
+      <thead><tr><th>날짜</th><th>작업</th><th>내용</th></tr></thead><tbody>
+      ${r.tasks.map(t => `<tr class="${t.estimated ? "est" : ""}">
+        <td class="d">${t.date}</td><td>${t.task}</td><td>${t.detail}</td></tr>`).join("")}
+      </tbody></table></div>
+      <p class="note" style="margin-top:10px">회색 행은 <b>추정치</b>입니다(끝에 ~).
+        실제 발정·교배가 확인되면 그 날짜로 바뀝니다.</p>`;
+    hint.className = "hint ok"; hint.textContent = `${r.tasks.length}개 작업`;
+
+    // 교배 적기는 일정과 같이 봐야 뜻이 산다.
+    // **비교는 서버가 한다** — 각 주기마다 그 주기의 최적 프로토콜을 다시
+    // 찾아야 공정하고, 그걸 화면에서 하면 또 갈린다.
+    const det = await api("/api/breeding/detection");
+    $("#timing").innerHTML = `<div class="kpis">${det.rows.map(r => `
+      <div class="kpi"><span class="v">${r.conception.toFixed(3)}</span>
+        <span class="k">${r.label}</span>
+        <span class="d">${r.vs_continuous_pp === 0 ? "기준"
+          : r.vs_continuous_pp.toFixed(1) + "%p"} · 발견 +${r.offsets.map(h => h.toFixed(0)).join("/+")}h</span>
+      </div>`).join("")}</div>
+      <p class="note" style="margin-top:10px">
+        각 주기는 <b>그 주기에 최적화된 주입 시점</b>을 씁니다 — 시점을 고정한 채
+        주기만 늘리면 CCTV가 부당하게 유리해집니다. 남는 차이가 곧
+        <b>불확실성 자체의 비용</b>입니다.<br>
+        ‘CCTV가 좋다’가 아니라 <b>‘하루 1회는
+        ${Math.abs(det.rows[2].vs_continuous_pp).toFixed(1)}%p를 잃는다’</b>로 읽으세요.</p>`;
+  } catch (e) {
+    hint.className = "hint bad"; hint.textContent = e.message;
+  }
+}
+
+/* ── 농장 목록 ─────────────────────────────────── */
+async function loadFarms() {
+  const box = $("#farmlist");
+  try {
+    const fs = await api("/api/farms");
+    if (!fs.length) { box.innerHTML = `<p class="empty">아직 등록한 농장이 없습니다.</p>`; return; }
+    box.innerHTML = fs.map(f => `<div class="farmcard">
+      <b>${f.name}</b>
+      <span class="meta">돈사 ${(f.setup.barns || []).length}동 · ${f.updated_at.slice(0, 10)}</span>
+      <span class="sp">
+        <button class="act" data-load="${f.id}">불러오기</button>
+        <button class="act" data-del="${f.id}">삭제</button></span></div>`).join("");
+  } catch (e) { box.innerHTML = `<p class="hint bad">${e.message}</p>`; }
+}
+
+function applySetup(s) {
+  barns = {};
+  for (const b of s.barns || []) barns[b.stage] = { rooms: b.rooms, per: b.per };
+  $("#f-iv").value = s.interval_days ?? 21;
+  $("#f-lact").value = s.lactation_days ?? 24;
+  $("#f-pre").value = s.pre_farrow_days ?? 7;
+  $("#f-wash").value = s.washout_days ?? 7;
+  const p = s.performance || {};
+  $("#p-fr").value = p.farrowing_rate ?? "";
+  $("#p-wl").value = p.weaned ?? "";
+  $("#p-gs").value = p.survival ?? "";
+  drawBarns(); refresh();
+}
+
+/* ── 조립 ──────────────────────────────────────── */
+document.addEventListener("input", e => {
+  const t = e.target;
+  if (t.dataset && t.dataset.st) {
+    const st = t.dataset.st, k = t.dataset.k;
+    barns[st] = barns[st] || { rooms: 0, per: 0 };
+    barns[st][k] = Math.max(0, Math.floor(+t.value || 0));
+    const pos = t.selectionStart;
+    drawBarns();
+    const back = document.querySelector(`[data-st="${st}"][data-k="${k}"]`);
+    if (back) { back.focus(); try { back.setSelectionRange(pos, pos); } catch (err) { /* number 입력은 미지원 */ } }
+  }
+  refresh();
+});
+document.addEventListener("change", refresh);
+
+document.addEventListener("click", async e => {
+  const t = e.target;
+  if (t.classList.contains("tab")) {
+    document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
+    document.querySelectorAll(".tabpane").forEach(p =>
+      p.classList.toggle("hidden", p.id !== "tab-" + t.dataset.tab));
+    if (t.dataset.tab === "farms") loadFarms();
+    return;
+  }
+  if (t.dataset.load) {
+    const f = await api("/api/farms/" + t.dataset.load);
+    $("#f-name").value = f.name;
+    applySetup(f.setup);
+    document.querySelector('.tab[data-tab="capacity"]').click();
+    return;
+  }
+  if (t.dataset.del) {
+    await api("/api/farms/" + t.dataset.del, { method: "DELETE" });
+    loadFarms();
+  }
+});
+
+$("#b-preset").onclick = async () => { barns = await preset(300); drawBarns(); refresh(); };
+$("#b-clear").onclick = () => { barns = {}; drawBarns(); refresh(); };
+$("#b-watch").onclick = runWatch;
+$("#b-sched").onclick = makeSchedule;
+$("#b-save").onclick = async () => {
+  const hint = $("#h-save"), name = $("#f-name").value.trim();
+  if (!name) { hint.className = "hint bad"; hint.textContent = "농장 이름을 넣으세요"; return; }
+  try {
+    const f = await api("/api/farms", {
+      method: "POST", body: JSON.stringify({ name, setup: setup() })
+    });
+    hint.className = "hint ok"; hint.textContent = `저장됨 (#${f.id})`;
+  } catch (e) { hint.className = "hint bad"; hint.textContent = e.message; }
+};
+
+(async function boot() {
+  try {
+    const h = await api("/api/health");
+    CONST = h.constants; STAGES = h.stages;
+    $("#conn").textContent = "연결됨"; $("#conn").className = "ok";
+  } catch (e) {
+    $("#conn").textContent = "서버 연결 실패"; $("#conn").className = "bad";
+    return;
+  }
+  $("#w-date").value = new Date().toISOString().slice(0, 10);
+  barns = await preset(300);
+  drawBarns();
+  refresh();
+})();

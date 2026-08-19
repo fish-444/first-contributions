@@ -405,6 +405,64 @@ def throughput(cap: dict, farrow_rate: float | None = None,
     }
 
 
+def design_barns(n_sows: int, interval_days: float,
+                 lactation: int = LACTATION,
+                 pre_farrow: int = MOVE_IN,
+                 washdown: int = WASHDOWN,
+                 farrow_rate: float = FARROW_RATE_P10,
+                 weaned_per_litter: float = 11.0,
+                 extra_rooms: dict | None = None) -> list:
+    """모돈 두수 → **기본 돈사 구성**. `capacity_from_rooms` 의 짝이다.
+
+    화면이 이걸 직접 계산하면 안 된다. 실제로 그렇게 했다가 자돈사를 3방으로
+    잡았는데 서버는 4방을 요구해서, 기본 구성을 넣자마자 "막힘" 이 뜨는 일이
+    있었다 — 프론트가 `extra_rooms` 보정을 모르기 때문이었다. 그래서 설계도
+    도메인 모듈로 올린다.
+
+    `extra_rooms` 는 `capacity_from_rooms` 에 넘길 것과 **같은 값**을 줘야
+    한다. 둘이 다르면 지어 준 구성이 자기 검사를 통과하지 못한다.
+
+    분만사는 배치 설계에서 역산한다. 연속 흐름 비율로 재면 평균이 나오는데
+    AIAO 는 방 하나가 배치 하나를 통째로 받으므로 **최대 배치**만큼 있어야
+    하고, 평균으로 지으면 절반의 배치가 안 들어간다.
+    """
+    iv = float(interval_days)
+    extra = extra_rooms or {}
+    lact, pre, wash = int(lactation), int(pre_farrow), int(washdown)
+    cycle = rc.WEI_BY_PARITY["sow"] + GESTATION + lact
+
+    per_batch = n_sows / (cycle / iv)
+    farrow = int(np.ceil(per_batch * farrow_rate))
+    occupy = pre + lact + wash
+    min_rooms = int(np.ceil(occupy / iv))
+    f_rooms = min_rooms + 1 if (min_rooms * iv - occupy) < BUFFER else min_rooms
+    f_rooms = max(f_rooms, int(extra.get("분만사", 0)))
+
+    out = [
+        {"name": "1동", "stage": "교배사", "housing": "stall", "rooms": 1,
+         "per": int(round(n_sows * (rc.WEI_BY_PARITY["sow"] + SERVICE_HOLD_DAYS)
+                          / cycle))},
+        {"name": "2동", "stage": "임신사", "housing": "group", "rooms": 2,
+         "per": int(np.ceil(round(n_sows * (GESTATION - SERVICE_HOLD_DAYS - pre)
+                                  / cycle) / 2))},
+        {"name": "3동", "stage": "분만사", "housing": "crate",
+         "rooms": f_rooms, "per": farrow},
+        {"name": "4동", "stage": "후보사", "housing": "group", "rooms": 1,
+         "per": max(4, int(round(n_sows * 0.05)))},
+    ]
+    # 뒷단 — 배치 설계에서 나온다. **올림한 분만복수**로 곱한다(안 올리면
+    # 시뮬레이터가 만드는 배치보다 방이 작아 아무것도 못 움직인다).
+    head = farrow * float(weaned_per_litter)
+    for i, (st, days) in enumerate(DOWNSTREAM_DAYS.items()):
+        flat = int(np.ceil((days + wash) / iv))
+        out.append({"name": f"{5 + i}동", "stage": st, "housing": "pen",
+                    "rooms": max(flat, int(extra.get(st, 0))),
+                    "per": int(np.ceil(head))})
+        head *= 1.0 - gf.MORTALITY.get(
+            next(n for n, *_r in gf.STAGES if _r[4] == st), 0.0)
+    return out
+
+
 def rooms_for(lactation: int, interval_days: float,
               pre_farrow: int = MOVE_IN, washdown: int = WASHDOWN) -> int:
     """포유기간·배치 간격 → 필요한 분만사 방 수.

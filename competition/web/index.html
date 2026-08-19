@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>양돈 운영 콘솔</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <div class="brand"><b>양돈 운영 콘솔</b><span id="conn">연결 확인 중…</span></div>
+    <nav class="tabs">
+      <button class="tab on" data-tab="capacity">돈사 · 용량</button>
+      <button class="tab" data-tab="breeding">번식 일정</button>
+      <button class="tab" data-tab="farms">등록 농장</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- ── 돈사 · 용량 ─────────────────────────────── -->
+<section id="tab-capacity" class="tabpane">
+
+  <div class="verdict" id="verdict">
+    <div class="vitem"><span class="k">받을 수 있는 모돈</span><span class="v" id="v-sows">—</span></div>
+    <div class="vitem"><span class="k">병목</span><span class="v" id="v-bind">—</span></div>
+    <div class="vitem"><span class="k">연간 출하 상한</span><span class="v" id="v-top">—</span></div>
+    <div class="vitem"><span class="k">달성</span><span class="v" id="v-pct">—</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">01 · 운영</span>
+      <h2>배치 간격이 방 수를 정합니다</h2></div>
+    <div class="pbody grid">
+      <label><span class="lb">배치 간격</span>
+        <select id="f-iv">
+          <option value="7">주간</option><option value="10">10일</option>
+          <option value="14">2주</option><option value="21" selected>3주</option>
+          <option value="28">4주</option><option value="35">5주</option>
+        </select></label>
+      <label><span class="lb">포유기간 <i>일</i></span>
+        <input id="f-lact" type="number" inputmode="numeric" min="14" max="42" value="24"></label>
+      <label><span class="lb">분만 전 이동 <i>일</i></span>
+        <input id="f-pre" type="number" inputmode="numeric" min="0" max="14" value="7"></label>
+      <label><span class="lb">세척·건조 <i>일</i></span>
+        <input id="f-wash" type="number" inputmode="numeric" min="0" max="14" value="7"></label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">02 · 돈사</span>
+      <h2>지어 놓은 방을 그대로 넣으세요</h2>
+      <p>여기서 방을 만들어 내지 않습니다. 모자라면 모자란다고 말합니다.</p></div>
+    <div class="pbody">
+      <div class="barns">
+        <div class="bhead"><span>용도</span><span>방 수</span><span>방당 자리</span><span>자리 합</span></div>
+        <div id="barns"></div>
+      </div>
+      <div class="btns">
+        <button class="act pri" id="b-preset">모돈 300두 기본 구성</button>
+        <button class="act" id="b-clear">비우기</button>
+        <span class="hint" id="h-barns"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">03 · 흐름</span>
+      <h2>어느 돈사가 규모를 붙잡고 있나</h2>
+      <p>돈방은 돈사를 건너뛰어 쓸 수 없습니다 — <b>가장 짧은 칸이 이 농장의 규모</b>입니다.</p></div>
+    <div class="pbody">
+      <div class="rail" id="rail"><p class="empty">돈사를 등록하면 나옵니다.</p></div>
+      <div class="note" id="railnote"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">04 · 성적</span>
+      <h2>아는 것만 넣으세요</h2>
+      <p><b>비운 칸은 중앙값으로 채우지 않습니다</b> — 채우면 격차가 늘 0으로 찍힙니다.</p></div>
+    <div class="pbody grid">
+      <label><span class="lb">분만율 <i>% · 모르면 비움</i></span>
+        <input id="p-fr" type="number" inputmode="decimal" step="0.1" min="40" max="100"></label>
+      <label><span class="lb">복당 이유두수 <i>두 · 모르면 비움</i></span>
+        <input id="p-wl" type="number" inputmode="decimal" step="0.1" min="5" max="18"></label>
+      <label><span class="lb">이유후 육성률 <i>% · 모르면 비움</i></span>
+        <input id="p-gs" type="number" inputmode="decimal" step="0.1" min="50" max="100"></label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">05 · 상한과 처방</span>
+      <h2>무엇부터 고칠 것인가</h2></div>
+    <div class="pbody">
+      <div id="gauge"></div>
+      <div class="levers" id="levers"></div>
+      <div class="note" id="caveat"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">06 · 돌려 보기</span>
+      <h2>배치가 실제로 밟아 나가는가</h2>
+      <p>정적 대조는 "자리가 맞는가"까지입니다. 무처소·적체·역류는 돌려 봐야 잡힙니다.</p></div>
+    <div class="pbody">
+      <div class="btns"><button class="act" id="b-watch">400일 시뮬레이션</button>
+        <span class="hint" id="h-watch"></span></div>
+      <div id="watch"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">07 · 저장</span><h2>이 농장을 등록</h2></div>
+    <div class="pbody">
+      <div class="grid">
+        <label><span class="lb">농장 이름</span>
+          <input id="f-name" placeholder="예: 행복농장"></label>
+      </div>
+      <div class="btns"><button class="act pri" id="b-save">서버에 저장</button>
+        <span class="hint" id="h-save"></span></div>
+      <p class="note">🔒 농장 이름·성적은 <b>식별자</b>입니다. 심사용 데모라 인증이
+        없으므로 서버를 공개 주소에 띄우지 마세요.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── 번식 일정 ───────────────────────────────── -->
+<section id="tab-breeding" class="tabpane hidden">
+  <div class="panel">
+    <div class="ptop"><span class="step">이유일 하나로</span>
+      <h2>교배 · 임신감정 · 분만 · 이유까지</h2>
+      <p>날짜 하나만 넣으면 전 일정이 생성됩니다. <b>추정치는 회색</b>으로 표시됩니다.</p></div>
+    <div class="pbody">
+      <div class="grid">
+        <label><span class="lb">이유일</span>
+          <input id="w-date" type="date"></label>
+        <label><span class="lb">산차</span>
+          <select id="w-parity">
+            <option value="sow">경산돈</option>
+            <option value="primiparous">초산돈</option>
+          </select></label>
+        <label><span class="lb">계절</span>
+          <select id="w-hot"><option value="0">평시</option>
+            <option value="1">혹서기</option></select></label>
+      </div>
+      <div class="btns"><button class="act pri" id="b-sched">일정 생성</button>
+        <span class="hint" id="h-sched"></span></div>
+      <div id="summary"></div>
+      <div id="tasks"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">교배 적기</span>
+      <h2>점검 주기가 수태율을 정합니다</h2>
+      <p>주기마다 <b>그 주기에서 가능한 최적</b> 시점으로 비교합니다 —
+        시점을 고정한 채 주기만 늘리면 CCTV가 부당하게 유리해집니다.</p></div>
+    <div class="pbody">
+      <div id="timing"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 등록 농장 ───────────────────────────────── -->
+<section id="tab-farms" class="tabpane hidden">
+  <div class="panel">
+    <div class="ptop"><span class="step">서버 저장분</span><h2>등록한 농장</h2></div>
+    <div class="pbody"><div id="farmlist"><p class="empty">불러오는 중…</p></div></div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  산식은 <code>src/</code> 의 도메인 모듈이 정본이고, 이 화면과 API 는 그걸
+  부르기만 합니다 — <b>서버도 프론트도 계산을 다시 구현하지 않습니다.</b>
+  API 문서는 <a href="/docs">/docs</a>, 정적 대시보드는
+  <a href="/dashboard/index.html">/dashboard</a> 에 있습니다(서버 없이도 열립니다).
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
