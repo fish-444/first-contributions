@@ -258,11 +258,27 @@ def generate_synthetic_71763(out_dir: str, n: int = 200) -> None:
         chamber = rng.randint(1, 4)
         T = round(rng.uniform(15, 32), 1)
         RH = round(rng.uniform(20, 90), 1)
-        weight = round(rng.uniform(8, 120), 1)
+        # 체중은 성장단계를 따른다(실측 중앙: 17.7 / 33.2 / 59.8 / 88.5 kg).
+        # 균등분포로 뽑으면 단계 안에서 체중이 8~120kg 로 흩어져, 단계 평균을
+        # 뺀 편차가 잡음으로 덮여 이상치 문턱을 검증할 수 없다.
+        pig_class = rng.choice(PIG_CLASSES_71763)
+        w_mu = {"weaningpig": 17.7, "piglet": 33.2,
+                "growing-pig": 59.8, "porker": 88.5}[pig_class]
+        weight = round(max(5.0, rng.gauss(w_mu, w_mu * 0.12)), 1)
         breath = round(20 + (T - 20) * 2.2 + (RH - 60) * 0.1 + rng.gauss(0, 3))
         sensible = round(weight * 1.1 + (T - 20) * 0.5 + rng.gauss(0, 5), 2)
         latent = round(weight * 0.7 + (RH - 60) * 0.3 + rng.gauss(0, 4), 2)
-        pig_class = rng.choice(PIG_CLASSES_71763)
+        # 체온은 정규분포에 이상치를 섞는다. 균등분포로 뽑으면 꼬리가 없어
+        # 이상치 문턱이 어떤 z 로도 발화하지 않는다(실데이터에는 꼬리가 있다).
+        spike = 3.5 if rng.random() < 0.04 else 0.0
+        sgn = 1 if rng.random() < 0.5 else -1
+        rectal = rng.gauss(38.0, 0.8) + sgn * spike
+        back = rng.gauss(34.5, 1.2) + sgn * spike
+        neck = rng.gauss(34.5, 1.1) + sgn * spike
+        head = rng.gauss(34.0, 1.1) + sgn * spike
+        sensible = sensible + sgn * spike * 12
+        latent = latent + sgn * spike * 9
+        breath = breath + sgn * spike * 8   # 호흡수는 T 변동폭이 커 이상치도 크게
         date = "22%02d%02d" % (rng.randint(9, 12), rng.randint(1, 28))
         tm = "%02d%02d" % (rng.randint(0, 23), rng.randint(0, 59))
         cat = "floor" if floor else "pig"
@@ -315,10 +331,10 @@ def generate_synthetic_71763(out_dir: str, n: int = 200) -> None:
             else:
                 obj["breath-rate"] = breath
                 obj["TemperatureData"] = {
-                    "rectal-temperature": round(rng.uniform(35.5, 40.0), 1),
-                    "back-temperature": round(rng.uniform(30, 38), 1),
-                    "neck-temperature": round(rng.uniform(30, 38), 1),
-                    "head-temperature": round(rng.uniform(30, 38), 1)}
+                    "rectal-temperature": round(rectal, 1),
+                    "back-temperature": round(back, 1),
+                    "neck-temperature": round(neck, 1),
+                    "head-temperature": round(head, 1)}
             json.dump(obj, open(os.path.join(d, "%s_%05d.json" % (clip, f)),
                                 "w", encoding="utf-8"), ensure_ascii=False)
 

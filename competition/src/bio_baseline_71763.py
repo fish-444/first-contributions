@@ -8,6 +8,10 @@
 그러나 센서가 **내부적으로 일관되기만 하면 편차는 유효하다.** 그래서 이 모듈은
 성장단계 평균을 0 으로 두고, 로버스트 산포(1.4826×MAD)로 나눈 z 만 다룬다.
 
+문턱은 필드마다 따로 잡는다. 전 필드에 3σ 를 일괄로 물리면 back_temp 는 0건,
+latent_heat 는 10.2% 로 문턱이 죽는다 — 편차가 정규분포가 아니기 때문이다.
+FLAG_BAND(0.5~5%) 안에 들어오는 z 를 필드마다 찾는다.
+
 왜 성장단계 평균인가 — 개체 평균으로 중심화하면 개체내 산포가 너무 작아
 (직장온도 0.36℃) 3σ 문턱에 20~30% 가 걸린다. 성장단계 기준이면 1~4% 로
 현장에서 감당할 빈도가 된다.
@@ -37,8 +41,15 @@ BIO_FIELDS = ["breath_rate", "rectal_temp", "back_temp", "neck_temp",
 CENTER_BY = "pig_class"
 #: 로버스트 산포 환산 계수 (정규분포에서 MAD → sd)
 MAD_TO_SD = 1.4826
-#: 이상치 문턱 (로버스트 sd 배수)
+#: 기본 문턱(로버스트 sd 배수). 필드에 따라 아래 대역으로 조정된다.
 Z_THRESHOLD = 3.0
+#: 목표 알림률 대역(%). 현장에서 감당할 빈도이자, 문턱이 살아 있다는 증거다.
+#  전 필드에 3σ 를 일괄로 물리면 분포 모양에 따라 발화가 0건이 되거나
+#  (back_temp) 10% 를 넘는다(latent_heat). 그래서 필드마다 이 대역에
+#  들어오는 z 를 찾는다. 못 찾으면 그 필드는 문턱을 쓰지 않는다.
+FLAG_BAND = (0.5, 5.0)
+#: z 탐색 격자. 2.0 미만은 정상 개체를 너무 많이 부르고, 6.0 초과는 사실상 무발화다.
+Z_GRID = [round(2.0 + 0.1 * i, 1) for i in range(41)]
 
 
 def robust_sd(s: pd.Series) -> float:
@@ -55,8 +66,9 @@ def build_baseline(clips: pd.DataFrame,
 
     반환 열: field, center, n, robust_sd, p1/p5/p50/p95/p99(편차),
              n_flagged, flagged_pct, usable
-    `usable` 은 문턱이 실제로 쓸모 있는지다 — 걸리는 게 0건이면 문턱이
-    무의미하고, 10% 를 넘으면 알림이 너무 잦다.
+    `usable` 은 문턱이 실제로 쓸모 있는지다. 알림률이 FLAG_BAND 밖이면
+    '문턱무의미'(너무 적음) 또는 '알림과다'(너무 많음)로 표시된다 —
+    필드마다 z 를 조정하고도 대역에 못 들어오는 필드가 그렇게 드러난다.
     """
     fields = fields or BIO_FIELDS
     rows = []
@@ -68,22 +80,47 @@ def build_baseline(clips: pd.DataFrame,
             continue
         dev = g.groupby(CENTER_BY)[c].transform(lambda s: s - s.mean())
         rsd = robust_sd(dev)
-        flag = dev.abs() > Z_THRESHOLD * rsd if rsd and rsd == rsd else None
-        n_flag = int(flag.sum()) if flag is not None else 0
-        pct = float(flag.mean() * 100) if flag is not None else float("nan")
+        if not rsd or rsd != rsd:
+            continue
+        z, pct = fit_threshold(dev, rsd)
+        flag = dev.abs() > z * rsd
+        lo, hi = FLAG_BAND
         rows.append({
             "field": c, "center": CENTER_BY, "n": len(g),
             "robust_sd": round(rsd, 3),
+            "z": z,
             "p1": round(dev.quantile(.01), 2),
             "p5": round(dev.quantile(.05), 2),
             "p50": round(dev.median(), 2),
             "p95": round(dev.quantile(.95), 2),
             "p99": round(dev.quantile(.99), 2),
-            "n_flagged": n_flag, "flagged_pct": round(pct, 1),
-            "usable": "문턱무의미" if n_flag == 0 else (
-                "알림과다" if pct > 10 else "쓸만함"),
+            "n_flagged": int(flag.sum()), "flagged_pct": round(pct, 1),
+            "usable": "쓸만함" if lo <= pct <= hi else (
+                "문턱무의미" if pct < lo else "알림과다"),
         })
     return pd.DataFrame(rows)
+
+
+def fit_threshold(dev: pd.Series, rsd: float) -> tuple:
+    """필드마다 목표 알림률 대역에 들어오는 z 를 찾는다.
+
+    전 필드에 3σ 를 일괄로 물리면 분포 모양에 따라 문턱이 죽는다 — 실측으로
+    back_temp 는 0.0%(한 건도 안 걸림), latent_heat 는 10.2%(알림 과다)였다.
+    편차가 정규분포가 아니기 때문이고, 필드를 더한다고 나아지지 않는다.
+
+    대역 한가운데에 가장 가까운 z 를 고른다. 어떤 z 로도 대역에 못 들어오면
+    가장 가까운 z 를 돌려주되 `usable` 이 그 사실을 드러낸다 — 조용히
+    넘어가지 않는다.
+    """
+    lo, hi = FLAG_BAND
+    mid = (lo + hi) / 2
+    best = None
+    for z in Z_GRID:
+        pct = float((dev.abs() > z * rsd).mean() * 100)
+        score = (0 if lo <= pct <= hi else 1, abs(pct - mid))
+        if best is None or score < best[0]:
+            best = (score, z, pct)
+    return best[1], best[2]
 
 
 def variance_split(clips: pd.DataFrame,
@@ -127,7 +164,11 @@ def variance_split(clips: pd.DataFrame,
 
 def score(value: float, pig_class: str, field: str,
           baseline: pd.DataFrame, centers: pd.DataFrame) -> float | None:
-    """현장 측정값 하나를 z 로 바꾼다. |z| > 3 이면 확인 대상."""
+    """현장 측정값 하나를 z 로 바꾼다.
+
+    문턱은 필드마다 다르다 — baseline 의 `z` 열과 비교할 것. 3 을 일괄로
+    쓰면 back_temp 는 한 건도 안 걸리고 latent_heat 는 10% 가 걸린다.
+    """
     b = baseline[baseline["field"] == field]
     m = centers[(centers["field"] == field)
                 & (centers[CENTER_BY] == pig_class)]
@@ -188,7 +229,7 @@ def main() -> int:
               f"{', '.join(weak)}")
 
     b = build_baseline(clips)
-    print("\n=== 평균 0 기준표 (성장단계 중심화, |z|>3 문턱) ===")
+    print("\n=== 평균 0 기준표 (성장단계 중심화 · 필드별 z 자동 조정) ===")
     print(b.to_string(index=False))
     for _, r in b[b["usable"] != "쓸만함"].iterrows():
         print(f"  ⚠️ {r['field']}: {r['usable']} "

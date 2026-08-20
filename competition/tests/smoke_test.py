@@ -5763,13 +5763,48 @@ def test_pigflow_package() -> None:
         failed[:3])
 
 
+def test_bio_baseline_thresholds() -> None:
+    """평균 0 기준표의 문턱이 살아 있는가 — 죽은 문턱을 커밋으로 막는다.
+
+    전 필드에 3σ 를 일괄로 물렸을 때 back_temp 는 0건(발화 불가),
+    latent_heat 는 10.2%(알림 과다)로 문턱이 죽어 있었다. 필드마다 z 를
+    조정하도록 고쳤으므로, 어느 필드든 FLAG_BAND 밖으로 나가면 실패시킨다.
+    """
+    import bio_baseline_71763 as bb
+    import parse_aihub
+    import tempfile
+    tmp = tempfile.mkdtemp()
+    parse_aihub.generate_synthetic_71763(tmp, n=4000)
+    clips = parse_aihub.aggregate_71763_clips(parse_aihub.parse_71763(tmp))
+    clips = clips[clips["modality"] == "호흡량"]
+    assert len(clips) >= 30, f"합성 호흡량 클립 부족: {len(clips)}"
+
+    b = bb.build_baseline(clips)
+    assert not b.empty, "기준표가 비었다"
+    lo, hi = bb.FLAG_BAND
+    dead = b[b["usable"] != "쓸만함"]
+    assert dead.empty, (
+        "문턱이 죽은 필드: "
+        + ", ".join(f"{r.field}({r.flagged_pct}%, {r.usable})"
+                    for r in dead.itertuples()))
+    assert (b["flagged_pct"].between(lo, hi)).all(), b[
+        ["field", "z", "flagged_pct"]].to_string()
+
+    # 분산분해는 제곱합으로 갈라야 두 열의 합이 100 이 된다.
+    v = bb.variance_split(clips)
+    if not v.empty:
+        tot = v["within_pct"] + v["between_pct"]
+        assert (tot.sub(100).abs() <= 1).all(), v.to_string()
+
+
 def rc_date(x):
     import repro_calendar as rc
     return rc._d(x)
 
 
 def main() -> int:
-    tests = [test_dependencies_import, test_aihub_client_no_key,
+    tests = [test_bio_baseline_thresholds,
+             test_dependencies_import, test_aihub_client_no_key,
              test_pipeline_runs, test_aihub_parsers,
              test_pipeline_gilt_integration, test_estrus_onset_and_dashboard,
              test_edinburgh_parser, test_posture_eval_mapping,
