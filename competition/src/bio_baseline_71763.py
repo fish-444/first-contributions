@@ -91,6 +91,11 @@ def variance_split(clips: pd.DataFrame,
     """개체 간 / 개체 내 분산 분해 — 편차에 신호가 남는지 먼저 확인한다.
 
     개체 간 차이가 전부라면 편차는 잡음뿐이고 기준표를 만들 이유가 없다.
+
+    제곱합으로 가른다(SS_total = SS_within + SS_between). 개체내%와 개체간%가
+    반드시 100 이 되므로 표 안에서 서로 모순될 수 없다. ICC 를 따로 쓰지
+    않는 이유가 여기 있다 — 개체 평균의 표본분산으로 ICC 를 내면 가중이
+    달라져 개체내%와 합이 1 이 안 되고, 그 불일치가 표를 못 믿게 만든다.
     """
     fields = fields or BIO_FIELDS
     if "chamber" not in clips.columns or "pig_number" not in clips.columns:
@@ -104,15 +109,18 @@ def variance_split(clips: pd.DataFrame,
         g = clips.assign(_ind=ind).dropna(subset=[c])
         if len(g) < 100:
             continue
-        grand = g[c].std()
+        ss_tot = float(((g[c] - g[c].mean()) ** 2).sum())
+        if not ss_tot:
+            continue
         within = g.groupby("_ind")[c].transform(lambda s: s - s.mean())
-        b_var = g.groupby("_ind")[c].mean().var()
-        w_var = within.std() ** 2
+        ss_w = float((within ** 2).sum())
         rows.append({
-            "field": c, "n": len(g), "sd_total": round(grand, 2),
+            "field": c, "n": len(g),
+            "n_groups": int(g["_ind"].nunique()),
+            "sd_total": round(g[c].std(), 2),
             "sd_within": round(within.std(), 2),
-            "within_pct": round(w_var / grand ** 2 * 100, 0) if grand else None,
-            "icc": round(b_var / (b_var + w_var), 2) if (b_var + w_var) else None,
+            "within_pct": round(ss_w / ss_tot * 100, 0),
+            "between_pct": round((ss_tot - ss_w) / ss_tot * 100, 0),
         })
     return pd.DataFrame(rows)
 
@@ -168,8 +176,8 @@ def main() -> int:
     if "split" in clips.columns and (clips["split"] == "VL").any():
         clips = clips[~clips["split"].isin(["VL_A", "VL_B"])]
     clips = clips[clips.get("modality") == "호흡량"]
-    print(f"호흡량 클립 {len(clips)}개 · 개체 "
-          f"{clips.groupby(['chamber', 'pig_number']).ngroups}마리\n")
+    print(f"호흡량 클립 {len(clips)}개 · 챔버×개체 "
+          f"{clips.groupby(['chamber', 'pig_number']).ngroups}조합\n")
 
     v = variance_split(clips)
     print("=== 분산분해 — 편차에 신호가 남는가 ===")
@@ -192,7 +200,7 @@ def main() -> int:
     centers_table(clips).to_csv("competition/outputs/71763_centers.csv",
                                 index=False, encoding="utf-8-sig")
     print("\n→ competition/outputs/71763_baseline_z.csv · 71763_centers.csv")
-    print("\n주의: 이 기준표는 챔버 실측 89마리에서 나왔다. 실농장에 쓰려면")
+    print("\n주의: 이 기준표는 챔버 4개·챔버×개체 89조합(고유 개체번호 71)에서 나왔다. 실농장에 쓰려면")
     print("      농장별로 다시 중심화해야 한다 — sd 를 그대로 가져다 쓰지 말 것.")
     return 0
 
