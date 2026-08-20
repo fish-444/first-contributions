@@ -336,6 +336,49 @@ async function runRelief() {
   } finally { btn.disabled = false; }
 }
 
+/* ── 간격 what-if ──────────────────────────────── */
+async function runInterval() {
+  const btn = $("#b-iv"), out = $("#ivtab"), hint = $("#h-iv");
+  btn.disabled = true; hint.className = "hint"; hint.textContent = "재는 중…";
+  try {
+    const r = await api("/api/capacity/interval", {
+      method: "POST", body: JSON.stringify(setup())
+    });
+    const top = Math.max(...r.rows.map(x => x.n_sows), 1);
+    out.innerHTML = `<div class="tblwrap"><table>
+      <thead><tr><th>간격</th><th>받을 수 있는 모돈</th><th>병목</th>
+        <th>연간 출하 상한</th><th>배치당 교배</th><th>한 날 집중도</th></tr></thead>
+      <tbody>${r.rows.map(x => {
+        const cur = x.current, blocked = x.n_sows === 0;
+        return `<tr${cur ? ' class="cur"' : ""}>
+          <td><b>${x.name}</b> <span class="d">${x.interval_days}일</span>
+            ${cur ? `<span class="pill">지금</span>` : ""}
+            ${!cur && x.interval_days === r.best
+              ? `<span class="pill good">최대 규모</span>` : ""}</td>
+          <td>${blocked ? `<span class="pill stop">막힘</span>`
+            : `<span class="qbar"><i style="width:${x.n_sows / top * 100}%"></i></span>
+               <span class="d">${n0(x.n_sows)}두</span>`}</td>
+          <td class="d">${blocked
+            ? `${x.blocked.join("·")} 방 부족` : x.binding}</td>
+          <td class="d">${blocked ? "—" : n0(x.ceiling_year) + "두"}</td>
+          <td class="d">${x.services_per_batch === null ? "—"
+            : x.services_per_batch + "두"}</td>
+          <td class="d">×${x.peak_ratio}</td></tr>`;
+      }).join("")}</tbody></table></div>
+      <p class="note">${r.note}</p>
+      <p class="note"><b>막힌 간격은 두수를 줄여서 풀리지 않습니다</b> —
+        회전이 안 되는 것이라 방을 늘리거나 간격을 넓혀야 합니다.
+        ${r.given ? "" : `성적을 비웠으므로 출하는 <b>설계 상한</b>이고
+        지금 나오는 값이 아닙니다.`}</p>`;
+    hint.className = "hint ok";
+    hint.textContent = r.best === r.current_interval
+      ? "지금 간격이 규모가 가장 큽니다"
+      : `규모 최대는 ${r.best}일`;
+  } catch (e) {
+    hint.className = "hint bad"; hint.textContent = e.message; out.innerHTML = "";
+  } finally { btn.disabled = false; }
+}
+
 /* ── 오늘 할 일 ────────────────────────────────── */
 async function runQueue() {
   const hint = $("#h-queue"), out = $("#queue");
@@ -655,6 +698,7 @@ $("#b-sched").onclick = makeSchedule;
 $("#b-diag").onclick = runDiagnosis;
 $("#b-season").onclick = runSeason;
 $("#b-relief").onclick = runRelief;
+$("#b-iv").onclick = runInterval;
 $("#b-queue").onclick = runQueue;
 $("#b-save").onclick = async () => {
   const hint = $("#h-save"), name = $("#f-name").value.trim();

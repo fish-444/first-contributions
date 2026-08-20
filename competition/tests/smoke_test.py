@@ -3530,6 +3530,37 @@ def test_server_api() -> None:
     # **비용을 계산하지 않는다** — 그 사실이 응답에 있어야 한다
     assert "비용도 계산하지 않는다" in rl["note"]
 
+    # 8′) 간격 what-if — 같은 돈사, 간격만 바꿨을 때
+    iw = c.post("/api/capacity/interval", json=setup).json()
+    assert [r["name"] for r in iw["rows"]] == list(bf.BATCH_INTERVALS)
+    cur = [r for r in iw["rows"] if r["current"]]
+    assert len(cur) == 1 and cur[0]["interval_days"] == 21.0
+    # 지금 간격 행은 `/api/capacity` 와 **같은 값**이어야 한다. 갈리면
+    # 한 화면이 같은 농장에 두 규모를 말한다
+    assert cur[0]["n_sows"] == pc["n_sows"], (cur[0], pc)
+    assert cur[0]["binding"] == pc["binding"]
+    # **`extra_rooms` 를 간격마다 다시 낸다.** 21일 기준 보정을 그대로 돌려
+    # 쓰면 넓은 간격이 막힌 것으로 나온다 — 손으로 다시 계산해 대조한다
+    for r in iw["rows"]:
+        stub = fs.model_copy(update={"interval_days": r["interval_days"]})
+        want = bf.capacity_from_rooms(
+            [b.model_dump() for b in fs.barns], r["interval_days"],
+            lactation=24, pre_farrow=7, washdown=7,
+            extra_rooms=_extra_rooms(stub), weaned_per_crate=10.0)
+        assert r["n_sows"] == want["n_sows"], (r["name"], r, want["n_sows"])
+        assert r["binding"] == want["binding"], r["name"]
+        # **막힌 간격에 배치 크기를 찍지 않는다** — 0두로 내면 "배치당 0.0두"
+        # 라는 있지도 않은 수가 표에 남는다
+        assert (r["services_per_batch"] is None) == (r["n_sows"] == 0), r
+        assert r["peak_ratio"] == round(r["interval_days"] / 7.0, 1)
+    # 넓힐수록 같은 분만틀이 도는 횟수가 줄어 **규모가 준다** — 막히지 않은
+    # 구간에서 단조감소여야 한다. 늘어나면 방향이 뒤집힌 것이다
+    ok = [r for r in iw["rows"] if r["n_sows"] > 0]
+    assert [r["n_sows"] for r in ok] == \
+           sorted((r["n_sows"] for r in ok), reverse=True), ok
+    assert iw["best"] == max(ok, key=lambda r: r["n_sows"])["interval_days"]
+    assert "인력·공사비를 계산하지 않는다" in iw["note"]
+
     # 9) 오늘 할 일 — repro_calendar 와 같아야 한다
     q = c.get("/api/breeding/today",
               params=[("weaning", "2026-05-12"), ("weaning", "2026-06-02"),

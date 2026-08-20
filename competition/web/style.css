@@ -196,6 +196,12 @@ tr:last-child td{border-bottom:0}
 td.d{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 tr.est td{color:var(--muted)}
 tr.est td.d::after{content:" ~";color:var(--muted)}
+/* 지금 쓰는 간격 — 표에서 자기 줄을 못 찾으면 비교가 성립하지 않는다 */
+tr.cur td{background:var(--accent-soft)}
+/* 셀 안 막대. `.bar` 는 헤더가 이미 쓴다 — 겹치면 표가 상단에 고정된다 */
+.qbar{display:inline-block;vertical-align:middle;width:64px;height:6px;
+  border-radius:3px;background:var(--sunk);margin-right:8px;overflow:hidden}
+.qbar i{display:block;height:100%;background:var(--accent);border-radius:3px}
 
 .chips{display:flex;flex-wrap:wrap;gap:7px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;

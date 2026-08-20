@@ -141,6 +141,83 @@ def relief(setup: FarmSetup, steps: int = 5) -> dict:
                      "방 몇 개를 지으라는 뜻이 아니고 비용도 계산하지 않는다.")}
 
 
+@router.post("/interval", summary="간격 what-if — 같은 돈사, 배치 간격만 바꾸면")
+def interval_whatif(setup: FarmSetup) -> dict:
+    """**돈사는 그대로 두고 간격만 바꾼다.** 짓기 전이 아니라 지은 뒤의 질문이다.
+
+    `batch_flow.compare()` 는 모돈 두수에서 출발해 "이 간격이면 방이 몇 개
+    필요하다" 를 낸다. 그건 설계 방향이고, 이미 지은 농장이 묻는 건 반대다 —
+    **내 방으로 간격을 바꾸면 규모와 출하가 어떻게 되나.**
+
+    맞바꿈이 세 갈래로 갈린다:
+
+    · 좁히면  같은 분만틀이 더 자주 도니 **규모가 는다**. 대신 회전이 빨라져
+              방 수 요구가 커지고 어느 단계가 **막힌다**.
+    · 넓히면  방은 넉넉해지는데 배치가 커져 **한 날에 몰린다**(집중도).
+              그리고 같은 틀로 도는 횟수가 줄어 **규모가 준다**.
+
+    **`extra_rooms` 를 간격마다 다시 낸다.** 필요 방 수가 간격의 함수라
+    한 번 계산해 돌려 쓰면 21일 기준 보정을 35일 행에 적용하게 된다 —
+    막히지 않을 곳이 막힌 것으로 나온다.
+    """
+    if not setup.barns:
+        raise HTTPException(422, "돈사가 등록되지 않았다")
+    barns = [b.model_dump() for b in setup.barns]
+    wpc = _weaned_per_crate(setup)
+    p = setup.performance
+    now = float(setup.interval_days)
+
+    rows = []
+    for name, iv in bf.BATCH_INTERVALS.items():
+        iv = float(iv)
+        # 간격마다 다시 — 방 소요가 간격의 함수다
+        stub = setup.model_copy(update={"interval_days": iv})
+        cap = bf.capacity_from_rooms(
+            barns, iv,
+            lactation=int(setup.lactation_days),
+            pre_farrow=int(setup.pre_farrow_days),
+            washdown=int(setup.washout_days),
+            extra_rooms=_extra_rooms(stub), weaned_per_crate=wpc)
+        tp = bf.throughput(
+            cap,
+            farrow_rate=None if p.farrowing_rate is None
+            else p.farrowing_rate / 100.0,
+            weaned_per_litter=p.weaned,
+            grow_survival=None if p.survival is None else p.survival / 100.0)
+        # 막힌 간격은 지지 두수가 0 이다. 그 0 으로 배치 크기를 내면 "배치당
+        # 0.0두" 라는 있지도 않은 수가 표에 찍힌다 — 비워 둔다.
+        pl = bf.plan(cap["n_sows"], iv) if cap["n_sows"] > 0 else None
+        rows.append({
+            "name": name, "interval_days": iv,
+            "current": abs(iv - now) < 1e-9,
+            "n_sows": cap["n_sows"], "binding": cap["binding"],
+            "blocked": [r["stage"] for r in cap["rows"] if r.get("why")],
+            # 상한은 방만으로 정해지고, 지금값은 성적이 있어야 뜻이 있다
+            "ceiling_year": tp["ceiling_year"], "now_year": tp["now_year"],
+            "weaned_ceiling": cap.get("weaned_ceiling"),
+            "services_per_batch": pl and pl["services_per_event"],
+            # 집중도는 간격만의 함수(iv/7)라 막혀도 뜻이 있다
+            "peak_ratio": round(iv / 7.0, 1),
+            "farrow_rooms_need": next(
+                (r["need_rooms"] for r in cap["rows"]
+                 if r["stage"] == "분만사"), None),
+        })
+
+    ok = [r for r in rows if r["n_sows"] > 0]
+    best = max(ok, key=lambda r: r["n_sows"]) if ok else None
+    return {
+        "current_interval": now, "rows": rows,
+        "best": None if best is None else best["interval_days"],
+        "given": any(v is not None
+                     for v in (p.farrowing_rate, p.weaned, p.survival)),
+        # **간격은 성적이 아니라 배선이다.** 규모가 큰 쪽이 늘 옳은 게
+        # 아니라, 좁힐수록 사람이 매주 같은 일을 더 자주 해야 한다.
+        "note": ("규모가 가장 큰 간격이 늘 정답은 아니다 — 좁힐수록 방 수 "
+                 "요구가 커지고 작업이 잦아진다. 이 표는 맞바꿈을 보여줄 뿐 "
+                 "인력·공사비를 계산하지 않는다."),
+    }
+
+
 @router.post("/watch", summary="배치 전이 400일 감시 (AIAO·역류·적체·무처소)")
 def watch(setup: FarmSetup, days: int = 400) -> dict:
     """`barn_watch` 를 등록 정보로 돌린다.
