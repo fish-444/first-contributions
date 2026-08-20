@@ -103,6 +103,44 @@ def capacity_of(setup: FarmSetup) -> dict:
     return compute(setup)
 
 
+@router.post("/relief", summary="병목을 풀면 그 다음은 누구인가 — 투자 순서")
+def relief(setup: FarmSetup, steps: int = 5) -> dict:
+    """`capacity` 는 "지금 무엇이 붙잡고 있나" 까지고, 이건 그 다음 질문이다.
+
+    각 행의 `gain` 은 **그 돈사가 제약이 아니게 되면 얻는 몫**이다. 방 몇
+    개를 더 지으라는 뜻이 아니고 **비용도 계산하지 않는다** — 어디를 건드려야
+    움직이는지의 순서일 뿐이다.
+
+    `gain` 이 0 인 구간은 **여러 돈사가 같은 수준에서 나란히 걸린 것**이라,
+    하나만 넓혀도 두수가 안 는다. 그 사실이 이 표의 값어치다.
+    """
+    if not setup.barns:
+        raise HTTPException(422, "돈사가 등록되지 않았다")
+    rows = bf.relief_chain(
+        [b.model_dump() for b in setup.barns], float(setup.interval_days),
+        steps=steps,
+        lactation=int(setup.lactation_days),
+        pre_farrow=int(setup.pre_farrow_days),
+        washdown=int(setup.washout_days),
+        extra_rooms=_extra_rooms(setup),
+        weaned_per_crate=_weaned_per_crate(setup))
+    # 같은 수준에 나란히 걸린 묶음을 표시한다 — 하나만 풀면 안 움직인다
+    tied: list = []
+    for r in rows:
+        if tied and tied[-1]["n_sows"] == r["n_sows"]:
+            tied[-1]["stages"].append(r["binding"])
+        else:
+            tied.append({"n_sows": r["n_sows"], "stages": [r["binding"]],
+                         "gain": r.get("gain")})
+    for i, g in enumerate(tied[:-1]):
+        g["gain"] = tied[i + 1]["n_sows"] - g["n_sows"]
+    if tied:
+        tied[-1]["gain"] = None
+    return {"rows": rows, "groups": tied,
+            "note": ("각 몫은 그 돈사가 제약이 아니게 되면 얻는 것이다. "
+                     "방 몇 개를 지으라는 뜻이 아니고 비용도 계산하지 않는다.")}
+
+
 @router.post("/watch", summary="배치 전이 400일 감시 (AIAO·역류·적체·무처소)")
 def watch(setup: FarmSetup, days: int = 400) -> dict:
     """`barn_watch` 를 등록 정보로 돌린다.

@@ -118,7 +118,20 @@
   </div>
 
   <div class="panel">
-    <div class="ptop"><span class="step">07 · 저장</span><h2>이 농장을 등록</h2></div>
+    <div class="ptop"><span class="step">07 · 투자 순서</span>
+      <h2>병목을 풀면 그 다음은 누구인가</h2>
+      <p>한 곳만 넓히고 끝나는 경우는 드뭅니다. 각 몫은
+        <b>그 돈사가 제약이 아니게 되면 얻는 것</b>이고,
+        <b>비용은 계산하지 않습니다.</b></p></div>
+    <div class="pbody">
+      <div class="btns"><button class="act" id="b-relief">순서 보기</button>
+        <span class="hint" id="h-relief"></span></div>
+      <div id="relief"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">08 · 저장</span><h2>이 농장을 등록</h2></div>
     <div class="pbody">
       <div class="grid">
         <label><span class="lb">농장 이름</span>
@@ -155,6 +168,28 @@
         <span class="hint" id="h-sched"></span></div>
       <div id="summary"></div>
       <div id="tasks"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ptop"><span class="step">오늘 할 일</span>
+      <h2>배치 여러 개를 한 화면에</h2>
+      <p>이유일만 넣으면 배치별 일정에서 <b>오늘 해야 할 것</b>과
+        <b>지난 것</b>을 뽑습니다.</p></div>
+    <div class="pbody">
+      <div class="grid">
+        <label><span class="lb">첫 배치 이유일</span>
+          <input id="q-first" type="date"></label>
+        <label><span class="lb">배치 수</span>
+          <input id="q-n" type="number" inputmode="numeric" min="1" max="24" value="7"></label>
+        <label><span class="lb">기준일</span>
+          <input id="q-on" type="date"></label>
+        <label><span class="lb">앞으로 며칠까지</span>
+          <input id="q-h" type="number" inputmode="numeric" min="0" max="21" value="3"></label>
+      </div>
+      <div class="btns"><button class="act pri" id="b-queue">작업 큐 생성</button>
+        <span class="hint" id="h-queue"></span></div>
+      <div id="queue"></div>
     </div>
   </div>
 

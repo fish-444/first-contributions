@@ -463,6 +463,51 @@ def design_barns(n_sows: int, interval_days: float,
     return out
 
 
+def relief_chain(barns: list, interval_days: float, steps: int = 5,
+                 **kw) -> list:
+    """병목을 풀면 **그 다음은 누구인가** — 투자 순서.
+
+    `capacity_from_rooms` 는 "지금 무엇이 붙잡고 있나" 까지 답한다. 그런데
+    농가가 실제로 묻는 다음 질문은 "그럼 그걸 넓히면 얼마나 느나" 이고, 그
+    답은 **다음 병목이 어디서 걸리느냐**로 정해진다. 한 곳만 넓히고 끝나는
+    경우는 드물다.
+
+    한 단계씩 이렇게 본다:
+      1. 지금 병목과 규모를 적는다
+      2. 그 돈사를 **제약에서 뺀다**(자리를 넉넉히 준다)
+      3. 다시 재서 새 병목을 찾는다
+
+    그래서 각 행의 `gain` 은 "이 돈사가 제약이 아니게 되면 얻는 몫" 이다.
+    **방 몇 개를 더 지으라는 뜻이 아니고, 비용도 계산하지 않는다** — 어디를
+    건드려야 움직이는지의 순서일 뿐이다.
+    """
+    import copy
+
+    work = copy.deepcopy(barns)
+    rows: list = []
+    seen: set = set()
+    for _ in range(max(1, steps)):
+        cap = capacity_from_rooms(work, interval_days, **kw)
+        if not cap["flows"]:
+            rows.append({"binding": cap["binding"], "n_sows": 0,
+                         "blocked": True,
+                         "why": cap["blocked"][0]["why"] if cap["blocked"] else None})
+            break
+        b = cap["binding"]
+        if not b or b in seen:
+            break
+        seen.add(b)
+        rows.append({"binding": b, "n_sows": cap["n_sows"], "blocked": False})
+        # 그 돈사를 제약에서 뺀다. 4배면 다른 칸이 반드시 먼저 걸린다.
+        work = [dict(x, rooms=x["rooms"] * 4, per=x["per"] * 4)
+                if x.get("stage") == b else x for x in work]
+    for i, r in enumerate(rows[:-1]):
+        r["gain"] = max(0, rows[i + 1]["n_sows"] - r["n_sows"])
+    if rows:
+        rows[-1].setdefault("gain", None)   # 마지막은 다음 값을 모른다
+    return rows
+
+
 def rooms_for(lactation: int, interval_days: float,
               pre_farrow: int = MOVE_IN, washdown: int = WASHDOWN) -> int:
     """포유기간·배치 간격 → 필요한 분만사 방 수.

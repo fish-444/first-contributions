@@ -228,6 +228,7 @@ data/     SQLite (farms.db · 미커밋)
 | `GET /api/health` | 어휘·상수 — **프론트가 자기 상수를 갖지 않게** 서버가 내려 준다 |
 | `GET /api/capacity/preset` | 모돈 두수 → 기본 돈사 구성 (`design_barns`) |
 | `POST /api/capacity` | 돈사 → 받을 수 있는 두수 · 병목 · 출하 상한 · 처방 |
+| `POST /api/capacity/relief` | **병목을 풀면 그 다음은 누구인가** — 투자 순서 |
 | `POST /api/capacity/watch` | 400일 배치 전이 감시 (7검사) |
 | `GET /api/capacity/sweep` | house 별 방 수 한계 |
 | `POST /api/breeding/schedule` | 이유일 하나 → 전 일정 + 주기 요약 |
@@ -235,7 +236,8 @@ data/     SQLite (farms.db · 미커밋)
 | `GET /api/diagnosis/farm/{id}` | 등록한 농장의 진단 |
 | `GET /api/breeding/checkpoints` | 교배일 → 임신진단 3단계 |
 | `GET /api/breeding/detection` | 점검 주기별 수태율 (각 주기의 최적 프로토콜) |
-| `GET /api/breeding/today` | 오늘 작업 큐 |
+| `GET /api/breeding/today` | 오늘 할 일 + 지난 것(지연 일수) |
+| `GET /api/breeding/batches` | 배치 날짜 생성 (유도값) |
 | `/api/farms` CRUD | 농장 등록 저장 |
 
 **서버도 프론트도 계산을 다시 구현하지 않는다.** 라우터 안에는 입력 검증·
@@ -251,6 +253,18 @@ data/     SQLite (farms.db · 미커밋)
 고정 오프셋으로 잰 탓인데, 이 프로젝트가 이미 한 번 고쳤던 오류를 서버에서
 되풀이한 것이다. `detection_value()` 로 바꿔 각 주기의 최적 프로토콜을 다시
 찾게 했다.
+
+**병목 다음을 묻는 기능을 붙였다.** `capacity` 는 "지금 무엇이 붙잡고
+있나" 까지고, 농가가 실제로 묻는 다음 질문은 "그럼 그걸 넓히면 얼마나 느나"
+다. `relief_chain()` 은 병목을 하나씩 제약에서 빼며 다시 재서 순서를 낸다.
+
+    1. 교배사              301두   풀면 +1두
+    2. 임신사              302두   풀면 +32두
+    3. 분만사+자돈사+육성사   334두   동률 3곳
+
+**같은 수준에 나란히 걸린 곳을 묶는 게 요지다.** 안 묶으면 하나만 넓혀도
+느는 줄 알게 되는데, 실제로는 셋을 같이 넓혀야 움직인다. 다만 이 표는
+**순서만 말한다** — 넓히는 비용과 도달 가능성은 계산하지 않는다.
 
 **성능은 재 보고 고쳤다.** 400일 이산사건 시뮬레이션이 26ms 인데 날짜 계산만
 하는 일정 생성이 **540ms** 였다 — 20배 느렸다. 프로파일을 떠 보니

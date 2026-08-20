@@ -301,6 +301,86 @@ async function makeSchedule() {
   }
 }
 
+/* ── 투자 순서 (병목 체인) ─────────────────────── */
+async function runRelief() {
+  const btn = $("#b-relief"), out = $("#relief"), hint = $("#h-relief");
+  btn.disabled = true; hint.className = "hint"; hint.textContent = "재는 중…";
+  try {
+    const r = await api("/api/capacity/relief", {
+      method: "POST", body: JSON.stringify(setup())
+    });
+    if (!r.groups.length) {
+      out.innerHTML = `<p class="empty">돈사를 등록하면 나옵니다.</p>`;
+      hint.textContent = ""; return;
+    }
+    out.innerHTML = `<div class="levers">${r.groups.map((g, i) => {
+      const tie = g.stages.length > 1;
+      return `<div class="lever${i === 0 ? " top" : ""}">
+        <span class="nm">${i + 1}. ${g.stages.join(" + ")}
+          ${tie ? `<span class="pill">동률 ${g.stages.length}곳</span>` : ""}</span>
+        <span class="gain">${g.gain === null ? "—"
+          : (g.gain > 0 ? "+" + n0(g.gain) + "두" : "±0")}</span>
+        <span class="from">여기서 ${n0(g.n_sows)}두에 걸립니다</span>
+        <span class="won">${g.gain === null ? "그 다음은 안 쟀습니다"
+          : (g.gain > 0 ? "풀면 여기까지" : "")}</span>
+        ${tie ? `<span class="how"><b>하나만 넓혀도 두수가 안 늘어납니다</b> —
+          ${g.stages.join("·")} 가 같은 수준에서 나란히 걸려 있습니다.</span>` : ""}
+      </div>`; }).join("")}</div>
+      <p class="note" style="margin-top:10px">${r.note}
+        <b>순서만 말하는 표입니다</b> — 넓히는 데 드는 비용과 실제 도달
+        가능성은 여기서 다루지 않습니다.</p>`;
+    hint.className = "hint ok";
+    hint.textContent = `${r.groups.length}단계`;
+  } catch (e) {
+    hint.className = "hint bad"; hint.textContent = e.message; out.innerHTML = "";
+  } finally { btn.disabled = false; }
+}
+
+/* ── 오늘 할 일 ────────────────────────────────── */
+async function runQueue() {
+  const hint = $("#h-queue"), out = $("#queue");
+  const first = $("#q-first").value, on = $("#q-on").value;
+  if (!first) { hint.className = "hint bad"; hint.textContent = "첫 배치 이유일을 넣으세요"; return; }
+  hint.className = "hint"; hint.textContent = "생성 중…";
+  try {
+    // 배치 날짜 생성도 서버가 한다 — 간격을 더하는 것도 계산이다
+    const iv = +$("#f-iv").value;
+    const b = await api(`/api/breeding/batches?first_weaning=${first}`
+      + `&interval_days=${iv}&n=${Math.round(num("#q-n") ?? 7)}`);
+    const q = new URLSearchParams();
+    for (const d of b.weaning_dates) q.append("weaning", d);
+    if (on) q.set("on", on);
+    q.set("horizon", String(Math.round(num("#q-h") ?? 0)));
+    const r = await api("/api/breeding/today?" + q);
+
+    const rows = (list, late) => list.length ? `<div class="tblwrap"><table>
+        <thead><tr><th>배치</th><th>날짜</th>${late ? "<th>지연</th>" : ""}
+          <th>작업</th><th>내용</th></tr></thead>
+        <tbody>${list.map(t => `<tr class="${t.estimated ? "est" : ""}">
+          <td>${t.id ?? "—"}</td><td class="d">${t.date}</td>
+          ${late ? `<td class="d"><span class="pill stop">+${t.late_days}일</span></td>` : ""}
+          <td>${t.task}</td><td>${t.detail ?? ""}</td></tr>`).join("")}
+        </tbody></table></div>`
+      : `<p class="empty">없습니다.</p>`;
+
+    out.innerHTML = `<div class="kpis" style="margin-top:4px">
+        <div class="kpi"><span class="v">${r.due.length}</span><span class="k">할 일</span>
+          <span class="d">${r.on} 기준 · 앞으로 ${r.horizon_days}일</span></div>
+        <div class="kpi"><span class="v">${r.overdue.length}</span><span class="k">지난 것</span>
+          <span class="d">기한이 지났습니다</span></div>
+        <div class="kpi"><span class="v">${b.weaning_dates.length}</span><span class="k">배치</span>
+          <span class="d">간격 ${iv}일</span></div></div>
+      <h3 style="margin-top:16px;font-size:.95rem">오늘 할 일</h3>${rows(r.due, false)}
+      <h3 style="margin-top:16px;font-size:.95rem">지난 것</h3>${rows(r.overdue, true)}
+      <p class="note" style="margin-top:10px">배치 날짜는 <b>간격을 그대로 더한
+        유도값</b>이고 실제 이력이 아닙니다 — ${b.grade}. 회색 행은 추정치입니다.</p>`;
+    hint.className = "hint ok";
+    hint.textContent = `할 일 ${r.due.length} · 지난 것 ${r.overdue.length}`;
+  } catch (e) {
+    hint.className = "hint bad"; hint.textContent = e.message; out.innerHTML = "";
+  }
+}
+
 /* ── 성적 진단 · 처방 ──────────────────────────── */
 // 등급을 문장에 박는다. 회수량 큰 순으로만 세우면 횡단면 비교가 농장 내
 // 변화처럼 읽힌다 — 이 프로젝트가 실측/계산/가정을 구분해 온 것의 처방 버전.
@@ -456,6 +536,8 @@ $("#b-clear").onclick = () => { barns = {}; drawBarns(); refresh(); };
 $("#b-watch").onclick = runWatch;
 $("#b-sched").onclick = makeSchedule;
 $("#b-diag").onclick = runDiagnosis;
+$("#b-relief").onclick = runRelief;
+$("#b-queue").onclick = runQueue;
 $("#b-save").onclick = async () => {
   const hint = $("#h-save"), name = $("#f-name").value.trim();
   if (!name) { hint.className = "hint bad"; hint.textContent = "농장 이름을 넣으세요"; return; }
@@ -476,7 +558,11 @@ $("#b-save").onclick = async () => {
     $("#conn").textContent = "서버 연결 실패"; $("#conn").className = "bad";
     return;
   }
-  $("#w-date").value = new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  $("#w-date").value = today;
+  $("#q-on").value = today;
+  // 첫 배치는 기준일보다 앞이어야 '지난 것' 이 의미가 있다
+  $("#q-first").value = new Date(Date.now() - 100 * 864e5).toISOString().slice(0, 10);
   barns = await preset(300);
   drawBarns();
   refresh();

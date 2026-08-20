@@ -3510,7 +3510,45 @@ def test_server_api() -> None:
     assert c.post("/api/breeding/schedule",
                   json={"weaning_date": "안녕"}).status_code == 422
 
-    # 8) 진단·처방 — `farm_gap`·`psy_priority` 와 같은 값이어야 한다
+    # 8) 투자 순서 — 병목을 풀면 그 다음은 누구인가
+    rl = c.post("/api/capacity/relief", json=setup).json()
+    want_rl = bf.relief_chain(
+        [b.model_dump() for b in fs.barns], 21.0, lactation=24,
+        pre_farrow=7, washdown=7, extra_rooms=_extra_rooms(fs),
+        weaned_per_crate=10.0)
+    assert [x["binding"] for x in rl["rows"]] == \
+           [x["binding"] for x in want_rl], rl["rows"]
+    # 규모는 단조증가해야 한다 — 제약을 풀었는데 줄면 계산이 틀린 것이다
+    sows = [x["n_sows"] for x in rl["rows"]]
+    assert sows == sorted(sows), sows
+    # 같은 수준에 나란히 걸린 곳은 **묶여야** 한다. 안 묶으면 하나만 넓혀도
+    # 는 줄 알고, 실제로는 안 는다
+    assert sum(len(g["stages"]) for g in rl["groups"]) == len(rl["rows"])
+    for g in rl["groups"]:
+        assert len({r["n_sows"] for r in rl["rows"]
+                    if r["binding"] in g["stages"]}) == 1, g
+    # **비용을 계산하지 않는다** — 그 사실이 응답에 있어야 한다
+    assert "비용도 계산하지 않는다" in rl["note"]
+
+    # 9) 오늘 할 일 — repro_calendar 와 같아야 한다
+    q = c.get("/api/breeding/today",
+              params=[("weaning", "2026-05-12"), ("weaning", "2026-06-02"),
+                      ("on", "2026-08-20"), ("horizon", 3)]).json()
+    scheds = {f"B{i + 1}": rc.schedule_from_weaning(w)
+              for i, w in enumerate(("2026-05-12", "2026-06-02"))}
+    assert len(q["overdue"]) == len(rc.overdue(scheds, today="2026-08-20"))
+    assert len(q["due"]) == len(
+        rc.due_today(scheds, today="2026-08-20", horizon=3))
+    # 지연 일수가 있어야 "지난 것" 이 읽힌다
+    assert all("late_days" in t for t in q["overdue"]), q["overdue"][:1]
+    # 배치 날짜는 **유도값**이고 실제 이력이 아니라고 말해야 한다
+    bt_ = c.get("/api/breeding/batches",
+                params={"first_weaning": "2026-05-12", "interval_days": 21,
+                        "n": 7}).json()
+    assert len(bt_["weaning_dates"]) == 7
+    assert "유도" in bt_["grade"], bt_["grade"]
+
+    # 10) 진단·처방 — `farm_gap`·`psy_priority` 와 같은 값이어야 한다
     import farm_gap as fg
     import psy_priority as pp
     perf = {"weaned": 10.0, "npd": 62.0, "farrowing_rate": 74.0}
@@ -3535,7 +3573,7 @@ def test_server_api() -> None:
     # **비운 성적을 중앙값으로 채우지 않는다** — 채우면 격차가 늘 0 이 된다
     assert c.post("/api/diagnosis", json={}).status_code == 422
 
-    # 9) 농장 CRUD 가 왕복하는가
+    # 11) 농장 CRUD 가 왕복하는가
     f = c.post("/api/farms", json={"name": "T", "setup": setup})
     assert f.status_code == 201, f.text
     fid = f.json()["id"]
