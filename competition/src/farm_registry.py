@@ -442,7 +442,12 @@ def herd_from_csv(path: str) -> tuple[list, str | None]:
             raise ValueError(f"as_of 가 여러 날짜다 {vals[:3]} — "
                              f"스냅숏 파일은 하루여야 한다")
         as_of = vals[0] if vals else None
-    return df.to_dict("records"), as_of
+    # **빈 칸은 NaN 이 아니라 None 으로 낸다.** pandas 가 주는 NaN 은 JSON 에
+    # 실리지 않아 API 로 그대로 넘기면 직렬화가 깨지고, `NaN or 0` 같은 흔한
+    # 관용구도 NaN 이 truthy 라 조용히 틀린다. 비운 것은 비운 채로 둔다는
+    # 이 프로젝트의 규칙과도 None 쪽이 맞다.
+    return [{k: (None if v is None or (isinstance(v, float) and v != v) else v)
+             for k, v in r.items()} for r in df.to_dict("records")], as_of
 
 
 # 자리 번호가 있는 사육 방식 — 스톨·분만틀은 몇 번 자리인지가 관리 단위다

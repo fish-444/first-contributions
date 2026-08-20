@@ -277,12 +277,48 @@ def to_herd_csv(df: pd.DataFrame, path: str, today: str | None = None) -> int:
     분만사 비중이 18%에서 37%로 부풀었다. 데이터가 아니라 날짜 탓이었다.
 
     그래서 **기준일을 파일 안에 적는다**(`as_of` 열). 밖에 두면 잃어버린다.
+
+    ## 공태돈(이유했고 아직 미교배)이 통째로 빠져 있었다
+
+    "교배가 지난 마지막 주기" 만 뽑으면 그 주기에는 **반드시 교배가 있다.**
+    그래서 이유 후 아직 안 붙은 개체가 한 두도 안 나왔다 — 정상 상태라면
+    번식주기 145일 중 이유~교배 7일, 즉 **5% 쯤이 공태**여야 한다.
+
+    빠지면 두 가지가 무너진다. 교배사 두수가 그만큼 적게 세지고, **NPD 의
+    원천인 상태 자체가 화면에서 사라진다** — 발정을 겨냥할 대상이 0두가 된다.
+    그래서 이유가 이미 지난 개체는 다음 교배가 `today` 보다 뒤일 때 **공태로
+    낸다**(교배일을 비우고, 이유일을 그 주기의 이유일로).
     """
     t = date.fromisoformat(today) if today else date.today()
-    past = df[pd.to_datetime(df["service"]).dt.date <= t]
+    svc = pd.to_datetime(df["service"]).dt.date
     rows = []
-    for sid, g in past.groupby("sow_id"):
-        r = g.sort_values("service").iloc[-1]
+    for sid, g in df.groupby("sow_id"):
+        g = g.assign(_svc=svc.loc[g.index]).sort_values("_svc")
+        past = g[g["_svc"] <= t]
+        if not len(past):
+            # 교배가 아직 한 번도 없다 — 첫 주기의 이유가 지났으면 **공태**다.
+            # 여기서 그냥 건너뛰면 정상 상태의 공태돈이 통째로 사라진다
+            # (실제로 300두에서 12두쯤 빠지고 있었다).
+            w0 = g.iloc[0]["wean_prev"]
+            if isinstance(w0, date) and w0 <= t:
+                rows.append({"id": sid, "parity": int(g.iloc[0]["parity"]),
+                             "weaning_date": w0, "service_date": None,
+                             "farrow_date": None, "outcome": "공태",
+                             "as_of": t.isoformat()})
+            continue
+        r = past.iloc[-1]
+        wean, nxt = r["wean"], None
+        after = g[g["_svc"] > t]
+        if len(after):
+            nxt = after.iloc[0]
+        # 이 주기에서 이미 이유했고 다음 교배가 아직 안 왔으면 **공태**다
+        if (isinstance(wean, date) and wean <= t
+                and (nxt is None or nxt["_svc"] > t)):
+            rows.append({"id": sid, "parity": int(r["parity"]) + 1,
+                         "weaning_date": wean, "service_date": None,
+                         "farrow_date": None, "outcome": "공태",
+                         "as_of": t.isoformat()})
+            continue
         rows.append({"id": sid, "parity": int(r["parity"]),
                      "weaning_date": r["wean_prev"],
                      "service_date": r["service"],

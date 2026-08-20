@@ -76,3 +76,18 @@ class DetectionIn(BaseModel):
     """
     check_interval_h: float = Field(24.0, gt=0, le=48)
     parity: str = Field("sow", pattern="^(sow|primiparous)$")
+
+
+class HerdIn(BaseModel):
+    """개체 이력 스냅숏. **기준일이 같이 온다.**
+
+    이 목록은 하루의 스냅숏이라 다른 날짜로 읽으면 한 주기(145일)를 벗어난
+    개체가 통째로 빠진다 — `run_farm --herd` 가 이미 겪고 막아 둔 사고라
+    여기서도 날짜를 밖에 두지 않는다.
+    """
+    as_of: str = Field(..., description="기준일 YYYY-MM-DD")
+    records: list[dict] = Field(..., max_length=20000,
+                                description="id·parity·weaning_date·"
+                                            "service_date·farrow_date·outcome")
+    include_disease: bool = Field(
+        True, description="질병 헤드는 달력이 없어 전 개체가 대상이다")

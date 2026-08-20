@@ -3511,6 +3511,145 @@ def test_herd_drives_stage_counts() -> None:
         os.unlink(path)
 
 
+def test_vision_contract() -> None:
+    """영상 모델이 꽂힐 자리 — **모델 없이 배선이 관통하는가.**
+
+    행동 분류 모델을 만드는 중이라 아직 없다. 계약을 먼저 동결해 두면 배선을
+    지금 시험할 수 있고, 완성된 모델은 `predict()` 하나만 맞추면 들어온다.
+
+    지키는 것 넷: (1) 겨냥 창을 여기서 새로 만들지 않는가, (2) 판정을
+    주장하지 않는가, (3) 모델이 못 내는 헤드를 등록 시점에 말하는가,
+    (4) 스텁이 모델인 척하지 않는가.
+    """
+    from datetime import date, timedelta
+
+    import estrus_early_warning as ew
+    import farm_registry as fr
+    import pregnancy_check as pc
+    import vision_contract as vc
+
+    # 1) **창은 전부 기존 모듈에서 온다.** 여기서 숫자를 지어내면 모델이 오기
+    #    전에 이미 틀린 답이 박힌다
+    assert (vc.RETURN_FROM, vc.RETURN_TO) == (pc.CHECKPOINTS[0][1],
+                                              pc.CHECKPOINTS[0][2])
+    assert vc.ESTRUS_WATCH_FROM < ew.ANESTRUS_DAY
+
+    on = "2026-03-01"
+    day = lambda n: (date(2026, 3, 1) - timedelta(days=n)).isoformat()  # noqa: E731
+    recs = [
+        # 이유 5일째 · 미교배 → 발정 창 한가운데
+        {"id": "E", "parity": 3, "weaning_date": day(5)},
+        # 이유 2일째 → 아직 이르다(창 밖)
+        {"id": "E2", "parity": 3, "weaning_date": day(2)},
+        # 이유 12일째 → 지연 경보 구간이라 오히려 우선순위가 높다
+        {"id": "E3", "parity": 3, "weaning_date": day(12)},
+        # 교배 21일째 → 3주 관문
+        {"id": "R", "parity": 2, "weaning_date": day(28), "service_date": day(21)},
+        # 교배 40일째 → 관문 밖(5주 초음파는 영상이 아니라 사람이 한다)
+        {"id": "R2", "parity": 2, "weaning_date": day(47), "service_date": day(40)},
+        # 분만 예정 3일 전 → 분만사
+        {"id": "F", "parity": 4, "weaning_date": day(140),
+         "service_date": (date(2026, 3, 1) + timedelta(days=3)
+                          - timedelta(days=fr.GEST)).isoformat()},
+    ]
+    t = vc.targets(recs, on)
+    got = {h: {r["animal_id"] for r in t["heads"][h]["rows"]} for h in vc.HEADS}
+    assert got["estrus"] == {"E", "E3"}, got["estrus"]
+    assert got["return"] == {"R"}, got["return"]
+    assert got["farrowing"] == {"F"}, got["farrowing"]
+    # 질병만 달력이 없다 — 전 개체 상시다. 그 성질을 숨기지 않는다
+    assert got["disease"] == {r["id"] for r in recs}
+    assert all(r["priority"] == 0.0 and r["window"] is None
+               for r in t["heads"]["disease"]["rows"])
+    assert not vc.targets(recs, on, disease_all=False)["heads"]["disease"]["n"]
+
+    # 2) **판정하지 않는다.** 분만 임박은 행동을 봐야 아는 것이라 달력이
+    #    낼 수 있는 건 "분만사에 있고 아직 안 낳았다" 까지다
+    f = t["heads"]["farrowing"]["rows"][0]
+    assert "모델이 판정한다" in f["why"] and f["day"] == 3
+    assert "판정은 모델이 한다" in t["note"]
+    # 지연 구간이 정상 구간보다 낮은 우선순위면 안 된다 — 더 봐야 할 개체다
+    pri = {r["animal_id"]: r["priority"] for r in t["heads"]["estrus"]["rows"]}
+    assert pri["E3"] >= 0.9, pri
+
+    # 3) **모델이 못 내는 헤드를 등록 시점에 말한다.** 나중에 조용히 빈 결과를
+    #    내면 "경보가 없다" 와 "볼 수가 없다" 를 구분할 수 없다
+    m = vc.ReplayModel(("Lying", "Standing", "Scrubbing", "Searching"))
+    sup = vc.head_support(m)
+    assert sup["farrowing"]["runs"] and not sup["disease"]["runs"]
+    assert sup["disease"]["missing"] == ["Coughing"]
+    assert all(s["why"].strip() and not s["why"].startswith(" ")
+               for s in sup.values()), {k: v["why"] for k, v in sup.items()}
+    # 어휘 밖 클래스를 조용히 받지 않는다
+    try:
+        vc.ReplayModel(("Lying",)).predict(None, None) if False else None
+        m2 = vc.ReplayModel(("Lying",), [("c", "1동", "1방", "t0", "t1",
+                                          {"Flying": 1.0}, 0.0)])
+        m2.predict(None, None)
+        raise AssertionError("어휘 밖 클래스가 통과했다")
+    except ValueError as e:
+        assert "어휘에 없는" in str(e), e
+
+    # 4) **스텁이 모델인 척하지 않는다** — 버전이 관측마다 따라다녀야 한다
+    obs = vc.ReplayModel(
+        ("Lying", "Standing"),
+        [("cam1", "1동", "1방", "2026-03-01T09:00", "2026-03-01T09:05",
+          {"Lying": 0.8, "Standing": 0.2}, 12.0)]).predict(None, None)
+    assert len(obs) == 1 and obs[0].model.startswith("replay")
+    assert obs[0].top() == ("Lying", 0.8)
+    # 개체를 특정 못 하면 None 이다 — 군사에서 트랙을 며칠씩 못 끌고 간다
+    assert obs[0].animal_id is None
+    # 활동량은 모델과 **따로** 온다. 모델이 실패해도 살아 있어야 한다
+    assert obs[0].activity_px == 12.0
+
+    # 5) API 가 같은 값을 내는가 — 라우터에 산술이 있으면 갈린다
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(ROOT))
+    try:
+        from fastapi.testclient import TestClient
+
+        from competition.server.app import app
+    except Exception:
+        return                          # fastapi 미설치 환경
+    c = TestClient(app)
+    r = c.post("/api/vision/targets", json={"as_of": on, "records": recs})
+    assert r.status_code == 200, r.text
+    assert {h: r.json()["heads"][h]["n"] for h in vc.HEADS} == \
+           {h: t["heads"][h]["n"] for h in vc.HEADS}
+    assert c.post("/api/vision/targets",
+                  json={"as_of": on, "records": []}).status_code == 422
+    ct = c.get("/api/vision/contract").json()
+    # **모델이 없다는 것을 응답이 말해야 한다**
+    assert ct["implemented"] == ["ReplayModel"]
+    assert "모델이 아직 없다" in ct["note"]
+    assert ct["baseline"]["behavior_10cls"] == 0.485
+    assert ct["windows"]["return"]["from_service"] == [vc.RETURN_FROM,
+                                                       vc.RETURN_TO]
+
+    # 6) CSV 를 거쳐도 그대로 도는가 — pandas 가 주는 NaN 은 JSON 에 못 싣는다
+    import csv
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    try:
+        cols = ["id", "parity", "weaning_date", "service_date",
+                "farrow_date", "outcome", "as_of"]
+        with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.DictWriter(fh, fieldnames=cols)
+            w.writeheader()
+            for x in recs:
+                w.writerow({**{k: "" for k in cols}, **x, "as_of": on})
+        got_recs, got_on = fr.herd_from_csv(path)
+        assert got_on == on
+        assert all(v is None or v == v for r in got_recs for v in r.values()), \
+            "NaN 이 남아 있으면 API 직렬화가 깨진다"
+        assert c.post("/api/vision/targets",
+                      json={"as_of": got_on,
+                            "records": got_recs}).status_code == 200
+    finally:
+        os.unlink(path)
+
+
 def test_season_interval_view() -> None:
     """정적 뷰가 **서버와 같은 수**를 말하는가.
 
@@ -4523,9 +4662,19 @@ def test_synth_farm() -> None:
         assert out["id"].is_unique and len(out) == n
         for c in ("id", "parity", "weaning_date", "service_date"):
             assert c in out.columns
-        # 기준일 이후 사건은 들어가면 안 된다(미래를 아는 셈이 된다)
-        assert (pd.to_datetime(out["service_date"]).dt.date
+        # 기준일 이후 사건은 들어가면 안 된다(미래를 아는 셈이 된다).
+        # 공태돈은 교배일이 비어 있으므로 빈 칸을 빼고 본다
+        svc = pd.to_datetime(out["service_date"]).dt.date.dropna()
+        assert (svc <= pd.Timestamp("2025-06-01").date()).all()
+        assert (pd.to_datetime(out["weaning_date"]).dt.date
                 <= pd.Timestamp("2025-06-01").date()).all()
+        # **공태돈(이유했고 아직 미교배)이 있어야 한다.** 예전에는 "교배가
+        # 지난 마지막 주기" 만 뽑아서 그 주기에 반드시 교배가 있었고, 그래서
+        # 공태가 한 두도 안 나왔다 — 정상 상태면 이유~교배 7일 / 주기 145일
+        # 이므로 5% 쯤이어야 하고, 빠지면 NPD 의 원천이 화면에서 사라진다
+        open_share = out["service_date"].isna().mean()
+        assert 0.01 < open_share < 0.15, f"공태 비중 {open_share:.1%}"
+        assert (out.loc[out["service_date"].isna(), "outcome"] == "공태").all()
 
 
 def test_docs_consistent() -> None:
@@ -4662,7 +4811,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
