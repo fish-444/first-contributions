@@ -267,8 +267,12 @@ def run(n_sows: int, system: str = "WEEKLY", days: int = 400,
         head = f"③ 개체 배치 (등록 도면 · {farm.name})"
     else:
         farm = fr.demo_farm(n_sows, want=want)
-        head = ("③ 개체 배치 (도면 미입력 → 방은 번식주기 비율로 생성"
-                + (", 두수는 이력에서 셈)" if counted else ")"))
+        # demo_farm 은 want 에 맞춰 방을 지어 낸다 — counted 를 줬으면 방도
+        # 센 두수에 맞춰진 것이지 주기 비율이 아니다. 라벨이 실제와 달라지면
+        # 안 되므로 머리글이 두 경우를 구분한다.
+        head = ("③ 개체 배치 (도면 미입력 → 방은 센 두수에 맞춰 지어냄 · "
+                "두수는 이력에서 셈)" if counted else
+                "③ 개체 배치 (도면 미입력 → 번식주기 비율로 생성)")
     occ = farm.occupancy()
     out["placed"] = len(farm._where)
     out["place_short"] = [{"stage": st, "want": w, "got": g, "why": why}
@@ -398,9 +402,15 @@ def _provenance(from_setup: bool = False,
     print("  계산  돈방 소요 · 배치 흐름 · 생산비 — 위 값에서 산식으로 나온다")
     print("  가정  사료 FCR·단가 = 관행 초기값 · 이유후 육성률 86%")
     # ③ 은 **방**과 **두수**가 따로 등급을 갖는다. 하나로 뭉치면 방이 실제인
-    # 농장과 두수가 실제인 농장이 같은 라벨을 달게 된다.
+    # 농장과 두수가 실제인 농장이 같은 라벨을 달게 된다. 그래서 아래는
+    # 방 한 줄 · 두수 한 줄이 **항상 각각** 찍힌다 — 이력만 넣은 경우에 방
+    # 출처가 통째로 사라졌던 버그가 있었다.
     if from_setup:
         print("  등록  ①②③ 의 **방**은 등록한 돈사다 — 분만틀·배치 간격·방 목록")
+    else:
+        print("  유도  ③ 의 **방**은 도면 미입력이라 두수에 맞춰 지어 낸 것이다 — "
+              "그래서\n        자리 부족이 절대 안 보인다. 실제 방은 "
+              "`--setup my_farm.json` 으로 넣는다")
     if herd_grade:
         print(f"  {herd_grade}  ③ 의 **단계별 두수는 개체 이력에서 센 값**이다 "
               f"— 유도값이 아니다."
@@ -409,20 +419,17 @@ def _provenance(from_setup: bool = False,
             print("        합성 이력이라 이 두수는 **농장 성적이 아니다.** "
                   "같은 열 이름의"
                   "\n        실농장 내보내기를 넣으면 그 자리가 실측으로 바뀐다.")
-    elif from_setup:
-        print("  유도  ③ 의 단계별 두수는 여전히 번식주기 비율이다. 방은 실제고"
-              "\n        두수는 유도값이라, 개체 이력을 넣으면 그쪽으로 바뀐다"
-              "\n        (`--herd my_herd.csv`)")
     else:
-        print("  유도  ③ 개체 배치는 **번식주기 비율로 만든 것**이고 실제 이력이 아니다"
-              "\n        (난수가 아니다 — 같은 입력이면 여섯 단계가 늘 같은 값을 낸다)")
-    if not (from_setup and herd_grade):
-        print("\n  → 실제 농장 값을 넣으면 ①②④⑤⑥ 이 그 농장 계산으로 바뀐다.")
-        if not from_setup:
-            print("     등록 화면 JSON 은 `--setup my_farm.json` 으로 넣는다.")
-        if not herd_grade:
-            print("     개체 이력은 `--herd my_herd.csv` 로 넣는다 — "
-                  "③ 두수가 유도에서 실측으로 바뀐다.")
+        print("  유도  ③ 의 **단계별 두수**는 번식주기 비율로 되푼 값이고 실제 "
+              "이력이 아니다"
+              "\n        (난수가 아니다 — 같은 입력이면 여섯 단계가 늘 같은 값을 "
+              "낸다)."
+              "\n        개체 이력을 `--herd my_herd.csv` 로 넣으면 세는 값으로 "
+              "바뀐다.")
+    # 닫는 힌트는 **아직 안 넣은 것만** 말한다. 등록 농장인데 "넣으면 바뀐다"
+    # 라고 찍으면 등록이 반영 안 된 줄 안다.
+    if not from_setup and not herd_grade:
+        print("\n  → 실제 농장 값을 넣으면 ①②③④⑤⑥ 이 그 농장 계산으로 바뀐다.")
 
 
 def print_requirements() -> None:
@@ -461,7 +468,8 @@ def main(argv=None) -> int:
     ap.add_argument("--herd-grade", default="합성",
                     choices=["실측", "합성"],
                     help="이력의 등급. synth_farm 이 낸 것이면 합성이다")
-    ap.add_argument("--herd-on", help="기준일. 기본은 CSV 의 as_of 열")
+    ap.add_argument("--herd-on", help="기준일 — CSV 에 as_of 열이 **없을 때만** "
+                                      "쓴다. 있는 파일의 기준일은 덮을 수 없다")
     ap.add_argument("--data", action="store_true", help="필요한 자료만 출력")
     a = ap.parse_args(argv)
     if a.data:
@@ -488,7 +496,18 @@ def main(argv=None) -> int:
         import farm_registry as fr
 
         recs, as_of = fr.herd_from_csv(a.herd)
-        on = a.herd_on or as_of
+        # --herd-on 은 as_of 가 **없는** 파일의 보조 수단이지, 있는 파일의
+        # 기준일을 덮는 스위치가 아니다. 덮게 두면 이 배선이 막으려던 사고
+        # (다른 날짜로 읽어 283→175두, 분만사 18%→37%)를 CLI 가 그대로
+        # 되살린다 — 파일 안 날짜가 섞이면 herd_from_csv 가 거부하면서
+        # 밖에서 다른 날짜를 꽂는 건 통과하면 앞뒤가 안 맞는다.
+        if a.herd_on and as_of and a.herd_on != as_of:
+            print(f"--herd-on {a.herd_on} ≠ 파일의 as_of {as_of}. 이 CSV 는 "
+                  f"{as_of} 하루의 스냅숏이라 다른 날짜로 읽으면 개체가 "
+                  f"통째로 빠진다.\n다른 기준일이 필요하면 그 날짜로 스냅숏을 "
+                  f"다시 뽑으세요 (synth_farm --today).", file=sys.stderr)
+            return 2
+        on = as_of or a.herd_on
         if not on:
             # **오늘 날짜로 몰래 읽지 않는다.** 이 파일은 하루의 스냅숏이라
             # 기준일을 벗어나면 개체가 통째로 빠지고 단계 구성이 뒤틀린다.

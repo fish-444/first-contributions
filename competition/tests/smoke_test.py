@@ -3393,6 +3393,30 @@ def test_herd_drives_stage_counts() -> None:
         assert isinstance(code, str) and code, r["id"]
     # 재발돈을 임신사로 보내면 **있지도 않은 임신돈**이 생긴다
     assert fr.stage_of(recs[5], on)[1] == "returned"
+
+    # 교배 후 기록이 끊긴 개체(유산·도태) — 분만사에 영구 배치되면 안 되고
+    # "예정 -N일 전" 같은 있지도 않은 날짜가 근거에 찍혀도 안 된다
+    cut = {"id": "I", "parity": 3, "weaning_date": "2025-01-01",
+           "service_date": "2025-01-08", "farrow_date": "", "outcome": ""}
+    st, code, why = fr.stage_of(cut, "2025-12-01")
+    assert (st, code) == (None, "record_ends"), (st, code, why)
+    assert "-" not in why.split("일")[0], why
+    # 예정일 직후의 며칠은 기록 지연일 수 있다 — 아직 분만사다(음수 없이)
+    st, _c, why = fr.stage_of(cut, "2025-05-04")   # 예정 5-02 + 2일
+    assert st == "분만사" and "경과" in why, (st, why)
+    # 이유 후 한 주기를 통째로 넘긴 미교배 — 도태로 끊긴 기록이다
+    st, code, _w = fr.stage_of({"id": "J", "parity": 2,
+                                "weaning_date": "2025-01-01"}, "2025-12-01")
+    assert (st, code) == (None, "record_ends"), (st, code)
+    # 산차 0 인데 교배 기록이 있다 — 후보사가 아니라 날짜로 판정해야 한다
+    # (실농장은 산차를 분만 횟수로 세므로 교배된 후보돈이 산차 0 이다)
+    st, _c, _w = fr.stage_of({"id": "K", "parity": 0,
+                              "service_date": "2026-01-20"}, "2026-03-01")
+    assert st == "임신사", st
+    # parity 가 NaN(빈 칸) — 한 칸 때문에 전체 집계가 죽으면 안 된다
+    st, _c, _w = fr.stage_of({"id": "L", "parity": float("nan"),
+                              "service_date": "2026-02-20"}, "2026-03-01")
+    assert st == "교배사", st
     # 교배/임신 경계는 `stage_counts` 와 같은 CONFIRM 이어야 한다. herd_board
     # 의 21일을 쓰면 유도값과의 차이에 정의 차이가 섞인다
     svc = {"id": "X", "parity": 3, "weaning_date": "2026-01-01",
@@ -3470,6 +3494,21 @@ def test_herd_drives_stage_counts() -> None:
     assert base["stage_counts"]["source"] == "번식주기 비율"
     assert base["stage_counts"]["used"] == fr.stage_counts(300)
     assert "herd" not in base and not base["place_short"]
+
+    # CLI: as_of 가 있는 파일의 기준일을 --herd-on 으로 덮을 수 없다 —
+    # 덮게 두면 이 배선이 막으려던 사고(다른 날짜로 읽어 개체 유실)를
+    # CLI 가 되살린다
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    try:
+        with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(recs[0]) + ["as_of"])
+            w.writeheader()
+            for r in recs:
+                w.writerow({**r, "as_of": on})
+        assert rf.main(["--herd", path, "--herd-on", "2026-04-01"]) == 2
+    finally:
+        os.unlink(path)
 
 
 def test_timing_cache_is_transparent() -> None:

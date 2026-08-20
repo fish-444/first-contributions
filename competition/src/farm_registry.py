@@ -314,10 +314,26 @@ def stage_of(rec: dict, on) -> tuple[str | None, str, str]:
             return None
         return rc._d(v)
 
-    if int(rec.get("parity", 0) or 0) <= 0:
-        return "후보사", "gilt", "산차 0 — 초교배 전"
+    # parity 는 셋으로 갈린다: 값 / 빈 칸 / 쓰레기. 빈 칸은 pandas 가 NaN 으로
+    # 주는데 **NaN 은 truthy 라** `or 0` 이 안 걸리고 int(nan) 이 터진다 —
+    # 한 칸 때문에 전체 집계가 죽는다. 모르면 None 으로 두고 날짜로만 판정한다.
+    parity = None
+    v = rec.get("parity")
+    if v is not None and v != "":
+        try:
+            f = float(v)
+            if f == f:                     # NaN 걸러내기
+                parity = int(f)
+        except (TypeError, ValueError):
+            parity = None                  # 쓰레기 값 — 산차를 모르는 것과 같다
 
     wea, svc, far = d("weaning_date"), d("service_date"), d("farrow_date")
+
+    # 산차 0 = 후보돈, 단 **교배 기록이 없을 때만.** 실농장 내보내기는 산차를
+    # 분만 횟수로 세므로, 초교배 후 첫 분만을 기다리는 후보돈도 산차 0 이다 —
+    # 날짜보다 먼저 걸러 버리면 그 개체들이 전부 후보사로 잘못 집계된다.
+    if parity is not None and parity <= 0 and svc is None:
+        return "후보사", "gilt", "산차 0 — 초교배 전"
     # 같은 날짜면 **뒤 사건이 이긴다.** 이유와 교배가 같은 날인 기록은 흔한데
     # (이유 당일 발정), 문자열로 정렬하면 "wea" > "svc" 라 교배가 없던 일이
     # 되고 그 모돈은 영원히 공태로 남는다.
@@ -329,9 +345,18 @@ def stage_of(rec: dict, on) -> tuple[str | None, str, str]:
         return None, "before_record", "그날 이전 기록이 없다"
     last = max(past)[2]
 
+    cycle = W2S + GEST + LACT              # 145일 — 한 번식주기
+
     if last == "wea":
-        # 이유했고 아직 교배 안 됐다 — 공태. 교배사에 있다.
-        return "교배사", "open", f"이유 {(t0 - wea).days}일째 · 미교배"
+        od = (t0 - wea).days
+        # 이유했고 아직 교배 안 됐다 — 공태. 교배사에 있다. 공태가 길어지는
+        # 것 자체는 실재하는 문제라(NPD 의 원천) 문턱으로 자르면 안 되지만,
+        # **한 주기(145일)를 통째로 넘기고도 교배가 없는 기록**은 도태·폐사로
+        # 끊긴 것이다 — 분만 뒤 이유가 없는 기록과 같은 취급을 한다.
+        if od > cycle:
+            return (None, "record_ends",
+                    f"이유 {od}일째인데 교배 기록이 없다 — 기록이 여기서 끝난다")
+        return "교배사", "open", f"이유 {od}일째 · 미교배"
 
     if last == "far":
         if (t0 - far).days < LACT:
@@ -351,6 +376,16 @@ def stage_of(rec: dict, on) -> tuple[str | None, str, str]:
     if gd < CONFIRM:
         return "교배사", "served", f"교배 {gd}일째 · 임신확인 전"
     exp_far = far or (svc + timedelta(days=GEST))
+    # 예정일이 임신기간 실측 폭(111~120일)을 넘겨 지났는데 분만 기록이 없다 —
+    # 유산·도태로 기록이 끊긴 것이다. 안 자르면 그 개체가 **분만사에 영구
+    # 배치**되고 근거에 "예정 -213일 전" 같은 있지도 않은 날짜가 찍힌다.
+    if far is None and t0 > exp_far + timedelta(days=7):
+        return (None, "record_ends",
+                f"분만 예정 {(t0 - exp_far).days}일 지났는데 분만 기록이 "
+                f"없다 — 기록이 여기서 끝난다")
+    if t0 >= exp_far:
+        return ("분만사", "pre_farrow",
+                f"분만 예정 {(t0 - exp_far).days}일 경과 · 분만 대기")
     if t0 >= exp_far - timedelta(days=PRE_FARROW):
         return ("분만사", "pre_farrow",
                 f"분만 예정 {(exp_far - t0).days}일 전 · 사전 이동")
@@ -376,8 +411,7 @@ def counts_from_herd(records, on) -> dict:
     n = sum(counts.values())
     return {
         "on": rc._d(on), "counts": counts, "n": n,
-        "n_records": len(list(records)) if hasattr(records, "__len__")
-        else None,
+        "n_records": len(records) if hasattr(records, "__len__") else None,
         "unplaced": unplaced,
         "share": {k: (round(v / n, 3) if n else 0.0)
                   for k, v in counts.items()},
