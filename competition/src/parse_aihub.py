@@ -26,18 +26,52 @@ from typing import Any
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# 71763 양돈 생체 에너지 데이터 (JSON)
-#   annotations = {
-#     "keypoint-top": [{"pointcount": n, "distance": d}, ...],
-#     "TextInfo": {chamber-number, pig-number, weight, pig-classification,
-#                  measure-date, measure-time},
-#     "SensorData": {T, RH, CO2, NH3, breath-rate},
-#     "TemperatureData": {rectal-, back-, neck-, head-temperature},
-#     "FeedingAndManagementData": {ventilation-rate, feedstuff-volume,
-#         watersupply, pig-manure, sensibleHeat, IatentHeat, ...},
-#   }
+# 71763 양돈 생체 에너지 데이터 (JSON) — 실라벨로 스키마 확정 (2026-08-19)
+#
+# 문서(SCHEMA.md)는 TextInfo/SensorData/TemperatureData/FeedingAndManagementData
+# 가 annotations **안에** 있다고 적어 두었으나, 실제로는 annotations 의
+# **형제**다. breath-rate·sensibleHeat·latentHeat·pig-manure 는 어느 블록에도
+# 속하지 않는 최상위 필드다. 문서의 IatentHeat(대문자 I)는 latentHeat 이고
+# feedstuff-volume 은 feedstuff_volume(밑줄)이다.
+#
+#   ImageInfo{video-category, videoid, chamber-number, pig-classification,
+#             pig-number, breathing-type, date, time, timestamp, Floormaterial}
+#   annotations{keypoint-top:[[x,y],[x,y]], pointcount, distance,
+#               available-area-bbox:[x,y,x,y], bbox:[x,y,w,h]}
+#   TextInfo{chamber-number, pig-number, weight, pig-classification,
+#            measure-date, measure-time}
+#   SensorData{T, RH, CO2, NH3}
+#   TemperatureData{rectal-, back-, neck-, head-temperature}
+#   FeedingAndManagementData{ventilation-rate, feedstuff_volume, watersupply}
+#   breath-rate | evaporation | pig-manure | sensibleHeat | latentHeat  ← 최상위
+#
+# 모달리티가 둘이고, 문서에는 앞의 하나만 적혀 있었다.
+#   호흡량 video-category="pig"   : 개체 있음(pig-number). 타깃 breath-rate.
+#   증발량 video-category="floor" : 개체 **없음**. 타깃 evaporation. bbox 계열.
+#   둘 다 sensibleHeat/latentHeat 를 갖는다.
+#
+# 분석 단위는 프레임이 아니라 **클립**(폴더 하나 = 측정 세션 하나)이다.
+# 한 클립 안에서 타깃·환경·개체 값이 전부 상수이고 프레임마다 변하는 것은
+# distance 와 breathing-type 뿐이다. 프레임 행으로 회귀를 돌리면 같은 답을
+# 수십 번 세는 셈이라 성적이 부풀려진다 → aggregate_71763_clips() 로 접는다.
 # ---------------------------------------------------------------------------
 PIG_CLASSES_71763 = ["weaningpig", "piglet", "growing-pig", "porker"]
+SPLITS_71763 = ("TL", "VL_A", "VL_B", "VL")   # VL 보다 VL_A/VL_B 를 먼저 본다
+
+#: 클립 안에서 상수인 필드(= 클립 단위 정보). 나머지는 프레임 단위다.
+CLIP_CONST_71763 = [
+    "video_category", "videoid", "pig_class", "pig_number", "floor_material",
+    "date", "time", "weight_kg", "measure_date", "measure_time",
+    "temp_c", "humidity_pct", "co2_ppm", "nh3_ppm",
+    "rectal_temp", "back_temp", "neck_temp", "head_temp",
+    "ventilation", "feed_volume", "water_supply", "manure",
+    "breath_rate", "evaporation", "sensible_heat", "latent_heat",
+]
+#: 프레임마다 변하는 필드 — 클립 단위로 접을 때 요약 통계를 만든다.
+CLIP_VARY_71763 = ["keypoint_distance", "keypoint_distance_calc",
+                   "bbox_area", "area_ratio"]
+
+TARGETS_71763 = ["breath_rate", "sensible_heat", "latent_heat", "evaporation"]
 
 
 def _num(d: dict, key: str, default: Any = None) -> Any:
@@ -45,10 +79,31 @@ def _num(d: dict, key: str, default: Any = None) -> Any:
     return v if v is not None else default
 
 
-def parse_71763(label_dir: str) -> pd.DataFrame:
-    """71763 라벨 JSON 디렉터리 → 관측 단위 정형 테이블.
+def _split_of(path: str) -> Any:
+    parts = set(path.replace("\\", "/").split("/"))
+    for s in SPLITS_71763:
+        if s in parts:
+            return s
+    return None
 
-    타깃 후보: breath_rate(호흡수), sensible_heat(현열량), latent_heat(잠열량).
+
+def _kp_distance(kp: Any) -> Any:
+    """keypoint-top 두 점 사이 거리를 직접 계산한다(라벨 distance 검증용)."""
+    if not isinstance(kp, list) or len(kp) < 2:
+        return None
+    try:
+        x1, y1 = float(kp[0][0]), float(kp[0][1])
+        x2, y2 = float(kp[1][0]), float(kp[1][1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+
+
+def parse_71763(label_dir: str) -> pd.DataFrame:
+    """71763 라벨 JSON 디렉터리 → **프레임** 단위 정형 테이블.
+
+    회귀에 그대로 넣으면 안 된다. 클립 안에서 타깃이 상수이므로
+    aggregate_71763_clips() 로 접은 뒤 모델에 넣는다.
     """
     rows: list[dict] = []
     for path in _iter_json(label_dir):
@@ -56,88 +111,216 @@ def parse_71763(label_dir: str) -> pd.DataFrame:
             obj = json.load(open(path, encoding="utf-8"))
         except Exception:  # noqa: BLE001
             continue
-        ann = obj.get("annotations", obj)  # 최상위가 곧 annotations 인 경우도 허용
-        ti = ann.get("TextInfo", {})
-        sd = ann.get("SensorData", {})
-        td = ann.get("TemperatureData", {})
-        fm = ann.get("FeedingAndManagementData", {})
-        kps = ann.get("keypoint-top", []) or []
-        kp_dist = kps[0].get("distance") if kps and isinstance(kps[0], dict) else None
+        # 예전 스키마(모든 블록이 annotations 안)도 계속 받아 준다.
+        ann = obj.get("annotations") or {}
+        src = obj if ("TextInfo" in obj or "ImageInfo" in obj) else ann
+        if not isinstance(ann, dict):
+            ann = {}
+        ii = src.get("ImageInfo", {}) or {}
+        ti = src.get("TextInfo", {}) or {}
+        sd = src.get("SensorData", {}) or {}
+        td = src.get("TemperatureData", {}) or {}
+        fm = src.get("FeedingAndManagementData", {}) or {}
+
+        cat = ii.get("video-category")
+        bbox = ann.get("bbox") or []
+        avail = ann.get("available-area-bbox") or []
+        bw = _to_float(bbox[2]) if len(bbox) >= 4 else None
+        bh = _to_float(bbox[3]) if len(bbox) >= 4 else None
+        b_area = bw * bh if bw and bh else None
+        a_area = None
+        if len(avail) >= 4:
+            ax, ay, bx, by = (_to_float(v) for v in avail[:4])
+            if None not in (ax, ay, bx, by):
+                a_area = abs(bx - ax) * abs(by - ay)
 
         rows.append({
-            "chamber": _num(ti, "chamber-number"),
-            "pig_id": _num(ti, "pig-number"),
-            "weight_kg": _num(ti, "weight"),
-            "pig_class": ti.get("pig-classification"),
+            # ── 식별자 (클립 = 파일이 들어 있는 폴더) ─────────────────────
+            "split": _split_of(path),
+            "modality": {"pig": "호흡량", "floor": "증발량"}.get(cat, cat),
+            "clip_id": os.path.basename(os.path.dirname(path)),
+            "frame_file": os.path.basename(path),
+            "timestamp": ii.get("timestamp"),
+            # ── ImageInfo ────────────────────────────────────────────────
+            "video_category": cat,
+            "videoid": _to_int(ii.get("videoid")),
+            "breathing_type": ii.get("breathing-type"),
+            "floor_material": ii.get("Floormaterial"),
+            "date": ii.get("date") or ti.get("measure-date"),
+            "time": ii.get("time") or ti.get("measure-time"),
+            # ── TextInfo (chamber/개체는 ImageInfo 를 보조로 쓴다) ────────
+            "chamber": _to_int(_num(ti, "chamber-number", ii.get("chamber-number"))),
+            "pig_number": _to_int(_num(ti, "pig-number", ii.get("pig-number"))),
+            "pig_class": ti.get("pig-classification") or ii.get("pig-classification"),
+            "weight_kg": _to_float(ti.get("weight")),
             "measure_date": ti.get("measure-date"),
             "measure_time": ti.get("measure-time"),
-            # 환경 센서
-            "temp_c": _num(sd, "T"),
-            "humidity_pct": _num(sd, "RH"),
-            "co2_ppm": _num(sd, "CO2"),
-            "nh3_ppm": _num(sd, "NH3"),
-            "breath_rate": _num(sd, "breath-rate"),
-            # 개체 온도
-            "rectal_temp": _num(td, "rectal-temperature"),
-            "back_temp": _num(td, "back-temperature"),
-            "neck_temp": _num(td, "neck-temperature"),
-            "head_temp": _num(td, "head-temperature"),
-            # 사양관리 + 열량(생체에너지)
-            "ventilation": _num(fm, "ventilation-rate"),
-            "feed_volume": _num(fm, "feedstuff-volume"),
-            "water_supply": _num(fm, "watersupply"),
-            "manure_heat": _num(fm, "pig-manure"),
-            "sensible_heat": _num(fm, "sensibleHeat"),
-            "latent_heat": _num(fm, "IatentHeat"),
-            "keypoint_distance": kp_dist,
+            # ── 환경 센서 ────────────────────────────────────────────────
+            "temp_c": _to_float(sd.get("T")),
+            "humidity_pct": _to_float(sd.get("RH")),
+            "co2_ppm": _to_float(sd.get("CO2")),
+            "nh3_ppm": _to_float(sd.get("NH3")),
+            # ── 개체 부위 온도 ───────────────────────────────────────────
+            "rectal_temp": _to_float(td.get("rectal-temperature")),
+            "back_temp": _to_float(td.get("back-temperature")),
+            "neck_temp": _to_float(td.get("neck-temperature")),
+            "head_temp": _to_float(td.get("head-temperature")),
+            # ── 사양관리 ─────────────────────────────────────────────────
+            "ventilation": _to_float(fm.get("ventilation-rate")),
+            "feed_volume": _to_float(_num(fm, "feedstuff_volume",
+                                          fm.get("feedstuff-volume"))),
+            "water_supply": _to_float(fm.get("watersupply")),
+            # ── 최상위 (문서가 블록 안이라고 적어 둔 것들) ───────────────
+            "manure": _to_float(_num(src, "pig-manure", fm.get("pig-manure"))),
+            "breath_rate": _to_float(_num(src, "breath-rate",
+                                          sd.get("breath-rate"))),
+            "evaporation": _to_float(src.get("evaporation")),
+            "sensible_heat": _to_float(_num(src, "sensibleHeat",
+                                            fm.get("sensibleHeat"))),
+            "latent_heat": _to_float(_num(src, "latentHeat",
+                                          _num(fm, "latentHeat",
+                                               fm.get("IatentHeat")))),
+            # ── annotations (프레임 단위) ────────────────────────────────
+            "pointcount": _to_int(ann.get("pointcount")),
+            "keypoint_distance": _to_float(ann.get("distance")),
+            "keypoint_distance_calc": _kp_distance(ann.get("keypoint-top")),
+            "bbox_w": bw,
+            "bbox_h": bh,
+            "bbox_area": b_area,
+            "area_ratio": (b_area / a_area) if b_area and a_area else None,
         })
     return pd.DataFrame(rows)
 
 
+def aggregate_71763_clips(df: pd.DataFrame) -> pd.DataFrame:
+    """프레임 테이블 → **클립** 단위 테이블(회귀에 쓸 정직한 단위).
+
+    클립 내 상수 필드는 첫 값을 쓰되 실제로 상수였는지 `<필드>_nuniq` 로
+    남긴다(2 이상이면 상수 가정이 깨진 것이므로 반드시 확인해야 한다).
+    프레임마다 변하는 필드는 평균·표준편차·최소·최대로 접는다.
+    """
+    if df.empty:
+        return df
+    keys = [k for k in ("split", "modality", "chamber", "clip_id")
+            if k in df.columns]
+    out: list[dict] = []
+    for key, g in df.groupby(keys, dropna=False):
+        row = dict(zip(keys, key if isinstance(key, tuple) else (key,)))
+        row["n_frames"] = len(g)
+        for c in CLIP_CONST_71763:
+            if c in g.columns and c not in keys:
+                v = g[c].dropna()
+                row[c] = v.iloc[0] if len(v) else None
+                row[c + "_nuniq"] = int(v.nunique())
+        for c in CLIP_VARY_71763:
+            if c in g.columns:
+                v = pd.to_numeric(g[c], errors="coerce").dropna()
+                row[c + "_mean"] = v.mean() if len(v) else None
+                row[c + "_std"] = v.std() if len(v) > 1 else None
+                row[c + "_min"] = v.min() if len(v) else None
+                row[c + "_max"] = v.max() if len(v) else None
+        if "breathing_type" in g.columns:
+            bt = g["breathing_type"].dropna()
+            row["insp_ratio"] = (bt == "inspiratory").mean() if len(bt) else None
+        out.append(row)
+    return pd.DataFrame(out)
+
+
+def group_key_71763(df: pd.DataFrame) -> pd.Series:
+    """누수 방지용 그룹 키.
+
+    호흡량은 개체가 있지만 pig-number 가 **챔버마다 다시 매겨진다**(고유
+    pig-number 71개 중 13개가 둘 이상의 챔버에 나타난다). 따라서 개체는
+    (chamber, pig_number) 조합이어야 한다. pig_class 는 **키에 넣지 않는다** —
+    한 개체가 자라면서 weaningpig→piglet 으로 바뀌는 사례가 있어(chamber4
+    pig5), 넣으면 같은 개체가 두 그룹으로 쪼개져 오히려 누수가 된다.
+
+    증발량에는 개체가 없으므로 (chamber, date) 로 묶는다 — 같은 날 같은
+    챔버의 측정은 환경이 사실상 같아서 서로 다른 폴드로 흩어지면 누수가 된다.
+    """
+    def key(r):
+        if r.get("modality") == "증발량" or pd.isna(r.get("pig_number")):
+            return "floor|%s|%s" % (r.get("chamber"), r.get("date"))
+        return "pig|%s|%s" % (r.get("chamber"), r.get("pig_number"))
+    return df.apply(key, axis=1)
+
+
 def generate_synthetic_71763(out_dir: str, n: int = 200) -> None:
-    """문서 스키마대로 71763 라벨 JSON 을 생성(파서 검증용)."""
-    os.makedirs(out_dir, exist_ok=True)
+    """**실라벨 스키마대로** 71763 합성 라벨을 만든다(파서 검증용).
+
+    실데이터처럼 클립 폴더 구조를 만들고, 클립 안에서 타깃·환경은 상수로 두고
+    distance·breathing-type 만 프레임마다 바꾼다. 두 모달리티를 모두 낸다.
+    """
     rng = random.Random(71763)
-    for i in range(n):
+    n_clips = max(2, n // 20)
+    for c in range(n_clips):
+        floor = (c % 2 == 1)
+        chamber = rng.randint(1, 4)
         T = round(rng.uniform(15, 32), 1)
-        RH = round(rng.uniform(40, 85), 1)
+        RH = round(rng.uniform(20, 90), 1)
         weight = round(rng.uniform(8, 120), 1)
-        # 호흡수: 고온·고습일수록 증가(열스트레스)
-        breath = round(20 + (T - 20) * 2.2 + (RH - 60) * 0.1 + rng.gauss(0, 3), 1)
-        sensible = round(weight * 1.1 + (T - 20) * 0.5 + rng.gauss(0, 5), 1)
-        latent = round(weight * 0.7 + (RH - 60) * 0.3 + rng.gauss(0, 4), 1)
-        ann = {
-            "annotations": {
-                "keypoint-top": [{"pointcount": 2,
-                                  "distance": round(rng.uniform(20, 90), 1)}],
-                "TextInfo": {
-                    "chamber-number": rng.randint(1, 8),
-                    "pig-number": rng.randint(1, 300),
-                    "weight": weight,
-                    "pig-classification": rng.choice(PIG_CLASSES_71763),
-                    "measure-date": "2023-08-01",
-                    "measure-time": f"{rng.randint(0,23):02d}:00:00",
-                },
+        breath = round(20 + (T - 20) * 2.2 + (RH - 60) * 0.1 + rng.gauss(0, 3))
+        sensible = round(weight * 1.1 + (T - 20) * 0.5 + rng.gauss(0, 5), 2)
+        latent = round(weight * 0.7 + (RH - 60) * 0.3 + rng.gauss(0, 4), 2)
+        pig_class = rng.choice(PIG_CLASSES_71763)
+        date = "22%02d%02d" % (rng.randint(9, 12), rng.randint(1, 28))
+        tm = "%02d%02d" % (rng.randint(0, 23), rng.randint(0, 59))
+        cat = "floor" if floor else "pig"
+        pig_no = None if floor else rng.randint(1, 99)
+        clip = ("chamber%d_%s_%s_%s%s_%s00_%03d"
+                % (chamber, cat, pig_class,
+                   "" if floor else ("pig%d_" % pig_no), date, tm, c))
+        d = os.path.join(out_dir, "증발량 이미지" if floor else "호흡량 이미지",
+                         "chamber%d" % chamber, clip)
+        os.makedirs(d, exist_ok=True)
+        for f in range(20):
+            ii = {"video-category": cat, "videoid": c,
+                  "chamber-number": chamber, "pig-classification": pig_class,
+                  "date": date, "time": tm, "timestamp": "%05d" % f}
+            if floor:
+                ii["Floormaterial"] = rng.choice(["concrete", "diatomite"])
+                ann = {"available-area-bbox": [460, 210, 1090, 870],
+                       "bbox": [rng.randint(600, 700), rng.randint(200, 240),
+                                rng.randint(500, 600), rng.randint(800, 900)]}
+            else:
+                ii["pig-number"] = pig_no
+                ii["breathing-type"] = rng.choice(["inspiratory", "expiratory"])
+                x1, y1 = rng.randint(400, 550), rng.randint(600, 720)
+                x2, y2 = rng.randint(900, 1000), rng.randint(280, 330)
+                ann = {"keypoint-top": [[x1, y1], [x2, y2]], "pointcount": 2,
+                       "distance": round(((x1 - x2) ** 2
+                                          + (y1 - y2) ** 2) ** 0.5, 3)}
+            ti = {"chamber-number": chamber, "pig-classification": pig_class,
+                  "measure-date": date, "measure-time": tm}
+            if not floor:
+                ti["pig-number"] = pig_no
+                ti["weight"] = weight
+            obj = {
+                "ImageInfo": ii,
+                "annotations": ann,
+                "TextInfo": ti,
                 "SensorData": {"T": T, "RH": RH,
-                               "CO2": round(rng.uniform(500, 3000)),
-                               "NH3": round(rng.uniform(2, 40), 1),
-                               "breath-rate": breath},
-                "TemperatureData": {
-                    "rectal-temperature": round(rng.uniform(38.5, 40.5), 1),
+                               "CO2": round(rng.uniform(400, 3000), 1),
+                               "NH3": round(rng.uniform(1, 40), 1)},
+                "FeedingAndManagementData": {
+                    "ventilation-rate": round(rng.uniform(1, 3), 2),
+                    "feedstuff_volume": round(rng.uniform(0.3, 3.5), 3),
+                    "watersupply": round(rng.uniform(1, 10), 1)},
+                "pig-manure": round(rng.uniform(400, 1400), 1),
+                "sensibleHeat": sensible,
+                "latentHeat": latent,
+            }
+            if floor:
+                obj["evaporation"] = round(rng.uniform(0.5, 40), 2)
+            else:
+                obj["breath-rate"] = breath
+                obj["TemperatureData"] = {
+                    "rectal-temperature": round(rng.uniform(35.5, 40.0), 1),
                     "back-temperature": round(rng.uniform(30, 38), 1),
                     "neck-temperature": round(rng.uniform(30, 38), 1),
-                    "head-temperature": round(rng.uniform(30, 38), 1)},
-                "FeedingAndManagementData": {
-                    "ventilation-rate": round(rng.uniform(10, 60), 1),
-                    "feedstuff-volume": round(rng.uniform(0.5, 3.5), 2),
-                    "watersupply": round(rng.uniform(1, 10), 1),
-                    "pig-manure": round(rng.uniform(50, 300), 1),
-                    "sensibleHeat": sensible,
-                    "IatentHeat": latent},
-            }
-        }
-        json.dump(ann, open(os.path.join(out_dir, f"S_{i:04d}.json"), "w",
-                            encoding="utf-8"), ensure_ascii=False)
+                    "head-temperature": round(rng.uniform(30, 38), 1)}
+            json.dump(obj, open(os.path.join(d, "%s_%05d.json" % (clip, f)),
+                                "w", encoding="utf-8"), ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
