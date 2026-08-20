@@ -1,0 +1,107 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>여름 손실 · 간격 what-if</title><style>
+:root{color-scheme:light;--page:#f9f9f7;--surface:#fcfcfb;--surface2:#f2f2ee;
+--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--border:rgba(11,11,11,.12);
+--band:rgba(11,11,11,.09);--band2:rgba(42,120,214,.22);--acc:#2a78d6;
+--accs:rgba(42,120,214,.10);--stop:#d03b3b;--stops:rgba(208,59,59,.12);
+--good:#1baf7a;--goods:rgba(27,175,122,.14);--warn:#e8a33d}
+@media(prefers-color-scheme:dark){:root:where(:not([data-theme=light])){
+--page:#0d0d0d;--surface:#1a1a19;--surface2:#242422;--ink:#fff;--ink2:#c3c2b7;
+--muted:#898781;--border:rgba(255,255,255,.14);--band:rgba(255,255,255,.11);
+--band2:rgba(57,135,229,.30);--acc:#5fa8f0;--accs:rgba(95,168,240,.14);
+--stop:#f07070;--stops:rgba(240,112,112,.15);--good:#4fd6a0;
+--goods:rgba(79,214,160,.16);--warn:#e8b45e}}
+:root[data-theme=dark]{--page:#0d0d0d;--surface:#1a1a19;--surface2:#242422;
+--ink:#fff;--ink2:#c3c2b7;--muted:#898781;--border:rgba(255,255,255,.14);
+--band:rgba(255,255,255,.11);--band2:rgba(57,135,229,.30);--acc:#5fa8f0;
+--accs:rgba(95,168,240,.14);--stop:#f07070;--stops:rgba(240,112,112,.15);
+--good:#4fd6a0;--goods:rgba(79,214,160,.16);--warn:#e8b45e}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif;
+background:var(--page);color:var(--ink);line-height:1.55;padding:22px}
+.wrap{max-width:860px;margin:0 auto}
+h1{font-size:1.55rem;letter-spacing:-.02em}
+.sub{color:var(--ink2);font-size:.92rem;margin:6px 0}
+.demo{font-size:.82rem;color:var(--ink2);background:var(--surface2);
+border:1px solid var(--border);border-radius:9px;padding:9px 12px;margin:12px 0 18px}
+.card{background:var(--surface);border:1px solid var(--border);
+border-radius:13px;padding:17px 18px;margin-bottom:15px}
+.ch{display:flex;align-items:baseline;gap:9px}
+.cn{font-size:.72rem;font-weight:700;color:var(--page);background:var(--ink);
+border-radius:6px;padding:2px 7px}
+h2{font-size:1.05rem;letter-spacing:-.01em}
+h3{font-size:.92rem;margin:18px 0 8px}
+.prov{display:flex;align-items:center;gap:7px;margin:7px 0 2px;flex-wrap:wrap}
+.tag{font-size:.68rem;font-weight:700;color:#fff;background:var(--tc);
+border-radius:5px;padding:1px 7px}
+.tagtxt{font-size:.74rem;color:var(--muted)}
+.lead{font-size:.87rem;color:var(--ink2);margin:9px 0 4px}
+.body{margin-top:12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+gap:1px;background:var(--border);border:1px solid var(--border);
+border-radius:10px;overflow:hidden;margin:12px 0}
+.kpi{background:var(--surface2);padding:11px 13px;display:flex;
+flex-direction:column;gap:2px}
+.kpi .v{font-family:ui-monospace,Menlo,monospace;font-size:1.15rem;
+font-weight:600;letter-spacing:-.01em}
+.kpi .k{font-size:.78rem;color:var(--ink2)}
+.kpi .d{font-size:.72rem;color:var(--muted)}
+.strip{position:relative;height:46px;margin:22px 0 6px}
+.strip .band{position:absolute;top:14px;height:9px;border-radius:5px;
+background:var(--band)}
+.strip .band2{position:absolute;top:14px;height:9px;border-radius:5px;
+background:var(--band2)}
+.strip .med{position:absolute;top:8px;height:21px;width:2px;background:var(--ink)}
+.strip .lb{position:absolute;top:30px;transform:translateX(-50%);
+font-family:ui-monospace,Menlo,monospace;font-size:.63rem;color:var(--muted);
+white-space:nowrap}
+.note{font-size:.8rem;color:var(--ink2);margin:9px 0}
+.warn{font-size:.82rem;color:var(--warn);margin:11px 0;
+background:var(--surface2);border-left:3px solid var(--warn);
+border-radius:0 7px 7px 0;padding:9px 12px}
+.caveat{font-size:.76rem;color:var(--muted);margin-top:16px;
+padding-top:12px;border-top:1px solid var(--border);line-height:1.75}
+.tw{overflow-x:auto;margin:10px 0}
+table{width:100%;border-collapse:collapse;font-size:.84rem;min-width:520px}
+th{text-align:left;font-size:.65rem;letter-spacing:.06em;color:var(--muted);
+font-weight:500;padding:0 11px 7px 0;border-bottom:1px solid var(--border)}
+td{padding:9px 11px 9px 0;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:0}
+td.d{font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+tr.hi td{font-weight:600}
+tr.cur td{background:var(--accs)}
+.pill{font-family:ui-monospace,Menlo,monospace;font-size:.6rem;font-weight:500;
+border-radius:4px;padding:1px 6px;margin-left:6px;background:var(--accs);
+color:var(--acc);white-space:nowrap}
+.pill.stop{background:var(--stops);color:var(--stop);margin-left:0}
+.pill.good{background:var(--goods);color:var(--good)}
+.pill.mute{background:var(--band);color:var(--muted);margin-left:0}
+.qbar{display:inline-block;vertical-align:middle;width:60px;height:6px;
+border-radius:3px;background:var(--band);margin-right:8px;overflow:hidden}
+.qbar i{display:block;height:100%;background:var(--acc);border-radius:3px}
+footer{font-size:.76rem;color:var(--muted);margin-top:18px;line-height:1.7}
+</style></head><body><div class="wrap">
+<h1>여름 손실 · 간격 what-if</h1>
+<p class="sub">두 판 다 <b>서버 없이</b> 열립니다. 값은 구울 때 한 번 계산해
+박아 넣은 것입니다.</p>
+<div class="demo"><b>예시 농장입니다 — 실제 농장이 아닙니다.</b><br>
+모돈 300두 기본 구성(교배사 1방×69 · 임신사 2방×84 · 분만사 2방×36 · 후보사 1방×15 · 자돈사 4방×396 · 육성사 3방×385 · 비육사 4방×381) · 분만율
+85.0% · 복당 이유 11.0두 ·
+육성률 94.0%.<br>
+<b>우리 농장 값을 넣으려면 서버를 띄워야 합니다</b> —
+<code>python -m uvicorn competition.server.app:app --port 8000</code>
+</div>
+<section class="card"><div class="ch"><span class="cn">1</span><h2>여름 손실은 농장마다 갈립니다</h2></div><div class="prov"><span class="tag" style="--tc:#1baf7a">실측</span><span class="tagtxt">국내 67농장 월별 실측 · 교배월 기준 · 중복 제거 후</span></div><p class="lead">전체로는 여름 교배분 분만율이 겨울보다 중앙 -2.97%p 떨어집니다. 그런데 하위10% -4.42 ~ 상위10% +13.03%p 로 갈립니다 — <b>공통 처방이 아니라 선별 처방</b>입니다.</p><div class="body"><div class="kpis"><div class="kpi"><span class="v">726만원</span><span class="k">중앙 농장이라면</span><span class="d">여름 손실 +2.7%p · 가정</span></div><div class="kpi"><span class="v">3,502만원</span><span class="k">취약 상위10% 라면</span><span class="d">여름 손실 +13.03%p · 가정</span></div><div class="kpi"><span class="v">300두</span><span class="k">환산 규모</span><span class="d">PSY 24.1 · 466농장 중앙값 · 가정</span></div></div><div class="strip">
+  <div class="band" style="left:13.2%;width:73.5%"></div>
+  <div class="band2" style="left:31.4%;
+       width:32.7%"></div>
+  <div class="med" style="left:43.2%"></div>
+  <div class="lb" style="left:13.2%">하위10% -4.42</div>
+  <div class="lb" style="left:43.2%">중앙 2.7</div>
+  <div class="lb" style="left:86.8%">상위10% 13.03</div></div><p class="warn"><b>위는 특정 농장의 값이 아닙니다</b> — 국내 67농장 분포를 300두 규모로 환산한 범위입니다. 우리 농장이 어느 쪽인지 알려면 월별 분만율 12개월이 필요하고, 그건 <b>서버를 띄워야</b> 넣을 수 있습니다.</p><p class="note">패널 실측 기준(농장마다 <b>자기</b> PSY·<b>자기</b> 겨울로 낸 금액)의 중앙은 <b>733만원</b>으로 위와 다릅니다 — 곱의 중앙값 ≠ 중앙값의 곱.</p><div class="kpis"><div class="kpi"><span class="v">41%</span><span class="k">진짜 농장 차이</span><span class="d">관측 분산 중. 나머지는 표본 오차</span></div><div class="kpi"><span class="v">-0.5 ~ 7.84</span><span class="k">축소 후 분포 %p</span><span class="d">관측 -4.42 ~ 13.03</span></div><div class="kpi"><span class="v">ρ -0.149</span><span class="k">PSY 와의 상관</span><span class="d">연간 성적으로는 못 맞힙니다</span></div></div><h3>무너지는 건 사양이 아니라 착상입니다</h3><div class="tw"><table><thead><tr><th>임신사고 구성</th><th>겨울</th><th>여름</th><th>차이</th></tr></thead><tbody><tr class=hi><td>1차</td><td class="d">33.4%</td><td class="d">41.4%</td><td class="d"><span class="pill stop">+8.0%p</span></td></tr><tr><td>불임</td><td class="d">8.6%</td><td class="d">9.9%</td><td class="d"><span class="pill mute">+1.3%p</span></td></tr><tr><td>공태</td><td class="d">2.1%</td><td class="d">2.3%</td><td class="d"><span class="pill mute">+0.2%p</span></td></tr><tr><td>유산</td><td class="d">0.0%</td><td class="d">0.1%</td><td class="d"><span class="pill mute">+0.1%p</span></td></tr></tbody></table></div><p class="note">여름에 이유두수·재귀율은 거의 그대로인데 임신사고 구성이 1차 재발 쪽으로 <b>8.0%p</b> 기웁니다. 겨냥할 시점은 <b>교배 후 7~21일 착상기</b>이고, 이 구간 축사의 THI 를 낮추는 것이 처방입니다.</p><div class="caveat">· 겨울을 기준으로 잡았으므로 <b>손실 상한</b>이다 — 냉방 장비값을 뺀 순이익이 아니다.<br>· 연간 성적으로 계절 취약도를 맞힐 수 없다 (PSY 와 ρ -0.149). 잘하는 농장도 여름은 피하지 못한다.<br>· 관측 분산의 41% 만 진짜 농장 차이다. 나머지는 표본 오차이므로 개별 농장 값은 축소해서 읽어야 한다.<br>· 원자료 6,533행 중 유일한 건 1,464행뿐이었다(중복 77.6%). 지우고 낸 값이다.</div></div></section><section class="card"><div class="ch"><span class="cn">2</span><h2>같은 돈사로 간격만 바꾸면</h2></div><div class="prov"><span class="tag" style="--tc:#2a78d6">계산</span><span class="tagtxt">예시 구성 300두 기본 · 지금 21일</span></div><p class="lead">짓기 전 질문이 아니라 <b>지은 뒤</b> 질문입니다. 좁히면 같은 분만틀이 더 자주 돌아 규모가 늘지만 <b>방 수 요구가 커져 막힙니다</b>. 넓히면 방은 넉넉해지는데 <b>배치가 커져 한 날에 몰립니다</b>.</p><div class="body"><div class="tw"><table><thead><tr><th>간격</th><th>받을 수 있는 모돈</th><th>병목</th><th>연간 출하 상한</th><th>배치당 교배</th><th>한 날 집중도</th></tr></thead><tbody><tr><td><b>주간 2간격</b> <span class="d">3.5일</span></td><td><span class="pill stop">막힘</span></td><td class="d">분만사·자돈사·육성사·비육사 방 부족</td><td class="d">—</td><td class="d">—</td><td class="d">×0.5</td></tr><tr><td><b>주간</b> <span class="d">7일</span></td><td><span class="pill stop">막힘</span></td><td class="d">분만사·자돈사·육성사·비육사 방 부족</td><td class="d">—</td><td class="d">—</td><td class="d">×1</td></tr><tr><td><b>10일</b> <span class="d">10일</span></td><td><span class="pill stop">막힘</span></td><td class="d">분만사·자돈사·육성사·비육사 방 부족</td><td class="d">—</td><td class="d">—</td><td class="d">×1.4</td></tr><tr><td><b>2주</b> <span class="d">14일</span></td><td><span class="pill stop">막힘</span></td><td class="d">분만사·자돈사·육성사·비육사 방 부족</td><td class="d">—</td><td class="d">—</td><td class="d">×2</td></tr><tr class=cur><td><b>3주</b> <span class="d">21일</span><span class="pill">지금</span></td><td><span class="qbar"><i style="width:100%"></i></span><span class="d">301두</span></td><td class="d">교배사</td><td class="d">6,539두</td><td class="d">42.1두</td><td class="d">×3</td></tr><tr><td><b>4주</b> <span class="d">28일</span></td><td><span class="qbar"><i style="width:88%"></i></span><span class="d">266두</span></td><td class="d">분만사</td><td class="d">4,904두</td><td class="d">49.7두</td><td class="d">×4</td></tr><tr><td><b>5주</b> <span class="d">35일</span></td><td><span class="qbar"><i style="width:75%"></i></span><span class="d">226두</span></td><td class="d">분만사</td><td class="d">3,923두</td><td class="d">52.7두</td><td class="d">×5</td></tr></tbody></table></div><p class="note">규모가 가장 큰 간격이 늘 정답은 아니다 — 좁힐수록 방 수 요구가 커지고 작업이 잦아진다. 이 표는 맞바꿈을 보여줄 뿐 인력·공사비를 계산하지 않는다.</p><p class="note"><b>막힌 간격은 두수를 줄여서 풀리지 않습니다</b> — 회전이 안 되는 것이라 방을 늘리거나 간격을 넓혀야 합니다.</p></div></section>
+<footer>산식은 <code>src/</code> 의 도메인 모듈이 정본이고, 이 화면은 그걸
+구울 때 한 번 부른 것입니다 — <b>여기서 다시 계산하지 않습니다.</b><br>
+서버로 본 금액과 이 파일로 본 금액은 같은 함수에서 나옵니다
+(<code>season.compute</code> · <code>capacity.interval_whatif</code>).
+</footer></div></body></html>

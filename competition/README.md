@@ -247,8 +247,9 @@ bash competition/build_all.sh          # 전체 뷰 + 허브 생성
 - 🗺️ **농장 도면 관제** — 축사 배치도 위에 사육현황·환경(THI)·오늘의 업무를 겹쳐 표시
 - 🔄 **돈군흐름 관제** — 분만틀에서 역산한 설계 · 필요 vs 보유 돈방 · 점유 간트 · 배치 what-if
 
-### 분석 · 리포트 (11)
+### 분석 · 리포트 (12)
 - 📉 **실측 진단 (466농장 대비)** — 순위가 아니라 거리 — 격차를 두수로, 두수를 원/년으로 · 하락 비대칭 · 계절 되돌림
+- ☀️ **여름 손실 · 간격 what-if** — 67농장 계절 손실 분포를 우리 규모로 · 무너지는 건 착상 · 같은 돈사로 간격만 바꾸면
 - 🎯 **발정 표준 리포트** — AI Hub 71471 발정 기준으로 케글 데이터 분석 + 실영상 근거
 - 📈 **활동·발정 모니터링** — 개체 시계열 활동량 + 행동→발정 의심 지수
 - ⏱️ **개체별 발정 타임라인** — IoU 추적으로 개체 ID 부여 → 개체별 발정 점수 시계열(실영상)
@@ -305,9 +306,11 @@ bash competition/build_all.sh          # 전체 뷰 + 허브 생성
 | **개선을 원/년으로** | 모든 지렛대를 금액 환산해 크기순 정렬 | `farm_economics.py` |
 | **하락 방어를 값으로** | 농장-연의 33%가 1두 이상 떨어진다(중앙 −2.40두) → 기댓값 연 2,976만원. PSY +1두와 같은 급 | `farm_panel.py` · 202농장 패널 |
 | **패널로 교란 제거** | 같은 농장 전년 대비 변화. 하락군은 Δ이유두수 +0.00두인데 ΔNPD +11.6일 — 하락은 사양이 아니라 발정·교배 관리 | `farm_panel.py` |
+| **여름 손실은 선별 처방** | 전체 −2.97%p 뒤에 농장별로 하위10% −4.4 ~ 상위10% +13.0%p 로 갈린다. 연간 성적으로 못 맞히므로(PSY 와 ρ −0.149) 공통 처방이 성립하지 않는다 | `farm_monthly_panel.py` · 67농장 |
+| **무너지는 경로를 짚는다** | 여름에 이유두수·재귀율은 그대로인데 임신사고가 1차 재발 쪽으로 +8.0%p 기운다. 임신사고의 66.9% 가 재발이고, 겨냥할 시점은 사양이 아니라 **교배 후 착상기(7~21일)** | `barn_environment.py` |
 | **무센서 개체 식별** | 기존 CCTV 만. 영상 Re-ID 로 트랙 단편화 −46%, GT ID 일관성 0.77 | `reid.py` |
 | **평가 투명성** | 개체·뷰 분리 검증, 보정곡선(Brier 0.174), 자세 LOVO 0.684 ± 0.028 | `build_eval_report.py` |
-| **재현성** | 테스트 80개 · 자체완결 대시보드 22뷰 · 외부 연결 없이 실행 | `tests/smoke_test.py` |
+| **재현성** | 테스트 81개 · 자체완결 대시보드 23뷰 · 외부 연결 없이 실행 | `tests/smoke_test.py` |
 
 ### 다루지 않는 영역 — 여기서 기대하면 안 되는 것
 
@@ -343,7 +346,7 @@ RFID 이표는 개체 ID 가 결정적으로 읽히고, 영상 Re-ID 는 학습�
 - [x] 관찰: 탐지→추적→행동 인식→활동 분석
 - [x] 진단: 문제 3종 분류 + 원인 4종 귀인 + 처방
 - [x] 예측: 발정 조기경보(D-day·지연/무발정)
-- [x] 대시보드: 22뷰 통합 허브 + 평가 신뢰도 리포트
+- [x] 대시보드: 23뷰 통합 허브 + 평가 신뢰도 리포트
 - [x] 실측: 71471 발정 정답 검증 — 서브셋 부적합을 3단계 설계로 규명(AUC 0.465)
 - [x] keypoints 경로 시도: 파서·자세 기술자(44개, 회전·크기 불변) 완성. 날짜
       불일치로 개체 내 대조는 미실시했으나, **자세 vs 행동라벨 정보량 비교**를
@@ -367,7 +370,7 @@ competition/
   requirements.txt
   docs/  AIHUB.md · EDINBURGH.md · SCHEMA.md · PRESENTATION.md · STATUS.md ·
          CAPABILITIES.md · ML.md
-  src/   (92개) 관찰·판정·진단·예측 + 대시보드 생성 스크립트 20개
+  src/   (93개) 관찰·판정·진단·예측 + 대시보드 생성 스크립트 20개
     ── 인식   posture_crossview.py  view_align.py  motion_tracker.py  iou_tracker.py
     ── 번식   breeding_timing.py  repro_calendar.py  pregnancy_check.py
               herd_board.py  breeding_ledger.py  work_log.py
@@ -379,7 +382,7 @@ competition/
     calc.py  config.py  models.py  simulator.py  validate.py  report.py
     example_farm.yaml  tests/test_pigflow.py
   tests/ smoke_test.py       # 47개 스모크 테스트(pigflow 30개 포함)
-  dashboard/                 # (생성물) 뷰 22개 — 허브 index.html 제외 커밋 안 함
+  dashboard/                 # (생성물) 뷰 23개 — 허브 index.html 제외 커밋 안 함
   data/, outputs/            # (생성물)
 ```
 
@@ -389,7 +392,7 @@ competition/
 
 ```bash
 pip install -r competition/requirements.txt
-python competition/tests/smoke_test.py        # 80/80 통과 확인
+python competition/tests/smoke_test.py        # 81/81 통과 확인
 
 # ★ 전체 시뮬레이션 — 모돈 두수 하나로 설계·흐름·성적진단·손익까지
 python competition/src/run_farm.py --sows 300

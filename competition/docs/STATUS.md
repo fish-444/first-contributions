@@ -23,7 +23,7 @@ CCTV 발정 탐지에서 출발했지만, 국내 실측을 재 보니 손실이 
 
 ## 2. 지금 서 있는 자리
 
-**규모** 모듈 68개 · 대시보드 뷰 22개 · 테스트 80개(전부 통과)
+**규모** 모듈 68개 · 대시보드 뷰 23개 · 테스트 81개(전부 통과)
 자체완결 HTML(외부 연결 0) · `python competition/tests/smoke_test.py`
 
 ### 손에 쥔 데이터
@@ -647,7 +647,7 @@ python competition/src/path_predict.py --power         # 검출력 — 몇 %p �
 python competition/src/korean_farm_stats.py         # 466행 집계
 python competition/src/farm_monthly.py              # 월별 계절성
 
-bash competition/build_all.sh                       # 대시보드 22뷰 + 허브
+bash competition/build_all.sh                       # 대시보드 23뷰 + 허브
 python competition/src/ml_core.py                   # DL 과제별 가용 점검
 python competition/tools/check_docs.py              # 문서 수치 대조
 ```

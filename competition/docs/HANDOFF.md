@@ -5,16 +5,41 @@
 > 깨진다 — 코드가 바뀌면 이 문서도 같이 갱신하거나 지워야 한다.
 
 **마감 2026-08-31** · 저장소 `fish-444/first-contributions` ·
-브랜치 `claude/yangdon-ai-competition-3x2ukm` · 최신 커밋 `e4bae1a`
+브랜치 `claude/yangdon-ai-competition-3x2ukm` · 최신 커밋 `95176d0`
 
 **한 줄**: 발정을 놓치면 번식이 무너진다. 그런데 번식만 잡아도 농장은 안 산다 —
 발정 탐지에서 출하까지 한 줄로 잇는다.
 
-**규모**: 모듈 68개 · 대시보드 뷰 22개 · 테스트 80개 · 외부 연결 0
+**규모**: 모듈 68개 · 대시보드 뷰 23개 · 테스트 81개 · 외부 연결 0
 
 ---
 
-## 0. 먼저 알아야 할 것 셋
+## 0. 먼저 알아야 할 것 넷
+
+### 🔴 로컬 `yangdon-work` 브랜치가 이 브랜치와 **갈라져 있다**
+
+다른 PC(`C:\Users\sho36\OneDrive\작업물저장소\first-contributions`)에서
+AI Hub 276(71763) 작업을 7커밋 넣었고, 그쪽 문서는 스스로를 "원격보다 7커밋
+앞" 이라 적었다. **틀렸다** — 그쪽 정본이 테스트 78인데 여기는 81이다.
+`origin/...` ref 가 fetch 안 된 낡은 스냅숏이라 앞선 게 아니라 **갈라졌다.**
+
+로컬에서 이어서 작업한다면 **rebase 가 0순위**다:
+
+```bash
+git fetch origin
+git log --oneline yangdon-work..origin/claude/yangdon-ai-competition-3x2ukm
+git rebase origin/claude/yangdon-ai-competition-3x2ukm
+```
+
+합친 뒤 정본은 이 문서의 숫자가 아니라 `check_docs.py` 출력이다.
+충돌 예상 지점은 `smoke_test.py` 의 테스트 목록과 문서 수치 5곳이다
+(`parse_aihub`·`model_71763` 은 이쪽에서 안 건드렸다).
+
+**그리고 재구현하지 말 것** — 로컬이 계획한 "분만 15클래스 모델 겨냥 목록"은
+여기 `farm_registry.stage_of()` 가 이미 낸다. 개체 하나가 그날 어느 축사에
+있는지를 번식주기 경계로 판정하고, 분만 예정 D−7~+7 창을 잡고, 유산·도태로
+끊긴 기록을 `record_ends` 로 걸러낸다. 기능 A 의 "오늘 분만사에 있는 개체"가
+바로 그 출력이다.
 
 ### ⚠️ 저장소가 공개다
 
@@ -48,14 +73,14 @@ AI Hub · 케글 키가 이전 대화 기록에 노출됐다. **커밋 이력 �
 ## 1. 지금 상태
 
 ```bash
-python competition/tests/smoke_test.py      # 80/80 통과
+python competition/tests/smoke_test.py      # 81/81 통과
 python competition/tools/check_docs.py      # 불일치 0
 git status                                  # clean
 ```
 
 ---
 
-## 2. 최근 세션에서 한 일 — 커밋 5개
+## 2. 최근 세션에서 한 일 — 커밋 5개 + 6개
 
 | 커밋 | 내용 |
 |---|---|
@@ -65,7 +90,35 @@ git status                                  # clean
 | `4f26a9c` | `run_farm --setup` — 등록 JSON 이 ①②③ 를 전부 끌고 간다 |
 | `e4bae1a` | `CAPABILITIES.md` — 할 수 있는 것 / 없는 것 목록 |
 
-자세한 발견은 `STATUS.md` 의 **⑧′ ⑧″ ⑧‴ ⑨** 절에 있다. 요지 넷:
+### 그 뒤 세션 — 백엔드·프론트 + 이력 배선 (커밋 6개)
+
+| 커밋 | 내용 |
+|---|---|
+| `7ad79f9` | **백엔드·프론트** — FastAPI + 바닐라 JS + SQLite. 엔드포인트 22개 |
+| `67af8e8` | 성능: 교배 적기 캐시 540ms → 0.14ms · 진단·처방 탭 |
+| `3def794` | 투자 순서(병목 체인) · 오늘 할 일 큐 |
+| `dafab19` | **여름 손실** — `GET /api/season`. 67농장 분포를 우리 규모로 |
+| `cd5e56d` | **간격 what-if** — `POST /api/capacity/interval` |
+| `b1c2883` | **개체 이력 → ③단계 두수** — `--herd`. 마지막 유도값을 걷어냄 |
+| `95176d0` | 리뷰 8건 — 끊긴 기록(유산·도태)이 축사를 부풀리던 결함 |
+
+**서버도 프론트도 계산을 다시 구현하지 않는다.** 라우터에 산술이 없고
+`test_server_api` 가 응답과 모듈 출력을 직접 대조한다. 그 원칙이 실제로 값을
+두 번 했다 — 프론트가 기본 구성을 직접 계산했다가 "막힘" 이 떴고, 서버가 점검
+주기를 고정 오프셋으로 재서 하루 2회가 연속 관찰보다 높게 나왔다.
+
+**여름 손실은 선별 처방이다.** 전체 −2.97%p 뒤에 농장별로 하위10% −4.4 ~
+상위10% +13.0%p 로 갈리고, 연간 성적으로는 못 맞힌다(PSY 와 ρ −0.149).
+무너지는 경로는 사양이 아니라 착상이다 — 임신사고의 66.9% 가 재발이고,
+여름에 그 구성이 1차 재발 쪽으로 +8.0%p 기운다. 그래서 겨냥할 시점이
+**교배 후 착상기(7~21일)** 다.
+
+**정적 뷰와 서버가 같은 함수를 쓴다.** `season.compute()` 와
+`capacity.interval_whatif()` 는 라우터와 `build_season_interval.py` 가 같이
+부른다 — 심사장에서 파일과 서버가 나란히 열릴 수 있어서, 갈리면
+`test_season_interval_view` 가 깨진다.
+
+자세한 발견은 `STATUS.md` 의 **⑧′ ⑧″ ⑧‴ ⑨ ⑨′** 절에 있다. 요지 넷:
 
 - **답은 두수가 아니라 병목의 이름이다.** 300두로 설계한 구성이 실제로는
   295두이고, 붙잡고 있는 건 임신사다. 임신사를 넓히기 전엔 다른 돈사를 키워도
@@ -183,7 +236,7 @@ git status                                  # clean
 ## 7. 바로 돌려 보기
 
 ```bash
-python competition/tests/smoke_test.py                       # 80/80
+python competition/tests/smoke_test.py                       # 81/81
 python competition/tools/check_docs.py                       # 불일치 0
 python competition/src/build_farm_setup.py                   # 등록 화면 생성
 python competition/src/run_farm.py --setup my_farm.json      # 여섯 단계 전체

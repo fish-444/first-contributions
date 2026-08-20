@@ -40,13 +40,13 @@ def _panel() -> dict:
     return json.load(open(PANEL, encoding="utf-8"))
 
 
-@router.get("", summary="여름 손실 — 분포 · 우리 규모 환산 · 겨냥 시점")
-def season(sows: int = Query(300, ge=1, le=20000),
-           psy: float | None = Query(None, ge=5, le=45),
-           summer: float | None = Query(None, ge=20, le=100,
-                                        description="여름(7·8·9월) 교배분 분만율 %"),
-           winter: float | None = Query(None, ge=20, le=100,
-                                        description="겨울(1·2·3월) 교배분 분만율 %")) -> dict:
+def compute(sows: int = 300, psy: float | None = None,
+            summer: float | None = None, winter: float | None = None) -> dict:
+    """라우터와 **정적 뷰 빌더가 같이 쓴다.**
+
+    화면을 구울 때 여기 산식을 옮겨 적으면 서버로 본 금액과 파일로 본 금액이
+    갈린다. 심사장에서 그 둘이 나란히 열릴 수 있으므로 한 함수로 둔다.
+    """
     r = _panel()
     money, loss = r["money"], r["loss"]
     per_sow = float(money["per_sow_won"])
@@ -117,6 +117,16 @@ def season(sows: int = Query(300, ge=1, le=20000),
         f"{r['duplicates']['dup_share']:.1%}). 지우고 낸 값이다.",
     ]
     return out
+
+
+@router.get("", summary="여름 손실 — 분포 · 우리 규모 환산 · 겨냥 시점")
+def season(sows: int = Query(300, ge=1, le=20000),
+           psy: float | None = Query(None, ge=5, le=45),
+           summer: float | None = Query(None, ge=20, le=100,
+                                        description="여름(7·8·9월) 교배분 분만율 %"),
+           winter: float | None = Query(None, ge=20, le=100,
+                                        description="겨울(1·2·3월) 교배분 분만율 %")) -> dict:
+    return compute(sows, psy, summer, winter)
 
 
 def _where(gap: float, loss: dict) -> str:

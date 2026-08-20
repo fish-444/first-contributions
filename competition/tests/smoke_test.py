@@ -2294,7 +2294,7 @@ def test_pc_suite() -> None:
     # 모바일은 빠져야 한다 — 그게 이 뷰의 전제다
     names = [v[0] for v in bps.VIEWS]
     assert "app_prototype.html" not in names and "app_screens.html" not in names
-    assert len(names) == len(set(names)) == 7
+    assert len(names) == len(set(names)) == 8
 
     made = [n for n in names if os.path.exists(os.path.join(ROOT, "dashboard", n))]
     if not made:
@@ -3511,6 +3511,62 @@ def test_herd_drives_stage_counts() -> None:
         os.unlink(path)
 
 
+def test_season_interval_view() -> None:
+    """정적 뷰가 **서버와 같은 수**를 말하는가.
+
+    여름 손실·간격 what-if 두 기능이 API 로만 있었다. 나머지 뷰 22개는 파일만
+    열면 도는데 그 둘만 서버를 요구해서, 심사장에서 서버를 못 띄우면 가장
+    최근 기능이 안 보였다.
+
+    구워 넣는 순간 **값이 두 벌**이 된다 — 화면에 박힌 것과 API 가 내는 것.
+    같은 함수(`season.compute` · `capacity.interval_whatif`)를 부르므로 같아야
+    하고, 산식을 빌더로 옮겨 적으면 그 자리에서 깨지도록 대조한다.
+    """
+    import re
+
+    import build_season_interval as bsi
+
+    # 빌더가 competition.server.routers 를 부르므로 저장소 루트가 필요하다
+    sys.path.insert(0, os.path.dirname(ROOT))
+    d = bsi.gather()
+    html = bsi.build(d)
+
+    # 1) **자체완결** — 서버 없이 열려야 하므로 외부 연결이 하나도 없어야 한다
+    assert not re.findall(r'https?://(?!localhost)', html), "외부 URL"
+    assert not re.findall(r'<(?:script|iframe)|\bfetch\s*\(', html), "동적 요소"
+
+    # 2) 서버 응답과 같은 수인가 — 금액은 만원 단위로 표시된다
+    s = d["season"]
+    for won in (s["scenario"]["median"]["won_year"],
+                s["scenario"]["p90"]["won_year"],
+                s["panel_won_ref"]["median"]):
+        assert f"{round(won / 1e4):,}만원" in html, won
+    # **곱의 중앙값 ≠ 중앙값의 곱** — 두 금액을 나란히 놓고 다르다고 적는다
+    assert s["scenario"]["median"]["won_year"] != s["panel_won_ref"]["median"]
+    assert "곱의 중앙값 ≠ 중앙값의 곱" in html
+    for r in d["interval"]["rows"]:
+        if r["n_sows"]:
+            assert f'{r["n_sows"]:,}두' in html and f'{r["ceiling_year"]:,}두' in html
+        else:
+            assert "막힘" in html
+
+    # 3) **박아 넣은 값이라 입력을 못 바꾼다** — 그 사실을 화면이 먼저 말해야
+    #    한다. 안 말하면 심사위원이 자기 농장 값인 줄 안다
+    assert "실제 농장이 아닙니다" in html
+    assert "특정 농장의 값이 아닙니다" in html
+    assert "서버를 띄워야" in html
+    # 각주 넷이 그대로 실려야 한다 (상한·ρ·41%·중복)
+    assert "손실 상한" in html and "ρ -0.149" in html and "중복" in html
+    # **강조 표기를 그대로 흘리지 않는다** — 별표가 화면에 보이면 안 된다
+    assert "**" not in html, "서버 문구의 ** 가 그대로 새어 나왔다"
+
+    # 4) 허브·통합 콘솔에 등록됐는가 — 안 하면 파일은 있는데 아무도 못 찾는다
+    import build_dashboard_hub as hub
+    import build_pc_suite as suite
+    assert any(v[0] == "season_interval.html" for v in hub.VIEWS)
+    assert any(v[0] == "season_interval.html" for v in suite.VIEWS)
+
+
 def test_timing_cache_is_transparent() -> None:
     """교배 적기 캐시가 **답을 바꾸지 않는가**.
 
@@ -4606,7 +4662,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
