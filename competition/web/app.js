@@ -457,6 +457,119 @@ async function runDiagnosis() {
   }
 }
 
+/* ── 여름 손실 ─────────────────────────────────── */
+// 분포 띠 — **중앙값 하나로 말하면 안 된다.** 농장마다 갈리는 게 요지라
+// 분포를 그리고 내 위치를 찍는다.
+function strip(q, me) {
+  const lo = q.p10, hi = q.p90, span = Math.max(1e-9, hi - lo), pad = span * 0.2;
+  const x0 = lo - pad, x1 = hi + pad;
+  const px = x => ((x - x0) / (x1 - x0)) * 100;
+  const cl = x => Math.max(0, Math.min(100, x));
+  const col = me != null && me > q.median ? "var(--stop)" : "var(--good)";
+  return `<div class="strip">
+    <div class="band" style="left:${px(lo)}%;width:${px(hi) - px(lo)}%"></div>
+    <div class="band2" style="left:${px(q.p25)}%;width:${px(q.p75) - px(q.p25)}%"></div>
+    <div class="med" style="left:${px(q.median)}%"></div>
+    ${me != null ? `<div class="me" style="left:calc(${cl(px(me))}% - 7px);
+      background:${col}"></div>
+      <div class="lb top" style="left:${cl(px(me))}%;color:${col}">
+      내 농장 ${me > 0 ? "+" : ""}${me.toFixed(1)}</div>` : ""}
+    <div class="lb" style="left:${px(lo)}%">하위10% ${lo}</div>
+    <div class="lb" style="left:${px(q.median)}%">중앙 ${q.median}</div>
+    <div class="lb" style="left:${px(hi)}%">상위10% ${hi}</div></div>`;
+}
+
+async function runSeason() {
+  const hint = $("#h-season");
+  const q = new URLSearchParams({ sows: Math.round(num("#s-sows") ?? 300) });
+  for (const [k, id] of [["psy", "#s-psy"], ["summer", "#s-summer"],
+                         ["winter", "#s-winter"]]) {
+    const v = num(id); if (v !== null) q.set(k, v);
+  }
+  hint.className = "hint"; hint.textContent = "계산 중…";
+  try {
+    const d = await api("/api/season?" + q);
+    const acc = d.accidents;
+
+    if (d.given) {
+      const m = d.mine;
+      $("#season-head").innerHTML = `<div class="kpis">
+        <div class="kpi"><span class="v">${m.loss_pp > 0 ? "+" : ""}${m.loss_pp.toFixed(1)}%p</span>
+          <span class="k">우리 농장 여름 손실</span>
+          <span class="d">겨울 ${m.winter} − 여름 ${m.summer}</span></div>
+        <div class="kpi"><span class="v">${m.d_psy > 0 ? "+" : ""}${m.d_psy.toFixed(2)}두</span>
+          <span class="k">연간 PSY 손실</span>
+          <span class="d">PSY ${d.psy_used} · ${d.psy_source}</span></div>
+        <div class="kpi"><span class="v">${man(m.won_year)}</span>
+          <span class="k">연 손실 상한</span>
+          <span class="d">${n0(d.n_sows)}두 기준</span></div></div>`;
+      $("#season-dist").innerHTML = strip(d.loss, m.loss_pp)
+        // percentile_hint 는 그 자체가 문장이다 — 뒤에 조사를 붙이면 깨진다
+        + `<p class="note">국내 <b>${d.n_farms}농장</b> 분포 대비 —
+           <b>${m.percentile_hint}</b></p>`;
+    } else {
+      const sc = d.scenario;
+      $("#season-head").innerHTML = `<div class="kpis">
+        <div class="kpi"><span class="v">${man(sc.median.won_year)}</span>
+          <span class="k">중앙 농장이라면</span>
+          <span class="d">여름 손실 ${sc.median.loss_pp > 0 ? "+" : ""}${sc.median.loss_pp}%p · 가정</span></div>
+        <div class="kpi"><span class="v">${man(sc.p90.won_year)}</span>
+          <span class="k">취약 상위10% 라면</span>
+          <span class="d">여름 손실 +${sc.p90.loss_pp}%p · 가정</span></div>
+        <div class="kpi"><span class="v">${n0(d.n_sows)}두</span>
+          <span class="k">우리 규모로 환산</span>
+          <span class="d">PSY ${d.psy_used} · ${d.psy_source}</span></div></div>`;
+      $("#season-dist").innerHTML = strip(d.loss, null)
+        + `<p class="note" style="color:var(--warn)"><b>두 칸을 비웠으므로
+           위는 우리 농장 값이 아닙니다</b> — 국내 분포를 우리 규모로 환산한
+           범위입니다. 어느 쪽인지 알려면 월별 분만율 12개월이 필요합니다.</p>
+           <p class="note">패널 실측 기준(농장마다 <b>자기</b> PSY·<b>자기</b>
+           겨울로 낸 금액)의 중앙은 <b>${man(d.panel_won_ref.median)}</b>으로
+           위와 다릅니다 — 곱의 중앙값 ≠ 중앙값의 곱.</p>`;
+    }
+
+    // 축소 후 분포 — 표본 오차를 걷어내면 폭이 줄지만 **사라지지는 않는다**
+    $("#season-dist").innerHTML += `<div class="kpis" style="margin-top:14px">
+      <div class="kpi"><span class="v">${(d.spread.true_share * 100).toFixed(0)}%</span>
+        <span class="k">진짜 농장 차이</span>
+        <span class="d">관측 분산 중. 나머지는 표본 오차</span></div>
+      <div class="kpi"><span class="v">${d.loss_shrunk.p10} ~ ${d.loss_shrunk.p90}</span>
+        <span class="k">축소 후 분포 %p</span>
+        <span class="d">관측 ${d.loss.p10} ~ ${d.loss.p90}</span></div>
+      <div class="kpi"><span class="v">ρ ${d.join.PSY.rho}</span>
+        <span class="k">PSY 와의 상관</span>
+        <span class="d">연간 성적으로는 못 맞힙니다</span></div></div>`;
+
+    // 무너지는 경로
+    $("#season-why").style.display = "";
+    const key = "임신사고(1차)";
+    const top = Object.entries(acc.delta).sort((a, b) => b[1] - a[1]).slice(0, 4);
+    $("#season-acc").innerHTML = `<div class="tblwrap"><table>
+      <thead><tr><th>임신사고 구성</th><th>겨울</th><th>여름</th><th>차이</th></tr></thead>
+      <tbody>${top.map(([k, v]) => `<tr${k === key ? ' style="font-weight:600"' : ""}>
+        <td>${k.replace("임신사고", "").replace(/[()]/g, "")}</td>
+        <td class="d">${(acc.winter[k] * 100).toFixed(1)}%</td>
+        <td class="d">${(acc.summer[k] * 100).toFixed(1)}%</td>
+        <td class="d"><span class="pill ${v > 0.02 ? "stop" : "mute"}">${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%p</span></td>
+      </tr>`).join("")}</tbody></table></div>
+      <p class="note"><b>여름에 이유두수·재귀율은 거의 그대로인데 임신사고
+        구성이 1차 재발 쪽으로 ${(acc.delta[key] * 100).toFixed(1)}%p 기웁니다.</b>
+        무너지는 건 사양이 아니라 <b>착상</b>이라는 뜻이고, 겨냥할 시점은
+        <b>교배 후 ${d.implantation_window[0]}~${d.implantation_window[1]}일
+        착상기</b>입니다 — 이 구간 축사의 THI 를 낮추는 것이 처방입니다.</p>`;
+    // 서버 문구가 **강조** 표기를 쓴다 — 그대로 넣으면 별표가 보인다
+    $("#season-caveat").innerHTML = d.caveats
+      .map(c => "· " + c.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")).join("<br>");
+
+    hint.className = "hint ok";
+    hint.textContent = d.given ? "우리 농장 값" : "분포 환산 (가정)";
+  } catch (e) {
+    hint.className = "hint bad"; hint.textContent = e.message;
+    $("#season-head").innerHTML = ""; $("#season-dist").innerHTML = "";
+    $("#season-why").style.display = "none";
+  }
+}
+
 /* ── 농장 목록 ─────────────────────────────────── */
 async function loadFarms() {
   const box = $("#farmlist");
@@ -509,6 +622,10 @@ document.addEventListener("click", async e => {
     document.querySelectorAll(".tabpane").forEach(p =>
       p.classList.toggle("hidden", p.id !== "tab-" + t.dataset.tab));
     if (t.dataset.tab === "farms") loadFarms();
+    if (t.dataset.tab === "season") {
+      if (lastCap && lastCap.capacity.n_sows) $("#s-sows").value = lastCap.capacity.n_sows;
+      runSeason();
+    }
     if (t.dataset.tab === "diagnosis") {
       // 돈사 탭에 넣은 성적을 끌어온다 — 같은 농장인데 두 번 넣게 하지 않는다
       const wl = num("#p-wl"), fr = num("#p-fr");
@@ -536,6 +653,7 @@ $("#b-clear").onclick = () => { barns = {}; drawBarns(); refresh(); };
 $("#b-watch").onclick = runWatch;
 $("#b-sched").onclick = makeSchedule;
 $("#b-diag").onclick = runDiagnosis;
+$("#b-season").onclick = runSeason;
 $("#b-relief").onclick = runRelief;
 $("#b-queue").onclick = runQueue;
 $("#b-save").onclick = async () => {

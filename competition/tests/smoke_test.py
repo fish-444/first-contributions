@@ -3573,7 +3573,47 @@ def test_server_api() -> None:
     # **비운 성적을 중앙값으로 채우지 않는다** — 채우면 격차가 늘 0 이 된다
     assert c.post("/api/diagnosis", json={}).status_code == 422
 
-    # 11) 농장 CRUD 가 왕복하는가
+    # 11) 여름 손실 — `farm_monthly_panel` 과 같은 값이어야 하고, **두 칸을
+    #     비운 시나리오를 우리 농장 값처럼 말하면 안 된다**
+    import json as _json
+    import os as _os
+    _p = _os.path.join(_os.path.dirname(_os.path.dirname(
+        _os.path.abspath(__file__))), "data", "farm_monthly_panel.json")
+    if _os.path.exists(_p):
+        panel = _json.load(open(_p, encoding="utf-8"))
+        sn = c.get("/api/season", params={"sows": 300}).json()
+        assert sn["loss"] == panel["loss"], (sn["loss"], panel["loss"])
+        assert sn["spread"] == panel["spread"]
+        assert sn["given"] is False and "mine" not in sn
+        assert "우리 농장 값이 아니다" in sn["scenario"]["note"]
+        # **곱의 중앙값 ≠ 중앙값의 곱** — 시나리오와 패널 실측 금액은 다른 수다
+        assert sn["scenario"]["median"]["won_year"] != \
+               sn["panel_won_ref"]["median"], "두 금액이 같으면 라벨이 거짓말"
+        # 규모에 비례하는가
+        sn2 = c.get("/api/season", params={"sows": 600}).json()
+        assert sn2["panel_won_ref"]["median"] == \
+               2 * sn["panel_won_ref"]["median"]
+        # 값을 주면 우리 농장 값으로 바뀌고, 산식이 패널과 같은가
+        mine = c.get("/api/season", params={"sows": 300, "psy": 23,
+                                            "summer": 78, "winter": 86}).json()
+        assert mine["given"] is True and "scenario" not in mine
+        assert mine["psy_source"] == "입력값"
+        import farm_monthly_panel as _mp
+        want_psy = 23 * _mp.SEASON_SHARE * (8 / 86)
+        assert abs(mine["mine"]["d_psy"] - want_psy) < 5e-4, mine["mine"]
+        # 금액은 **반올림 전** ΔPSY 로 낸다 — 표시값으로 다시 곱하면 반올림이
+        # 겹쳐 등록 화면과 CLI 가 몇 천 원씩 갈린다
+        assert mine["mine"]["won_year"] == round(want_psy * sn["per_sow_won"] * 300)
+        # 여름이 겨울보다 나은 농장은 **손실이 음수**로 나와야 한다
+        good = c.get("/api/season", params={"summer": 88, "winter": 84}).json()
+        assert good["mine"]["loss_pp"] < 0 and good["mine"]["won_year"] < 0
+        assert good["psy_source"].endswith("가정")
+        # 상한이라는 것과 ρ 를 늘 들고 다녀야 한다
+        joined = " ".join(sn["caveats"])
+        assert "손실 상한" in joined and "ρ" in joined and "중복" in joined
+    assert c.get("/api/season", params={"summer": 5}).status_code == 422
+
+    # 12) 농장 CRUD 가 왕복하는가
     f = c.post("/api/farms", json={"name": "T", "setup": setup})
     assert f.status_code == 201, f.text
     fid = f.json()["id"]

@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>양돈 운영 콘솔</title>
 <link rel="icon" href="/favicon.ico">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<!-- 웹폰트를 물어 오지 않는다. 심사장이 오프라인이면 요청이 끊기고
+     콘솔에 에러가 남는다(ERR_CONNECTION_RESET). style.css 의 --ui/--mono 가
+     이미 Malgun Gothic·Menlo 로 떨어지므로 화면은 그대로다. -->
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -19,6 +19,7 @@
       <button class="tab on" data-tab="capacity">돈사 · 용량</button>
       <button class="tab" data-tab="breeding">번식 일정</button>
       <button class="tab" data-tab="diagnosis">성적 · 처방</button>
+      <button class="tab" data-tab="season">여름 손실</button>
       <button class="tab" data-tab="farms">등록 농장</button>
     </nav>
   </div>
@@ -240,6 +241,44 @@
       <div class="levers" id="prio"></div>
       <div class="note" id="prio-note"></div>
       <div class="note" id="prio-foot"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 여름 손실 ───────────────────────────────── -->
+<section id="tab-season" class="tabpane hidden">
+  <div class="panel">
+    <div class="ptop"><span class="step">67농장 월별 실측</span>
+      <h2>여름 손실은 농장마다 갈립니다</h2>
+      <p>전체로는 여름 교배분 분만율이 겨울보다 <b>중앙 −2.97%p</b> 떨어집니다.
+        그런데 <b>하위10% −4.4 ~ 상위10% +13.0%p</b>로 갈립니다 —
+        공통 처방이 아니라 <b>선별 처방</b>입니다.</p></div>
+    <div class="pbody">
+      <div class="grid">
+        <label><span class="lb">여름 교배분 분만율 <i>7·8·9월 · %</i></span>
+          <input id="s-summer" type="number" inputmode="decimal" step="0.1" min="20" max="100">
+          <span class="hint">분만 11·12·1월분입니다(임신 114일 되돌림)</span></label>
+        <label><span class="lb">겨울 교배분 분만율 <i>1·2·3월 · %</i></span>
+          <input id="s-winter" type="number" inputmode="decimal" step="0.1" min="20" max="100">
+          <span class="hint">분만 5·6·7월분</span></label>
+        <label><span class="lb">PSY <i>모르면 비움</i></span>
+          <input id="s-psy" type="number" inputmode="decimal" step="0.1" min="5" max="45"></label>
+        <label><span class="lb">상시 모돈수 <i>두</i></span>
+          <input id="s-sows" type="number" inputmode="numeric" min="1" max="20000" value="300"></label>
+      </div>
+      <div class="btns"><button class="act pri" id="b-season">계산</button>
+        <span class="hint" id="h-season">두 칸을 비우면 국내 분포를 우리 규모로 환산한 범위가 나옵니다</span></div>
+      <div id="season-head"></div>
+      <div id="season-dist"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="season-why" style="display:none">
+    <div class="ptop"><span class="step">무너지는 경로</span>
+      <h2>사양이 아니라 착상입니다</h2></div>
+    <div class="pbody">
+      <div id="season-acc"></div>
+      <div class="note" id="season-caveat"></div>
     </div>
   </div>
 </section>
