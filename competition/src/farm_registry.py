@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import timedelta
 
 import pandas as pd
 
@@ -280,11 +281,142 @@ def stage_counts(n_sows: int) -> dict:
             "분만사": max(1, body - mate - gest), "후보사": n_gilt}
 
 
+RETURN_CHECK_DAYS = 21            # 재발은 교배 후 3주에 드러난다
+
+
+def stage_of(rec: dict, on) -> tuple[str | None, str, str]:
+    """**개체 하나가 그날 어느 축사에 있는가.** `stage_counts` 의 반대다.
+
+    `stage_counts` 는 총두수를 주기 비율로 나눈 *유도값*이고, 이건 개체
+    이력에서 **세는** 것이다. 그래서 실제 농장에서는 셋이 25/55/21 처럼
+    깔끔하게 안 나온다 — 계절·사고·재발이 분포를 찌그러뜨린다. 그 찌그러짐이
+    보이는 게 이 함수를 쓰는 이유다.
+
+    **경계를 여기서 새로 정하면 안 된다.** `herd_board` 는 교배/임신을 21일에
+    가르는데(재발 확인 시점) 축사 이동은 `CONFIRM` 28일에 일어난다. 둘을
+    섞어 쓰면 유도값과 실측값의 차이에 **정의 차이**가 섞여 들어가, 데이터가
+    말하는 것인지 경계를 옮긴 것인지 구분할 수 없게 된다. 그래서 여기서는
+    `stage_counts` 가 쓰는 W2S·CONFIRM·PRE_FARROW·LACT 그대로 간다.
+
+    돌려주는 것: `(축사, 사유코드, 근거)`. 축사가 None 이면 그날 어디에도 못
+    놓은 것이고, 사유코드가 왜인지 말한다 — **조용히 빼면 두수가 맞지 않는데
+    이유를 모른다.** 코드와 문장을 따로 두는 건 집계 때문이다. 문장에 일수가
+    박혀 있어서 그걸로 묶으면 "분만 39일째" 3두, "분만 41일째" 5두 처럼
+    한 두씩 흩어져 **몇 두가 왜 빠졌는지가 안 보인다.**
+    """
+    import repro_calendar as rc
+
+    t0 = rc._d(on)
+
+    def d(k):
+        v = rec.get(k)
+        if v is None or (isinstance(v, float) and v != v) or v == "":
+            return None
+        return rc._d(v)
+
+    if int(rec.get("parity", 0) or 0) <= 0:
+        return "후보사", "gilt", "산차 0 — 초교배 전"
+
+    wea, svc, far = d("weaning_date"), d("service_date"), d("farrow_date")
+    # 같은 날짜면 **뒤 사건이 이긴다.** 이유와 교배가 같은 날인 기록은 흔한데
+    # (이유 당일 발정), 문자열로 정렬하면 "wea" > "svc" 라 교배가 없던 일이
+    # 되고 그 모돈은 영원히 공태로 남는다.
+    order = {"wea": 0, "svc": 1, "far": 2}
+    past = [(x, order[k], k) for x, k in
+            ((wea, "wea"), (svc, "svc"), (far, "far"))
+            if x is not None and x <= t0]
+    if not past:
+        return None, "before_record", "그날 이전 기록이 없다"
+    last = max(past)[2]
+
+    if last == "wea":
+        # 이유했고 아직 교배 안 됐다 — 공태. 교배사에 있다.
+        return "교배사", "open", f"이유 {(t0 - wea).days}일째 · 미교배"
+
+    if last == "far":
+        if (t0 - far).days < LACT:
+            return "분만사", "lactating", f"분만 {(t0 - far).days}일째 · 포유 중"
+        # 포유기간이 지났는데 이유 기록이 없다. **추정해서 넣지 않는다** —
+        # 이유일은 다음 주기 전체의 기준점이라 틀리면 뒤가 다 밀린다.
+        return (None, "record_ends",
+                f"분만 {(t0 - far).days}일째인데 이유 기록이 없다 — "
+                f"기록이 여기서 끝난다")
+
+    # 마지막 사건이 교배
+    gd = (t0 - svc).days
+    if rec.get("outcome") == "재발" and gd >= RETURN_CHECK_DAYS:
+        # 재발이 확인됐는데 재교배 기록이 없다. 임신사로 보내면 있지도 않은
+        # 임신돈이 생긴다 — 재발돈은 교배사로 돌아온다.
+        return "교배사", "returned", f"교배 {gd}일째 · 재발 확인 후 재교배 대기"
+    if gd < CONFIRM:
+        return "교배사", "served", f"교배 {gd}일째 · 임신확인 전"
+    exp_far = far or (svc + timedelta(days=GEST))
+    if t0 >= exp_far - timedelta(days=PRE_FARROW):
+        return ("분만사", "pre_farrow",
+                f"분만 예정 {(exp_far - t0).days}일 전 · 사전 이동")
+    return "임신사", "pregnant", f"임신 {gd}일째"
+
+
+def counts_from_herd(records, on) -> dict:
+    """개체 이력 → 그날의 축사별 **실제** 두수.
+
+    `stage_counts(n)` 은 총두수 하나에서 비율로 되푼 값이라 늘 매끈하다.
+    이건 세는 것이라 안 매끈하고, **못 놓은 개체를 이유별로 남긴다.**
+    """
+    import repro_calendar as rc
+
+    counts = {st: 0 for st in ("교배사", "임신사", "분만사", "후보사")}
+    unplaced: dict = {}
+    for r in records:
+        st, code, _why = stage_of(r, on)
+        if st is None:
+            unplaced[code] = unplaced.get(code, 0) + 1
+        else:
+            counts[st] += 1
+    n = sum(counts.values())
+    return {
+        "on": rc._d(on), "counts": counts, "n": n,
+        "n_records": len(list(records)) if hasattr(records, "__len__")
+        else None,
+        "unplaced": unplaced,
+        "share": {k: (round(v / n, 3) if n else 0.0)
+                  for k, v in counts.items()},
+    }
+
+
+def herd_from_csv(path: str) -> tuple[list, str | None]:
+    """`synth_farm --csv` 가 낸 개체 이력을 읽는다. `(기록, 기준일)`.
+
+    **이 함수는 합성 전용이 아니다.** 같은 열 이름(id·parity·weaning_date·
+    service_date·farrow_date·outcome)이면 실농장 내보내기도 그대로 들어온다 —
+    그날 ③단계의 등급이 `합성` 에서 `실측` 으로 바뀔 뿐이다.
+
+    **기준일을 같이 돌려주는 게 요점이다.** 이 파일은 개체별로 그 날짜 이전의
+    마지막 주기 한 줄이라 **하루의 스냅숏**이고, 다른 날짜로 읽으면 한 주기
+    (145일)를 벗어난 개체가 통째로 빠진다. 기준일 없이 오늘 날짜로 읽었다가
+    283두 중 175두만 잡히고 분만사 비중이 18%→37%로 부푼 적이 있다.
+    """
+    df = pd.read_csv(path)
+    miss = {"id", "parity"} - set(df.columns)
+    if miss:
+        raise ValueError(f"열이 없다: {sorted(miss)} — "
+                         f"있는 열 {list(df.columns)}")
+    as_of = None
+    if "as_of" in df.columns and len(df):
+        vals = sorted({str(v) for v in df["as_of"].dropna()})
+        if len(vals) > 1:
+            raise ValueError(f"as_of 가 여러 날짜다 {vals[:3]} — "
+                             f"스냅숏 파일은 하루여야 한다")
+        as_of = vals[0] if vals else None
+    return df.to_dict("records"), as_of
+
+
 # 자리 번호가 있는 사육 방식 — 스톨·분만틀은 몇 번 자리인지가 관리 단위다
 NUMBERED = ("stall", "crate")
 
 
-def farm_from_setup(setup: dict, n_sows: int | None = None) -> tuple:
+def farm_from_setup(setup: dict, n_sows: int | None = None,
+                    want: dict | None = None) -> tuple:
     """등록 화면 JSON → `Farm`. **방을 만들어 내지 않는다.**
 
     `demo_farm` 은 두수에 맞춰 방을 지어 내므로 늘 딱 들어맞는다 — 그래서
@@ -292,12 +424,15 @@ def farm_from_setup(setup: dict, n_sows: int | None = None) -> tuple:
     방만** 쓰고, 못 넣은 두수를 둘째 값으로 돌려준다. 조용히 넘기면 사용자는
     자기 농장이 그대로 반영된 줄 안다.
 
-    두수 유도는 `stage_counts` 와 같은 식이다. 뒷단(자돈·육성·비육)은 개체
-    단위로 관리하지 않으므로 여기서 놓지 않는다 — 그건 돈군흐름 쪽이다.
+    `want` 를 주면 그 두수를 놓는다 — `counts_from_herd` 로 **개체 이력에서
+    센 값**을 넣는 자리다. 안 주면 `stage_counts` 로 되푼 유도값을 쓴다.
+    둘의 차이가 이 프로그램에서 유도와 실측이 갈리는 마지막 지점이라, 부르는
+    쪽이 어느 것인지 반드시 표시해야 한다. 뒷단(자돈·육성·비육)은 개체 단위로
+    관리하지 않으므로 여기서 놓지 않는다 — 그건 돈군흐름 쪽이다.
     """
     barns = setup.get("barns") or []
     n = int(n_sows or setup.get("n_sows") or 0)
-    want = stage_counts(n)
+    want = dict(want) if want else stage_counts(n)
     f = Farm(setup.get("name") or "내 농장")
 
     by_stage: dict = {}
@@ -338,7 +473,7 @@ def farm_from_setup(setup: dict, n_sows: int | None = None) -> tuple:
     return f, notes
 
 
-def demo_farm(n_sows: int = 68) -> Farm:
+def demo_farm(n_sows: int = 68, want: dict | None = None) -> Farm:
     """전형적인 일관농장 구조 — 교배사(스톨)·임신사(군사)·분만사·후보사.
 
     **자리 수를 두수에 맞춰 만든다.** 처음엔 배치가 68두로 고정돼 있어서
@@ -367,7 +502,10 @@ def demo_farm(n_sows: int = 68) -> Farm:
 
     # 비율 유도는 stage_counts 하나로 모았다 — 등록 농장(farm_from_setup)과
     # 시연 농장이 다른 비율을 쓰면 같은 두수가 다르게 배치된다.
-    want = stage_counts(n_sows)
+    #
+    # `want` 를 주면 그걸 놓는다. 개체 이력을 셌는데 여기서 유도값을 쓰면
+    # **한 화면에 두 값이 찍힌다** — 머리글은 65두, 바로 아래 표는 75두.
+    want = dict(want) if want else stage_counts(n_sows)
     n_mate, n_gest = want["교배사"], want["임신사"]
     n_farrow, n_gilt = want["분만사"], want["후보사"]
 

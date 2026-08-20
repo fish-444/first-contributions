@@ -7,7 +7,7 @@
 > 정본은 `STATUS.md` 다. 여기 수치는 전부 거기서 오고 `tools/check_docs.py`
 > 가 대조한다 — 손으로 고치면 테스트가 깨진다.
 
-**규모**: 도메인·모델 모듈 68개 · 대시보드 뷰 22개 · 테스트 79개 · 외부 연결 0
+**규모**: 도메인·모델 모듈 68개 · 대시보드 뷰 22개 · 테스트 80개 · 외부 연결 0
 
 ## 등급 — 문장마다 붙인다
 
@@ -38,6 +38,7 @@
 | **배치 간격 what-if (운영)** | 지은 돈사 · 주간~5주 | 간격별 **받을 수 있는 두수 · 병목 · 출하 상한** | `POST /api/capacity/interval` |
 | 사육단계 흐름 | 이유 배치 두수 | 175일령 115kg 까지 단계별 두수·면적·tail-ender | `growth_flow` |
 | **여섯 단계 일괄** | `run_farm --setup my_farm.json` | 설계→흐름→배치→사육→진단→손익 | `run_farm` |
+| **개체 이력 → 단계별 두수** | `--herd my_herd.csv` | ③단계 두수를 되푸는 대신 **센다** + 유도값 대조 | `farm_registry.counts_from_herd` |
 
 ### 이 축이 지키는 성질 셋
 
@@ -335,6 +336,10 @@ python competition/src/build_farm_setup.py
 # 등록한 돈사로 여섯 단계 전체
 python competition/src/run_farm.py --setup my_farm.json
 
+# 개체 이력이 있으면 ③단계 두수를 되푸는 대신 **센다**
+python competition/src/synth_farm.py --sows 300 --csv my_herd.csv
+python competition/src/run_farm.py --setup my_farm.json --herd my_herd.csv
+
 # 돈군흐름 검사 · 방 수 한계
 python competition/src/barn_watch.py --setup my_farm.json
 python competition/src/barn_watch.py --setup my_farm.json --sweep
@@ -344,7 +349,7 @@ python competition/src/farm_gap.py --sows 300
 python competition/src/psy_priority.py --sows 300
 
 # 재현성
-python competition/tests/smoke_test.py     # 79/79 통과
+python competition/tests/smoke_test.py     # 80/80 통과
 python competition/tools/check_docs.py     # 문서 수치 대조
 
 # 백엔드 + 프론트 (선택 — 정적 뷰는 서버 없이도 돈다)

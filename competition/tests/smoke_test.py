@@ -3343,6 +3343,135 @@ def test_run_farm_from_setup() -> None:
     assert base["system"] == "WEEKLY" and "capacity" not in base
 
 
+def test_herd_drives_stage_counts() -> None:
+    """개체 이력이 ③단계 두수를 **유도에서 셈으로** 바꾸는가.
+
+    마지막까지 남아 있던 유도값이다. 방은 등록으로 실제가 됐는데 단계별
+    두수는 계속 번식주기 비율(24.1/54.5/21.4%)이었다. 그 매끈함이 문제였다 —
+    정상 상태를 가정하므로 **자리 부족을 지운다.**
+
+    셋을 본다: (1) 경계를 새로 정하지 않았는가, (2) 못 센 개체를 조용히
+    채우지 않는가, (3) 스냅숏을 아무 날짜로나 읽지 않는가.
+    """
+    import csv
+    import os
+    import tempfile
+
+    import farm_registry as fr
+    import run_farm as rf
+
+    # 이유 D-3 · 교배 D-0 · 임신 D-40 · 분만 예정 D-3 · 포유 D-10 · 재발 D-30
+    on = "2026-03-01"
+    recs = [
+        {"id": "A", "parity": 3, "weaning_date": "2026-02-26",
+         "service_date": "", "farrow_date": "", "outcome": ""},
+        {"id": "B", "parity": 3, "weaning_date": "2026-02-19",
+         "service_date": "2026-03-01", "farrow_date": "", "outcome": ""},
+        {"id": "C", "parity": 2, "weaning_date": "2025-12-25",
+         "service_date": "2026-01-20", "farrow_date": "2026-05-14",
+         "outcome": "분만"},
+        {"id": "D", "parity": 4, "weaning_date": "2025-10-20",
+         "service_date": "2025-11-05", "farrow_date": "2026-03-04",
+         "outcome": "분만"},
+        {"id": "E", "parity": 5, "weaning_date": "2025-11-10",
+         "service_date": "2025-11-17", "farrow_date": "2026-02-19",
+         "outcome": "분만"},
+        {"id": "F", "parity": 2, "weaning_date": "2026-01-20",
+         "service_date": "2026-01-30", "farrow_date": "", "outcome": "재발"},
+        {"id": "G", "parity": 0, "weaning_date": "", "service_date": "",
+         "farrow_date": "", "outcome": ""},
+        # 분만 후 이유 기록이 끊긴 개체 — **추정해서 넣지 않는다**
+        {"id": "H", "parity": 6, "weaning_date": "2025-06-01",
+         "service_date": "2025-06-08", "farrow_date": "2025-09-30",
+         "outcome": "분만"},
+    ]
+    want = {"A": "교배사", "B": "교배사", "C": "임신사", "D": "분만사",
+            "E": "분만사", "F": "교배사", "G": "후보사", "H": None}
+    for r in recs:
+        st, code, why = fr.stage_of(r, on)
+        assert st == want[r["id"]], (r["id"], st, why)
+        assert isinstance(code, str) and code, r["id"]
+    # 재발돈을 임신사로 보내면 **있지도 않은 임신돈**이 생긴다
+    assert fr.stage_of(recs[5], on)[1] == "returned"
+    # 교배/임신 경계는 `stage_counts` 와 같은 CONFIRM 이어야 한다. herd_board
+    # 의 21일을 쓰면 유도값과의 차이에 정의 차이가 섞인다
+    svc = {"id": "X", "parity": 3, "weaning_date": "2026-01-01",
+           "service_date": "2026-01-01"}
+    from datetime import date, timedelta
+    d0 = date(2026, 1, 1)
+    assert fr.stage_of(svc, d0 + timedelta(days=fr.CONFIRM - 1))[0] == "교배사"
+    assert fr.stage_of(svc, d0 + timedelta(days=fr.CONFIRM))[0] == "임신사"
+
+    c = fr.counts_from_herd(recs, on)
+    assert c["counts"] == {"교배사": 3, "임신사": 1, "분만사": 2, "후보사": 1}
+    assert c["n"] == 7 and c["unplaced"] == {"record_ends": 1}
+    # **사유는 코드로 묶는다.** 문장에 일수가 박혀 있어 그걸로 묶으면
+    # "분만 39일째" 1두씩 흩어져 몇 두가 왜 빠졌는지 안 보인다
+    assert all(k.isascii() for k in c["unplaced"]), c["unplaced"]
+
+    # CSV 왕복 — 기준일이 **파일 안에** 있어야 한다. 밖에 두면 잃어버리고,
+    # 오늘 날짜로 읽으면 한 주기(145일)를 벗어난 개체가 통째로 빠진다
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    try:
+        with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(recs[0]) + ["as_of"])
+            w.writeheader()
+            for r in recs:
+                w.writerow({**r, "as_of": on})
+        got, as_of = fr.herd_from_csv(path)
+        assert as_of == on
+        assert fr.counts_from_herd(got, as_of)["counts"] == c["counts"]
+        # 한 파일에 두 날짜가 섞이면 스냅숏이 아니다 — 조용히 넘기지 않는다
+        with open(path, "a", encoding="utf-8-sig") as fh:
+            fh.write("Z,3,2026-02-26,,,,2026-04-01\n")
+        try:
+            fr.herd_from_csv(path)
+            raise AssertionError("as_of 가 섞였는데 통과했다")
+        except ValueError as e:
+            assert "여러 날짜" in str(e), e
+    finally:
+        os.unlink(path)
+
+    # run_farm 에 꽂으면 ③ 이 센 값을 쓰고, **유도값이 감추던 부족이 보인다**.
+    # 같은 여덟 개체를 36벌로 늘려 300두 규모에 건다(pigflow KPI 는 몇 두짜리
+    # 농장에서 나오지 않는다).
+    big = [dict(r, id=f"{r['id']}{i}") for i in range(36) for r in recs]
+    cb = fr.counts_from_herd(big, on)
+    assert cb["counts"] == {k: v * 36 for k, v in c["counts"].items()}
+    setup = {
+        "name": "이력농장", "n_sows": 300, "interval_days": 21,
+        "lactation_days": 24, "pre_farrow_days": 7, "washout_days": 7,
+        "barns": [{"name": "1동", "stage": "교배사", "rooms": 1, "per": 72,
+                   "housing": "stall"},
+                  {"name": "2동", "stage": "임신사", "rooms": 2, "per": 82,
+                   "housing": "group"},
+                  {"name": "3동", "stage": "분만사", "rooms": 2, "per": 36,
+                   "housing": "crate"},
+                  {"name": "4동", "stage": "후보사", "rooms": 1, "per": 40,
+                   "housing": "group"}],
+    }
+    r = rf.run(300, days=200, setup=setup, verbose=False,
+               herd={"records": big, "as_of": on, "grade": "합성"})
+    assert r["stage_counts"]["source"] == "개체 이력"
+    assert r["stage_counts"]["used"] == cb["counts"]
+    assert r["herd"]["unplaced"] == {"record_ends": 36}
+    # 교배사에 108두가 있는데 자리는 72두. 유도값은 300두 기준 69두라
+    # **넉넉해 보였다** — 매끈한 유도값이 지우고 있던 부족이다
+    assert fr.stage_counts(300)["교배사"] <= 72 < cb["counts"]["교배사"]
+    short = {x["stage"]: x for x in r["place_short"]}
+    assert "교배사" in short and short["교배사"]["got"] == 72, r["place_short"]
+    # 같은 두수로 되푼 유도값과 나란히 둔다. n_sows 기준으로 빼면 규모 차이가
+    # 단계 차이처럼 보인다
+    assert r["stage_counts"]["derived_same_n"] == fr.stage_counts(cb["n"])
+
+    # 이력을 안 주면 예전 그대로 — 배선이 기존 경로를 안 건드려야 한다
+    base = rf.run(300, days=200, setup=setup, verbose=False)
+    assert base["stage_counts"]["source"] == "번식주기 비율"
+    assert base["stage_counts"]["used"] == fr.stage_counts(300)
+    assert "herd" not in base and not base["place_short"]
+
+
 def test_timing_cache_is_transparent() -> None:
     """교배 적기 캐시가 **답을 바꾸지 않는가**.
 
@@ -4438,7 +4567,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

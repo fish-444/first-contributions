@@ -10,7 +10,7 @@
 **한 줄**: 발정을 놓치면 번식이 무너진다. 그런데 번식만 잡아도 농장은 안 산다 —
 발정 탐지에서 출하까지 한 줄로 잇는다.
 
-**규모**: 모듈 68개 · 대시보드 뷰 22개 · 테스트 79개 · 외부 연결 0
+**규모**: 모듈 68개 · 대시보드 뷰 22개 · 테스트 80개 · 외부 연결 0
 
 ---
 
@@ -48,7 +48,7 @@ AI Hub · 케글 키가 이전 대화 기록에 노출됐다. **커밋 이력 �
 ## 1. 지금 상태
 
 ```bash
-python competition/tests/smoke_test.py      # 79/79 통과
+python competition/tests/smoke_test.py      # 80/80 통과
 python competition/tools/check_docs.py      # 불일치 0
 git status                                  # clean
 ```
@@ -104,7 +104,7 @@ git status                                  # clean
 |---|---|---|
 | 🔴 6 | API 키 재발급 | 사용자 브라우저 작업. 코드 쪽 완료 |
 | ⬜ 11 | 발표 자료 → **보고서 형식** | 사용자가 "다음 주부터" 진행 예정. 아래 사전 조사 참고 |
-| ⬜ 10 | 개체 이력을 ③단계 두수에 배선 | 방은 실제화 완료, 두수는 아직 유도값 |
+| ✅ 10 | ~~개체 이력을 ③단계 두수에 배선~~ | **닫힘.** `--herd my_herd.csv` 로 센다. 남은 건 실농장 이력 하나 — 열 이름만 같으면 코드 변경 없이 `합성`→`실측` |
 | ⬜ 12 | 제출 잠그기 | 테스트·수치 동결 · 유출 점검 |
 
 ### #11 사전 조사 — Task 0 까지만 하고 멈춘 상태
@@ -183,7 +183,7 @@ git status                                  # clean
 ## 7. 바로 돌려 보기
 
 ```bash
-python competition/tests/smoke_test.py                       # 79/79
+python competition/tests/smoke_test.py                       # 80/80
 python competition/tools/check_docs.py                       # 불일치 0
 python competition/src/build_farm_setup.py                   # 등록 화면 생성
 python competition/src/run_farm.py --setup my_farm.json      # 여섯 단계 전체

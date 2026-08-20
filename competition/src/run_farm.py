@@ -5,6 +5,7 @@
 
     python competition/src/run_farm.py --sows 300
     python competition/src/run_farm.py --sows 300 --npd 62 --weaned 10
+    python competition/src/run_farm.py --setup my_farm.json --herd my_herd.csv
     python competition/src/run_farm.py --data     # 필요한 자료가 뭔지만 출력
 
 ## 무엇이 실측이고 무엇이 가정인가
@@ -15,6 +16,21 @@
   계산   돈방 소요·배치 흐름·생산비 — 위 값에서 산식으로 나온다
   유도   ③ 개체 배치 — 난수가 아니라 **번식주기 비율로 유도**한 값이다
          (단계별 두수 = 총두수 × 단계 일수 ÷ 주기). 실제 도면·이력은 아니다
+
+## ③ 은 방과 두수가 따로 등급을 갖는다
+
+`--setup` 은 **방**을 실제로 만들고, `--herd` 는 **두수**를 실제로 만든다.
+둘은 별개다 — 방만 실제인 농장과 두수만 실제인 농장을 같은 라벨로 부르면
+안 되므로 출처 블록이 두 줄로 나뉜다.
+
+`--herd` 를 주면 단계별 두수를 되푸는 대신 **센다**. 그러면 유도값이 감추던
+것이 드러난다. 예시 농장에서 유도값은 교배사 65두인데 실제로 센 값은 75두라,
+등록한 교배사 자리가 **6두분 모자란다**는 사실이 그제야 보였다. 유도값은
+정상 상태를 가정해 늘 매끈하고, 그 매끈함이 부족을 지웠던 것이다.
+
+두 값을 나란히 찍되 **차이를 성적으로 읽으면 안 된다.** 유도는 정상 상태
+가정이고 센 값은 그날의 재고라, 차이는 그날 이 농장이 정상 상태에서 얼마나
+벗어나 있는가일 뿐이다.
 
 이 스크립트에 난수는 **없다.** 같은 입력이면 여섯 단계가 전부 같은 값을 낸다
 (두 번 돌려 diff 로 확인). 예전에 여기 "합성 난수" 라고 적어 놨었는데 틀렸다.
@@ -112,9 +128,16 @@ def _npd_floor(b) -> float:
         "lactation_days": b.lactation_days})
 
 
+# 못 센 사유 코드 → 사람이 읽는 말. 코드로 집계하고 여기서 옮긴다.
+UNPLACED_WHY = {
+    "record_ends": "포유기간이 지났는데 이유 기록이 없다(기록이 끝난다)",
+    "before_record": "그날 이전 기록이 없다",
+}
+
+
 def run(n_sows: int, system: str = "WEEKLY", days: int = 400,
         farm_metrics: dict | None = None, verbose: bool = True,
-        setup: dict | None = None) -> dict:
+        setup: dict | None = None, herd: dict | None = None) -> dict:
     from datetime import date
 
     import breeding_ledger as bl
@@ -229,18 +252,29 @@ def run(n_sows: int, system: str = "WEEKLY", days: int = 400,
     # "자리가 모자란다" 는 사실이 절대 안 보인다 — 등록 농장에서는 그게
     # 가장 알고 싶은 것인데도. farm_from_setup 은 방을 만들지 않고 못 넣은
     # 두수를 돌려준다.
+    # 두수는 두 갈래다. 개체 이력이 있으면 **세고**, 없으면 주기 비율로
+    # **되푼다.** 둘을 같은 표에 섞지 않고, 있을 때는 나란히 놓아 얼마나
+    # 갈리는지 보인다 — 그 차이가 이 프로그램의 마지막 유도값이었다.
+    derived = fr.stage_counts(n_sows)
+    counted = None
+    if herd:
+        counted = fr.counts_from_herd(herd["records"], herd["as_of"])
+    want = counted["counts"] if counted else derived
+
     place_notes = []
     if setup and (setup.get("barns") or []):
-        farm, place_notes = fr.farm_from_setup(setup, n_sows)
+        farm, place_notes = fr.farm_from_setup(setup, n_sows, want=want)
         head = f"③ 개체 배치 (등록 도면 · {farm.name})"
     else:
-        farm = fr.demo_farm(n_sows)
-        head = "③ 개체 배치 (도면 미입력 → 번식주기 비율로 생성)"
+        farm = fr.demo_farm(n_sows, want=want)
+        head = ("③ 개체 배치 (도면 미입력 → 방은 번식주기 비율로 생성"
+                + (", 두수는 이력에서 셈)" if counted else ")"))
     occ = farm.occupancy()
-    want = fr.stage_counts(n_sows)
     out["placed"] = len(farm._where)
     out["place_short"] = [{"stage": st, "want": w, "got": g, "why": why}
                           for st, w, g, why in place_notes]
+    out["stage_counts"] = {"derived": derived, "used": want,
+                           "source": "개체 이력" if counted else "번식주기 비율"}
     p(f"\n{head}")
     p("   " + " · ".join(
         f"{st} {int(v)}두" for st, v in occ.groupby("stage")["n"].sum().items()))
@@ -251,6 +285,44 @@ def run(n_sows: int, system: str = "WEEKLY", days: int = 400,
     if place_notes:
         p("     자리가 모자라면 두수를 줄이거나 방을 늘려야 한다. "
           "여기서 방을 만들어 내지 않는다.")
+
+    if counted:
+        out["herd"] = {"as_of": str(counted["on"]), "n": counted["n"],
+                       "n_records": counted["n_records"],
+                       "unplaced": counted["unplaced"],
+                       "counts": counted["counts"]}
+        # **같은 두수로 되푼 유도값과 비교한다.** ①~⑥ 이 쓰는 유도값은
+        # n_sows 기준인데 이력은 그날 센 두수라, 그대로 빼면 규모 차이가
+        # 단계 차이인 것처럼 보인다. 여기서는 센 두수로 다시 되푼다.
+        same = fr.stage_counts(counted["n"])
+        out["stage_counts"]["derived_same_n"] = same
+        p(f"\n   단계별 두수 — {herd['grade']} · {counted['on']} 기준 "
+          f"{counted['n']}두를 **셌다**")
+        if counted["n"] != n_sows:
+            p(f"   (유도값은 같은 {counted['n']}두로 다시 되푼 것이다 — "
+              f"①~⑥ 이 쓰는 {n_sows}두 기준과 다르다)")
+        p(f"   {'단계':<6}{'센 값':>8}{'유도값':>8}{'차이':>8}   "
+          f"{'센 비중':>8}{'유도 비중':>10}")
+        tot = max(1, counted["n"])
+        for st in ("교배사", "임신사", "분만사", "후보사"):
+            c, dv = counted["counts"][st], same[st]
+            p(f"   {st:<6}{c:>8}{dv:>8}{c - dv:>+8}   "
+              f"{c / tot:>7.1%}{dv / tot:>10.1%}")
+        # **차이를 개선으로 읽으면 안 된다.** 유도값은 정상 상태를 가정한
+        # 매끈한 값이고 센 값은 하루의 실제 재고다. 둘이 다른 건 정상이며,
+        # 그 폭이 이 농장이 정상 상태에서 얼마나 벗어나 있는지를 말한다.
+        p("   유도값은 정상 상태 가정이고 센 값은 그날의 실제 재고다. "
+          "차이는 성적이 아니라\n   **그날 이 농장이 정상 상태에서 얼마나 "
+          "벗어나 있는가**다.")
+        if counted["unplaced"]:
+            p("   ⚠ 못 센 개체 — " + " · ".join(
+                f"{UNPLACED_WHY.get(k, k)} {v}두"
+                for k, v in sorted(counted["unplaced"].items())))
+            p("     추정해서 채우지 않는다. 이유일 하나가 틀리면 다음 주기가 "
+              "전부 밀린다.")
+        if not counted["counts"]["후보사"]:
+            p("   ⚠ 후보사 0두 — 이 이력에 산차 0(초교배 전) 개체가 없다. "
+              "유도값은\n     후보돈을 5% 로 얹으므로 그만큼 갈린다.")
 
     # 4) 사육 단계 흐름
     tl = gf.batch_timeline("2026-08-10", int(plan["weaned_per_batch"]))
@@ -312,11 +384,12 @@ def run(n_sows: int, system: str = "WEEKLY", days: int = 400,
             p(f"     · {name}({stage}) — {why}")
         if out.get("setup_note"):
             p(f"     · {out['setup_note']}")
-        _provenance(bool(setup))
+        _provenance(bool(setup), herd["grade"] if herd else None)
     return out
 
 
-def _provenance(from_setup: bool = False) -> None:
+def _provenance(from_setup: bool = False,
+                herd_grade: str | None = None) -> None:
     print("\n" + "-" * 76)
     print("  이 결과의 출처 — 무엇이 실측이고 무엇이 가정인가")
     print("-" * 76)
@@ -324,15 +397,32 @@ def _provenance(from_setup: bool = False) -> None:
           "케글 자세 0.636 / 탐지 mAP50 0.659")
     print("  계산  돈방 소요 · 배치 흐름 · 생산비 — 위 값에서 산식으로 나온다")
     print("  가정  사료 FCR·단가 = 관행 초기값 · 이유후 육성률 86%")
+    # ③ 은 **방**과 **두수**가 따로 등급을 갖는다. 하나로 뭉치면 방이 실제인
+    # 농장과 두수가 실제인 농장이 같은 라벨을 달게 된다.
     if from_setup:
-        print("  등록  ①②③ 은 **등록한 돈사**로 돌렸다 — 분만틀·배치 간격·방 목록")
+        print("  등록  ①②③ 의 **방**은 등록한 돈사다 — 분만틀·배치 간격·방 목록")
+    if herd_grade:
+        print(f"  {herd_grade}  ③ 의 **단계별 두수는 개체 이력에서 센 값**이다 "
+              f"— 유도값이 아니다."
+              "\n        유도값을 나란히 찍어 두었으니 둘을 섞어 읽지 말 것.")
+        if herd_grade == "합성":
+            print("        합성 이력이라 이 두수는 **농장 성적이 아니다.** "
+                  "같은 열 이름의"
+                  "\n        실농장 내보내기를 넣으면 그 자리가 실측으로 바뀐다.")
+    elif from_setup:
         print("  유도  ③ 의 단계별 두수는 여전히 번식주기 비율이다. 방은 실제고"
-              "\n        두수는 유도값이라, 개체 이력이 들어오면 그쪽으로 바뀐다")
+              "\n        두수는 유도값이라, 개체 이력을 넣으면 그쪽으로 바뀐다"
+              "\n        (`--herd my_herd.csv`)")
     else:
         print("  유도  ③ 개체 배치는 **번식주기 비율로 만든 것**이고 실제 이력이 아니다"
               "\n        (난수가 아니다 — 같은 입력이면 여섯 단계가 늘 같은 값을 낸다)")
+    if not (from_setup and herd_grade):
         print("\n  → 실제 농장 값을 넣으면 ①②④⑤⑥ 이 그 농장 계산으로 바뀐다.")
-        print("     등록 화면 JSON 은 `--setup my_farm.json` 으로 넣는다.")
+        if not from_setup:
+            print("     등록 화면 JSON 은 `--setup my_farm.json` 으로 넣는다.")
+        if not herd_grade:
+            print("     개체 이력은 `--herd my_herd.csv` 로 넣는다 — "
+                  "③ 두수가 유도에서 실측으로 바뀐다.")
 
 
 def print_requirements() -> None:
@@ -366,6 +456,12 @@ def main(argv=None) -> int:
     ap.add_argument("--farrowing-rate", type=float, help="분만율(%%)")
     ap.add_argument("--wean-to-estrus", type=float, help="재귀발정일")
     ap.add_argument("--setup", help="등록 화면이 내보낸 JSON")
+    ap.add_argument("--herd", help="개체 이력 CSV — ③단계 두수를 유도가 아니라 "
+                                   "**세서** 낸다 (synth_farm --csv 형식)")
+    ap.add_argument("--herd-grade", default="합성",
+                    choices=["실측", "합성"],
+                    help="이력의 등급. synth_farm 이 낸 것이면 합성이다")
+    ap.add_argument("--herd-on", help="기준일. 기본은 CSV 의 as_of 열")
     ap.add_argument("--data", action="store_true", help="필요한 자료만 출력")
     a = ap.parse_args(argv)
     if a.data:
@@ -387,7 +483,20 @@ def main(argv=None) -> int:
         gw = (setup.get("growth") or {}).get("survival")
         if gw is not None:
             fm.setdefault("survival", gw)
-    run(a.sows, a.system, a.days, fm or None, setup=setup)
+    herd = None
+    if a.herd:
+        import farm_registry as fr
+
+        recs, as_of = fr.herd_from_csv(a.herd)
+        on = a.herd_on or as_of
+        if not on:
+            # **오늘 날짜로 몰래 읽지 않는다.** 이 파일은 하루의 스냅숏이라
+            # 기준일을 벗어나면 개체가 통째로 빠지고 단계 구성이 뒤틀린다.
+            print("기준일을 모른다 — CSV 에 as_of 열이 없으면 "
+                  "--herd-on 으로 주세요.", file=sys.stderr)
+            return 2
+        herd = {"records": recs, "as_of": on, "grade": a.herd_grade}
+    run(a.sows, a.system, a.days, fm or None, setup=setup, herd=herd)
     return 0
 
 

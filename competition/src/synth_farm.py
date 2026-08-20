@@ -268,7 +268,16 @@ def validate(df: pd.DataFrame, params: Params | None = None,
 
 
 def to_herd_csv(df: pd.DataFrame, path: str, today: str | None = None) -> int:
-    """앱이 먹는 형태 — 개체별 **최근** 이벤트 한 줄."""
+    """앱이 먹는 형태 — 개체별 **최근** 이벤트 한 줄.
+
+    **이건 이력이 아니라 그 날짜의 스냅숏이다.** 개체마다 `today` 이전의
+    마지막 주기 하나만 남기므로, 다른 날짜로 읽으면 절반이 사라진다 —
+    한 주기는 145일뿐인데 개체들의 주기가 흩어져 있기 때문이다. 실제로
+    2025-01-01 기준 파일을 3월로 읽었더니 283두 중 175두만 남았고,
+    분만사 비중이 18%에서 37%로 부풀었다. 데이터가 아니라 날짜 탓이었다.
+
+    그래서 **기준일을 파일 안에 적는다**(`as_of` 열). 밖에 두면 잃어버린다.
+    """
     t = date.fromisoformat(today) if today else date.today()
     past = df[pd.to_datetime(df["service"]).dt.date <= t]
     rows = []
@@ -278,7 +287,7 @@ def to_herd_csv(df: pd.DataFrame, path: str, today: str | None = None) -> int:
                      "weaning_date": r["wean_prev"],
                      "service_date": r["service"],
                      "farrow_date": r["farrow"],
-                     "outcome": r["outcome"]})
+                     "outcome": r["outcome"], "as_of": t.isoformat()})
     out = pd.DataFrame(rows)
     out.to_csv(path, index=False, encoding="utf-8-sig")
     return len(out)
@@ -291,6 +300,8 @@ def main(argv=None) -> int:
     ap.add_argument("--start", default="2025-01-01")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--csv", help="개체별 최근 이벤트를 CSV 로 저장")
+    ap.add_argument("--today", help="스냅숏 기준일 (기본: --start). "
+                                    "파일 안에 as_of 로 적힌다")
     a = ap.parse_args(argv)
 
     P = Params()
@@ -316,8 +327,11 @@ def main(argv=None) -> int:
     print("    개체를 고르는' 기능을 시험할 수 없다. 농장 평균은 실측에 맞추되")
     print("    개체별로 흩뜨렸다.")
     if a.csv:
-        n = to_herd_csv(df, a.csv, a.start)
-        print(f"\n  저장: {a.csv} ({n}두)")
+        t = a.today or a.start
+        n = to_herd_csv(df, a.csv, t)
+        print(f"\n  저장: {a.csv} ({n}두 · 기준일 {t})")
+        print(f"    이건 {t} 하루의 **스냅숏**이다 — 다른 날짜로 읽으면 "
+              f"개체가 빠지고 단계 구성이 뒤틀린다. 기준일은 as_of 열에 있다.")
     return 0 if v["ok"] else 1
 
 
