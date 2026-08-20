@@ -1,0 +1,201 @@
+"""71763 생체지표 **평균 0 기준표** — 사양관리용 이상치 문턱.
+
+절대값을 쓰지 않는 이유가 있다. 라벨의 `rectal-temperature` 는 중앙 37.8℃ 로
+돼지 정상 직장온도(38.5~39.5℃)와 맞지 않고, 등·목·머리 온도와의 상관도
+0.27 / 0.04 / -0.17 이라 일관된 체표 측정으로도 설명되지 않는다. 절대 보정을
+믿을 수 없다는 뜻이다.
+
+그러나 센서가 **내부적으로 일관되기만 하면 편차는 유효하다.** 그래서 이 모듈은
+성장단계 평균을 0 으로 두고, 로버스트 산포(1.4826×MAD)로 나눈 z 만 다룬다.
+
+왜 성장단계 평균인가 — 개체 평균으로 중심화하면 개체내 산포가 너무 작아
+(직장온도 0.36℃) 3σ 문턱에 20~30% 가 걸린다. 성장단계 기준이면 1~4% 로
+현장에서 감당할 빈도가 된다.
+
+**이것은 탐지 '모델' 이 아니라 '기준표' 다.** 편차를 환경으로 예측하려는 시도는
+전부 실패했다(R² 전 항목 음수). 개체 안에서 환경이 변하지 않기 때문이다 —
+피처마다 개체당 고유값의 중앙이 1 이다. 자세한 근거는 docs/AIHUB_71763.md 2절.
+
+실행:
+    python competition/src/bio_baseline_71763.py --clips clips.csv
+    python competition/src/bio_baseline_71763.py <라벨디렉터리>
+"""
+from __future__ import annotations
+
+import os
+import sys
+
+import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import parse_aihub  # noqa: E402
+
+#: 기준표를 만들 생체지표. 절대값이 아니라 편차로만 쓴다.
+BIO_FIELDS = ["breath_rate", "rectal_temp", "back_temp", "neck_temp",
+              "head_temp", "sensible_heat", "latent_heat"]
+#: 중심화 기준. 개체 평균은 산포가 너무 작아 문턱이 잡히지 않는다.
+CENTER_BY = "pig_class"
+#: 로버스트 산포 환산 계수 (정규분포에서 MAD → sd)
+MAD_TO_SD = 1.4826
+#: 이상치 문턱 (로버스트 sd 배수)
+Z_THRESHOLD = 3.0
+
+
+def robust_sd(s: pd.Series) -> float:
+    """1.4826 × MAD. 이상치에 끌려가지 않는 산포."""
+    s = s.dropna()
+    if len(s) < 2:
+        return float("nan")
+    return float(MAD_TO_SD * (s - s.median()).abs().median())
+
+
+def build_baseline(clips: pd.DataFrame,
+                   fields: list[str] | None = None) -> pd.DataFrame:
+    """성장단계별 평균 0 기준표를 만든다.
+
+    반환 열: field, center, n, robust_sd, p1/p5/p50/p95/p99(편차),
+             n_flagged, flagged_pct, usable
+    `usable` 은 문턱이 실제로 쓸모 있는지다 — 걸리는 게 0건이면 문턱이
+    무의미하고, 10% 를 넘으면 알림이 너무 잦다.
+    """
+    fields = fields or BIO_FIELDS
+    rows = []
+    for c in fields:
+        if c not in clips.columns:
+            continue
+        g = clips.dropna(subset=[c])
+        if len(g) < 100 or CENTER_BY not in g.columns:
+            continue
+        dev = g.groupby(CENTER_BY)[c].transform(lambda s: s - s.mean())
+        rsd = robust_sd(dev)
+        flag = dev.abs() > Z_THRESHOLD * rsd if rsd and rsd == rsd else None
+        n_flag = int(flag.sum()) if flag is not None else 0
+        pct = float(flag.mean() * 100) if flag is not None else float("nan")
+        rows.append({
+            "field": c, "center": CENTER_BY, "n": len(g),
+            "robust_sd": round(rsd, 3),
+            "p1": round(dev.quantile(.01), 2),
+            "p5": round(dev.quantile(.05), 2),
+            "p50": round(dev.median(), 2),
+            "p95": round(dev.quantile(.95), 2),
+            "p99": round(dev.quantile(.99), 2),
+            "n_flagged": n_flag, "flagged_pct": round(pct, 1),
+            "usable": "문턱무의미" if n_flag == 0 else (
+                "알림과다" if pct > 10 else "쓸만함"),
+        })
+    return pd.DataFrame(rows)
+
+
+def variance_split(clips: pd.DataFrame,
+                   fields: list[str] | None = None) -> pd.DataFrame:
+    """개체 간 / 개체 내 분산 분해 — 편차에 신호가 남는지 먼저 확인한다.
+
+    개체 간 차이가 전부라면 편차는 잡음뿐이고 기준표를 만들 이유가 없다.
+    """
+    fields = fields or BIO_FIELDS
+    if "chamber" not in clips.columns or "pig_number" not in clips.columns:
+        return pd.DataFrame()
+    ind = (clips["chamber"].astype(str) + "|"
+           + clips["pig_number"].astype(str))
+    rows = []
+    for c in fields:
+        if c not in clips.columns:
+            continue
+        g = clips.assign(_ind=ind).dropna(subset=[c])
+        if len(g) < 100:
+            continue
+        grand = g[c].std()
+        within = g.groupby("_ind")[c].transform(lambda s: s - s.mean())
+        b_var = g.groupby("_ind")[c].mean().var()
+        w_var = within.std() ** 2
+        rows.append({
+            "field": c, "n": len(g), "sd_total": round(grand, 2),
+            "sd_within": round(within.std(), 2),
+            "within_pct": round(w_var / grand ** 2 * 100, 0) if grand else None,
+            "icc": round(b_var / (b_var + w_var), 2) if (b_var + w_var) else None,
+        })
+    return pd.DataFrame(rows)
+
+
+def score(value: float, pig_class: str, field: str,
+          baseline: pd.DataFrame, centers: pd.DataFrame) -> float | None:
+    """현장 측정값 하나를 z 로 바꾼다. |z| > 3 이면 확인 대상."""
+    b = baseline[baseline["field"] == field]
+    m = centers[(centers["field"] == field)
+                & (centers[CENTER_BY] == pig_class)]
+    if b.empty or m.empty:
+        return None
+    rsd = float(b["robust_sd"].iloc[0])
+    if not rsd:
+        return None
+    return (value - float(m["mean"].iloc[0])) / rsd
+
+
+def centers_table(clips: pd.DataFrame,
+                  fields: list[str] | None = None) -> pd.DataFrame:
+    """성장단계별 평균 — 편차를 되돌리거나 현장값을 채점할 때 쓴다."""
+    fields = fields or BIO_FIELDS
+    rows = []
+    for c in fields:
+        if c not in clips.columns or CENTER_BY not in clips.columns:
+            continue
+        for cls, g in clips.dropna(subset=[c]).groupby(CENTER_BY):
+            rows.append({"field": c, CENTER_BY: cls, "n": len(g),
+                         "mean": round(g[c].mean(), 3),
+                         "median": round(g[c].median(), 3)})
+    return pd.DataFrame(rows)
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    clips_csv = None
+    if "--clips" in args:
+        i = args.index("--clips")
+        clips_csv = args[i + 1] if i + 1 < len(args) else None
+        del args[i:i + 2]
+
+    if clips_csv:
+        clips = pd.read_csv(clips_csv)
+    else:
+        label_dir = args[0] if args else None
+        if not (label_dir and os.path.isdir(label_dir)):
+            print("사용: bio_baseline_71763.py <라벨디렉터리> | --clips clips.csv")
+            return 1
+        clips = parse_aihub.aggregate_71763_clips(
+            parse_aihub.parse_71763(label_dir))
+
+    # VL_A/VL_B 는 VL 의 분할 사본이라 그대로 두면 검증셋을 두 번 센다.
+    if "split" in clips.columns and (clips["split"] == "VL").any():
+        clips = clips[~clips["split"].isin(["VL_A", "VL_B"])]
+    clips = clips[clips.get("modality") == "호흡량"]
+    print(f"호흡량 클립 {len(clips)}개 · 개체 "
+          f"{clips.groupby(['chamber', 'pig_number']).ngroups}마리\n")
+
+    v = variance_split(clips)
+    print("=== 분산분해 — 편차에 신호가 남는가 ===")
+    print(v.to_string(index=False))
+    weak = v[v["within_pct"] < 25]["field"].tolist()
+    if weak:
+        print(f"  ⚠️ 개체내 비중 25% 미만이라 편차가 잡음에 가까운 필드: "
+              f"{', '.join(weak)}")
+
+    b = build_baseline(clips)
+    print("\n=== 평균 0 기준표 (성장단계 중심화, |z|>3 문턱) ===")
+    print(b.to_string(index=False))
+    for _, r in b[b["usable"] != "쓸만함"].iterrows():
+        print(f"  ⚠️ {r['field']}: {r['usable']} "
+              f"({r['n_flagged']}건 / {r['flagged_pct']}%)")
+
+    os.makedirs("competition/outputs", exist_ok=True)
+    b.to_csv("competition/outputs/71763_baseline_z.csv",
+             index=False, encoding="utf-8-sig")
+    centers_table(clips).to_csv("competition/outputs/71763_centers.csv",
+                                index=False, encoding="utf-8-sig")
+    print("\n→ competition/outputs/71763_baseline_z.csv · 71763_centers.csv")
+    print("\n주의: 이 기준표는 챔버 실측 89마리에서 나왔다. 실농장에 쓰려면")
+    print("      농장별로 다시 중심화해야 한다 — sd 를 그대로 가져다 쓰지 말 것.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
