@@ -194,6 +194,7 @@ def build() -> str:
     routes = {k: {"label": v[0], "module": v[1], "signal": v[2], "note": v[3]}
               for k, v in fr.HOUSING.items()}
     sn = season()
+    _CYC = bf.herd_cycle()          # 실측 중앙 주기·회전율 — 모듈과 같은 값
     cfg = {"q": q, "d": d, "intervals": INTERVALS, "routes": routes,
            "perf": [{"key": k, "label": lb, "unit": u, "arg": a,
                      "lo": lo, "hi": hi} for k, lb, u, a, lo, hi in PERF],
@@ -206,9 +207,13 @@ def build() -> str:
                    "gilt_share": bf.GILT_SHARE,
                    "gilt_weeks": bf.GILT_PIPELINE_WEEKS,
                    "weaned_per_crate": bf.WEANED_PER_CRATE,
-                   "turnover": bf.SOW_TURNOVER,
-                   "gestation": bf.GESTATION,
-                   "wei": rc.WEI_BY_PARITY["sow"],
+                   # **화면이 자기 상수를 갖지 않게** 여기서 주입한다.
+                   # 예전에 관행 회전율 2.3 과 지침 WEI 5.0 을 박아 뒀는데,
+                   # 모듈은 실측 중앙(2.31 · 6.9)으로 옮겨 가서 같은 돈사가
+                   # 화면과 모듈에서 다른 규모로 나왔다(295 vs 299).
+                   "turnover": _CYC["turnover"],
+                   "gestation": _CYC["gestation"],
+                   "wei": _CYC["wean_to_service"],
                    "service_hold": bf.SERVICE_HOLD_DAYS,
                    "washdown": bf.WASHDOWN, "move_in": bf.MOVE_IN,
                    "down_days": bf.DOWNSTREAM_DAYS,

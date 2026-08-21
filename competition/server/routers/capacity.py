@@ -42,6 +42,18 @@ def _weaned_per_crate(setup: FarmSetup) -> float:
     return float(w) if w is not None else float(bfs.defaults()["weaned"])
 
 
+def _cycle(setup: FarmSetup) -> dict:
+    """**주기와 회전율을 이 농장 값으로.** 안 그러면 모든 농장이 같게 나온다.
+
+    회전율은 특히 그렇다. 관행 2.3 을 쓰면 NPD 34일 농장과 58일 농장이 같은
+    규모로 계산되는데 실제로는 ±7% 갈린다. `herd_cycle` 이 검증된 PSY 항등식
+    으로 되풀고, 비운 칸은 채우지 않고 실측 중앙으로 떨어뜨린 뒤 그 사실을
+    `source` 에 남긴다.
+    """
+    return bf.herd_cycle(setup.performance.model_dump()
+                         if setup.performance else None)
+
+
 def compute(setup: FarmSetup) -> dict:
     """등록 정보 → 용량 + 상한 + 처방. 라우터와 테스트가 같이 쓴다."""
     barns = [b.model_dump() for b in setup.barns]
@@ -51,7 +63,8 @@ def compute(setup: FarmSetup) -> dict:
         pre_farrow=int(setup.pre_farrow_days),
         washdown=int(setup.washout_days),
         extra_rooms=_extra_rooms(setup),
-        weaned_per_crate=_weaned_per_crate(setup))
+        weaned_per_crate=_weaned_per_crate(setup),
+        cycle=_cycle(setup))
 
     p = setup.performance
     tp = bf.throughput(
@@ -123,7 +136,7 @@ def relief(setup: FarmSetup, steps: int = 5) -> dict:
         pre_farrow=int(setup.pre_farrow_days),
         washdown=int(setup.washout_days),
         extra_rooms=_extra_rooms(setup),
-        weaned_per_crate=_weaned_per_crate(setup))
+        weaned_per_crate=_weaned_per_crate(setup), cycle=_cycle(setup))
     # 같은 수준에 나란히 걸린 묶음을 표시한다 — 하나만 풀면 안 움직인다
     tied: list = []
     for r in rows:
@@ -164,6 +177,7 @@ def interval_whatif(setup: FarmSetup) -> dict:
         raise HTTPException(422, "돈사가 등록되지 않았다")
     barns = [b.model_dump() for b in setup.barns]
     wpc = _weaned_per_crate(setup)
+    cyc = _cycle(setup)
     p = setup.performance
     now = float(setup.interval_days)
 
@@ -177,7 +191,8 @@ def interval_whatif(setup: FarmSetup) -> dict:
             lactation=int(setup.lactation_days),
             pre_farrow=int(setup.pre_farrow_days),
             washdown=int(setup.washout_days),
-            extra_rooms=_extra_rooms(stub), weaned_per_crate=wpc)
+            extra_rooms=_extra_rooms(stub), weaned_per_crate=wpc,
+            cycle=cyc)
         tp = bf.throughput(
             cap,
             farrow_rate=None if p.farrowing_rate is None

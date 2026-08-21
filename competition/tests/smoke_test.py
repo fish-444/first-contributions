@@ -3101,10 +3101,17 @@ def test_setup_screen_matches_module() -> None:
     assert cap["gilt_share"] == bf.GILT_SHARE
     assert cap["gilt_weeks"] == bf.GILT_PIPELINE_WEEKS
     assert cap["weaned_per_crate"] == bf.WEANED_PER_CRATE
-    assert cap["turnover"] == bf.SOW_TURNOVER
-    assert cap["gestation"] == bf.GESTATION
     assert cap["service_hold"] == bf.SERVICE_HOLD_DAYS
     assert cap["down_days"] == bf.DOWNSTREAM_DAYS
+    # 주기·회전율은 **관행 상수가 아니라 `herd_cycle()`** 이어야 한다. 예전에
+    # 화면이 관행 2.3 · 지침 WEI 5.0 을 박고 있었고 모듈은 실측 중앙으로
+    # 옮겨 가서, 같은 돈사가 화면 295두 · 모듈 299두로 갈렸다
+    cyc = bf.herd_cycle()
+    assert cap["turnover"] == cyc["turnover"], (cap["turnover"], cyc)
+    assert cap["gestation"] == cyc["gestation"], (cap["gestation"], cyc)
+    assert cap["wei"] == cyc["wean_to_service"], (cap["wei"], cyc)
+    # 실측이 있으면 관행값을 그대로 쓰지 않는다 — 갈라진 게 정상이다
+    assert cyc["source"]["wean_to_service"] in ("실측 중앙", "지침")
 
     try:
         from playwright.sync_api import sync_playwright
@@ -3330,7 +3337,7 @@ def test_run_farm_from_setup() -> None:
     assert r["placed"] == 300 and not r["place_short"], r["place_short"]
 
     # 5) 분만틀이 받는 규모와 **다른 돈사가 받는 규모**는 다르다. 분만틀만
-    #    보고 341두라고 하면 임신사 자리가 295두인 걸 놓친다
+    #    보고 341두라고 하면 임신사 자리가 299두인 걸 놓친다
     cap = r["capacity"]
     assert cap["binding"] == "임신사" and cap["flows"], cap["binding"]
     assert cap["n_sows"] < r["plan"]["sow_inventory"], (cap, r["plan"])
@@ -3347,7 +3354,7 @@ def test_herd_drives_stage_counts() -> None:
     """개체 이력이 ③단계 두수를 **유도에서 셈으로** 바꾸는가.
 
     마지막까지 남아 있던 유도값이다. 방은 등록으로 실제가 됐는데 단계별
-    두수는 계속 번식주기 비율(24.1/54.5/21.4%)이었다. 그 매끈함이 문제였다 —
+    두수는 계속 번식주기 비율(23.9/54.4/21.8%)이었다. 그 매끈함이 문제였다 —
     정상 상태를 가정하므로 **자리 부족을 지운다.**
 
     셋을 본다: (1) 경계를 새로 정하지 않았는가, (2) 못 센 개체를 조용히
@@ -3509,6 +3516,80 @@ def test_herd_drives_stage_counts() -> None:
         assert rf.main(["--herd", path, "--herd-on", "2026-04-01"]) == 2
     finally:
         os.unlink(path)
+
+
+def test_herd_cycle_from_perf() -> None:
+    """주기·회전율이 **이 농장 값**인가, 그리고 모듈끼리 안 갈리는가.
+
+    두 가지를 고쳤다.
+
+    1. 회전율이 관행 2.3 이라 NPD 34일 농장과 58일 농장이 같은 규모로
+       나왔다. `korean_farm_stats` 가 466행에서 확인한 PSY 항등식의 분모가
+       바로 회전율이므로, 되풀 필요 없이 그걸 쓴다.
+    2. `farm_registry` 는 임신 114 · 이유~교배 7 을, `batch_flow` 는 115 ·
+       5.0 을 쓰고 있었다. 같은 농장에 다른 주기(145 vs 144)를 쓴 것이고,
+       연속 흐름 돈사의 지지 두수가 주기에 정비례하므로 **같은 돈사가 모듈에
+       따라 다른 규모로 나왔다.** 더 나쁜 건 방향이다 — 지침 WEI 5.0 은 실측
+       중앙 6.9 보다 짧아서 교배사를 실제보다 **크게** 계산했다.
+    """
+    import batch_flow as bf
+    import farm_registry as fr
+
+    # 1) 출처를 라벨로 남긴다 — 조용히 채우면 내 농장 값인 줄 안다
+    base = bf.herd_cycle()
+    assert set(base["source"]) >= set(bf.CYCLE_FIELDS) | {"turnover"}
+    assert base["source"]["turnover"] in ("실측 중앙", "관행")
+    assert not base["given"], base["given"]
+
+    mine = bf.herd_cycle({"npd": 34.1, "wean_to_estrus": 6.0})
+    assert mine["source"]["turnover"] == "NPD 에서 유도"
+    assert mine["source"]["wean_to_service"] == "입력값"
+    assert mine["wean_to_service"] == 6.0
+    assert set(mine["given"]) == {"turnover", "wean_to_service"}
+
+    # 2) **검증된 항등식 그대로** — 새 산식이 아니다
+    good, bad = bf.herd_cycle({"npd": 34.1}), bf.herd_cycle({"npd": 57.73})
+    want = round((365.0 - 34.1) / (good["gestation"] + good["lactation"]), 3)
+    assert good["turnover"] == want, (good["turnover"], want)
+    # NPD 가 나쁘면 회전이 느리다 — 같은 분만틀이 **더 많은** 모돈을 받는다
+    assert good["turnover"] > bad["turnover"]
+
+    # 3) 비운 칸은 채우지 않는다. 성적을 하나도 안 줘도 터지지 않아야 한다
+    assert bf.herd_cycle({}) == bf.herd_cycle(None) == bf.herd_cycle()
+    assert bf.herd_cycle({"npd": None})["source"]["turnover"] != "NPD 에서 유도"
+
+    # 4) **모듈끼리 같은 주기를 쓴다.** 여기가 갈리면 같은 돈사가 두 규모다
+    assert (fr.W2S, fr.GEST, fr.LACT) == (
+        round(base["wean_to_service"]), round(base["gestation"]),
+        round(base["lactation"])), (fr.W2S, fr.GEST, fr.LACT, base)
+
+    # 5) 회전율이 규모를 실제로 움직이는가 — 안 움직이면 배선이 안 된 것이다
+    built = [{"stage": "분만사", "rooms": 2, "per": 36},
+             {"stage": "자돈사", "rooms": 4, "per": 396},
+             {"stage": "육성사", "rooms": 3, "per": 385},
+             {"stage": "비육사", "rooms": 4, "per": 381}]
+    sows = {}
+    for tag, perf in (("good", {"npd": 34.1}), ("bad", {"npd": 57.73})):
+        cap = bf.capacity_from_rooms(built, 21, lactation=24,
+                                     weaned_per_crate=11.0,
+                                     cycle=bf.herd_cycle(perf))
+        sows[tag] = cap["n_sows"]
+        assert cap["cycle"]["source"]["turnover"] == "NPD 에서 유도"
+    assert sows["bad"] > sows["good"], sows
+
+    # 6) **설계와 역산이 같은 회전율을 쓴다.** 여기만 관행값을 쓰면 분만틀에서
+    #    지은 농장을 되읽을 때 같은 돈사가 다른 규모로 나온다
+    assert bf.plan_from_crates(36, 21)["herd_size"] == \
+           bf.plan_from_crates(36, 21, turnover=base["turnover"])["herd_size"]
+
+    # 7) 지침 WEI 를 넣으면 옛 값이 되돌아온다 — 차이가 어디서 왔는지 증명
+    old = bf.capacity_from_rooms(
+        [{"stage": "교배사", "rooms": 1, "per": 69}], 21, lactation=24,
+        cycle=bf.herd_cycle({"wean_to_estrus": bf.CYCLE_GUIDE["wean_to_service"],
+                             "gestation": bf.CYCLE_GUIDE["gestation"]}))
+    now = bf.capacity_from_rooms(
+        [{"stage": "교배사", "rooms": 1, "per": 69}], 21, lactation=24)
+    assert old["n_sows"] > now["n_sows"], (old["n_sows"], now["n_sows"])
 
 
 def test_table_export() -> None:
@@ -4909,7 +4990,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_table_export, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

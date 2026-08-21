@@ -10,7 +10,7 @@
 **한 줄**: 발정을 놓치면 번식이 무너진다. 그런데 번식만 잡아도 농장은 안 산다 —
 발정 탐지에서 출하까지 한 줄로 잇는다.
 
-**규모**: 모듈 70개 · 대시보드 뷰 23개 · 테스트 83개 · 외부 연결 0
+**규모**: 모듈 70개 · 대시보드 뷰 23개 · 테스트 84개 · 외부 연결 0
 
 ---
 
@@ -73,7 +73,7 @@ AI Hub · 케글 키가 이전 대화 기록에 노출됐다. **커밋 이력 �
 ## 1. 지금 상태
 
 ```bash
-python competition/tests/smoke_test.py      # 83/83 통과
+python competition/tests/smoke_test.py      # 84/84 통과
 python competition/tools/check_docs.py      # 불일치 0
 git status                                  # clean
 ```
@@ -121,7 +121,7 @@ git status                                  # clean
 자세한 발견은 `STATUS.md` 의 **⑧′ ⑧″ ⑧‴ ⑨ ⑨′** 절에 있다. 요지 넷:
 
 - **답은 두수가 아니라 병목의 이름이다.** 300두로 설계한 구성이 실제로는
-  295두이고, 붙잡고 있는 건 임신사다. 임신사를 넓히기 전엔 다른 돈사를 키워도
+  299두이고, 붙잡고 있는 건 임신사다. 임신사를 넓히기 전엔 다른 돈사를 키워도
   두수가 안 늘어난다.
 - **방이 상한을 다시 깎는다.** 복당 이유두수 목표가 12두라도 자돈사 396자리에
   분만틀 36개면 11.0두가 천장이다. 목표를 그냥 상한으로 쓰면 **방이 못 받는
@@ -236,7 +236,7 @@ git status                                  # clean
 ## 7. 바로 돌려 보기
 
 ```bash
-python competition/tests/smoke_test.py                       # 83/83
+python competition/tests/smoke_test.py                       # 84/84
 python competition/tools/check_docs.py                       # 불일치 0
 python competition/src/build_farm_setup.py                   # 등록 화면 생성
 python competition/src/run_farm.py --setup my_farm.json      # 여섯 단계 전체
