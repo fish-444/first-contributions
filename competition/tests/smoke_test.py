@@ -3752,6 +3752,109 @@ def test_pig_behavior_adapter() -> None:
     assert vision_pig_behavior.main([]) == 0
 
 
+def test_behavior_baseline() -> None:
+    """구성비 → 자기 기준선 편차 → 헤드 경보 — **문턱을 발명하지 않았는가.**
+
+    지키는 것 여섯: (1) 이력 미달이면 기준선을 만들지 않는가, (2) 산포가
+    이상치에 강건한가(IQR — σ 였으면 한 창이 기준선을 흔든다), (3) 컷이
+    자기 이력 경보율 대역에서 역산되는가 + 산포 없으면 None·경보 불가인가,
+    (4) 질병이 한 창으로 안 울리고 연속을 요구하는가, (5) 달력이 연 헤드만
+    계산하는가(발정·분만 신호 겹침), (6) fold() 출력이 그대로 관통하는가.
+    """
+    import numpy as np
+
+    import behavior_baseline as bb
+    import vision_pig_behavior as vpb
+    from pig_behavior.predictor import Detection
+
+    classes = ("Searching", "Resting", "Walking", "Eating")
+
+    def window(rest, eat, walk):
+        raw = {"Resting": rest, "Eating": eat, "Walking": walk,
+               "Searching": max(0.0, 1 - rest - eat - walk)}
+        tot = sum(raw.values())
+        return {k: v / tot for k, v in raw.items()}
+
+    rng = np.random.default_rng(3)
+    hist = [window(0.60 + rng.normal(0, .03), 0.25 + rng.normal(0, .03),
+                   0.10 + rng.normal(0, .02)) for _ in range(40)]
+
+    # 1) 미달이면 기준선 미형성 — 편차도 점수도 경보도 없다
+    short = bb.fit(hist[:bb.MIN_WINDOWS - 1], "짧은방", classes)
+    assert not short.formed and short.deviation(hist[0]) == {}
+    a0 = bb.assess(short, window(0.4, 0.1, 0.4))
+    assert a0["heads"] == {} and "기준선 미형성" in a0["why"]
+    assert bb.fit(hist[:bb.MIN_WINDOWS], "딱맞는방", classes).formed
+
+    # 2) IQR 산포 — 이상치 한 점이 기준선을 흔들지 않는다(σ 였으면 흔든다)
+    x = np.array([0.25] * 20 + [0.26] * 20 + [0.95])
+    _, rsd = bb._robust(x)
+    assert rsd < float(np.std(x)) / 2
+    med, rsd0 = bb._robust(np.array([0.3] * 30))
+    assert med == 0.3 and rsd0 == 1e-6               # 산포 0 → 바닥값
+
+    # 3) 컷은 자기 이력 경보율 대역에서 역산 — 상수 이력이면 None·경보 불가
+    b = bb.fit(hist, "3동/2방", classes)
+    for head in bb.HEAD_SIGNS:
+        cut = b.cuts[head]
+        assert cut is not None
+        scores = np.array([b.head_score(h, head) for h in hist])
+        rate = float((scores >= cut).mean())
+        assert bb.RATE_BAND[0] <= rate <= bb.RATE_BAND[1]
+    flat = bb.fit([window(0.6, 0.25, 0.1)] * 40, "상수방", classes)
+    assert all(c is None for c in flat.cuts.values())
+    af = bb.assess(flat, window(0.4, 0.1, 0.4))
+    assert not af["heads"]["estrus"]["alert"]
+    assert "경보 불가" in af["heads"]["estrus"]["why"]
+
+    # 부호 방향 — 발정 창(불안정↑·식욕↓)은 estrus 양수, 반대 창은 음수
+    est = window(0.42, 0.14, 0.32)
+    assert b.head_score(est, "estrus") > 0
+    assert b.head_score(window(0.72, 0.20, 0.03), "estrus") < 0
+    a1 = bb.assess(b, est)
+    assert a1["heads"]["estrus"]["alert"]             # SUSTAIN=1 — 즉시
+
+    # 4) 질병은 연속 2창 — 첫 창은 over 만, 둘째 창에야 경보
+    sick = window(0.78, 0.08, 0.05)
+    d1 = bb.assess(b, sick)["heads"]["disease"]
+    assert d1["over"] and not d1["alert"] and d1["streak"] == 1
+    d2 = bb.assess(b, sick, recent=[sick])["heads"]["disease"]
+    assert d2["alert"] and d2["streak"] == 2 == d2["sustain"]
+    # 사이에 평시 창이 끼면 연속이 끊긴다
+    d3 = bb.assess(b, sick, recent=[window(0.6, 0.25, 0.1)])["heads"]["disease"]
+    assert not d3["alert"] and d3["streak"] == 1
+
+    # 5) 달력 게이팅 — 발정 창은 분만 헤드도 넘지만(신호 겹침), 달력이 연
+    #    헤드만 계산하는 것이 정상 경로다
+    assert bb.assess(b, est)["heads"]["farrowing"]["over"]
+    g = bb.assess(b, est, heads=("estrus",))
+    assert list(g["heads"]) == ["estrus"]
+
+    # 6) fold() → summarize() → fit() — 어댑터 출력이 그대로 관통한다.
+    #    fold() 는 관측된 행동만 내놓으므로, 어휘를 추론한 기준선은 한 번도
+    #    안 보인 행동을 모른다 — 그 어휘로 헤드를 재는 척하면 안 된다
+    dets = [(f"2026-08-21T{h:02d}:00", [Detection("Resting", 0.8, (0, 0, 1, 1)),
+                                        Detection("Eating", 0.4, (0, 0, 1, 1))])
+            for h in range(14)]
+    folded = [vpb.fold([d], "cam1", "3동", "2방", model="t")[0] for d in dets]
+    hist2 = bb.summarize(folded)
+    assert list(hist2) == ["3동/2방"] and len(hist2["3동/2방"]) == 14
+    b_seen = bb.fit(hist2["3동/2방"], "3동/2방")      # 어휘 추론 — 본 것만 안다
+    assert b_seen.formed and set(b_seen.classes) == {"Resting", "Eating"}
+    assert b_seen.head_score(hist2["3동/2방"][0], "estrus") is None  # Walking 미비
+    assert b_seen.cuts["estrus"] is None
+    ag = bb.assess(b_seen, hist2["3동/2방"][0])["heads"]["estrus"]
+    assert not ag["alert"] and "어휘" in ag["why"]
+    # 계약 어휘를 명시하면 잰다 — 미관측 행동은 구성비 0 인 정상 이력이다
+    b_full = bb.fit(hist2["3동/2방"], "3동/2방", classes=vpb.CONTRACT_CLASSES)
+    assert b_full.formed
+    assert b_full.head_score(hist2["3동/2방"][0], "estrus") is not None
+
+    # 한계 신고 고정 — 등가중임을, 판정이 아니라 의심임을 응답이 스스로 말한다
+    assert "등가중" in a1["weights"] and a1["grade"] == "계산"
+    assert "판정이 아니라 의심" in a1["note"]
+
+
 def test_vision_contract() -> None:
     """영상 모델이 꽂힐 자리 — **모델 없이 배선이 관통하는가.**
 
@@ -5059,7 +5162,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
