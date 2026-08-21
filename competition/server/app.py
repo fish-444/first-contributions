@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse                     # noqa: E402
 from fastapi.staticfiles import StaticFiles                    # noqa: E402
 
 from .routers import (breeding, capacity, diagnosis, farms,     # noqa: E402
-                      season, vision)
+                      export, season, vision)
 
 WEB = os.path.join(COMP, "web")
 DASH = os.path.join(COMP, "dashboard")
@@ -50,6 +50,7 @@ app.include_router(breeding.router)
 app.include_router(diagnosis.router)
 app.include_router(season.router)
 app.include_router(vision.router)
+app.include_router(export.router)
 
 
 @app.get("/api/health", tags=["meta"], summary="살아 있는가 + 무엇을 물고 있는가")

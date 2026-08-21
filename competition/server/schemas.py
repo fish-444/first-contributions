@@ -91,3 +91,15 @@ class HerdIn(BaseModel):
                                             "service_date·farrow_date·outcome")
     include_disease: bool = Field(
         True, description="질병 헤드는 달력이 없어 전 개체가 대상이다")
+
+
+class ExportIn(BaseModel):
+    """내보낼 표에 필요한 것만 넣는다 — 표마다 다르다.
+
+    성적은 `performance` 로 따로 줄 수도, `setup` 안의 것을 쓸 수도 있다.
+    어느 쪽이든 **비운 칸은 비운 채로** 간다.
+    """
+    setup: FarmSetup | None = None
+    performance: Performance | None = None
+    herd: HerdIn | None = None
+    sows: int | None = Field(None, ge=1, le=20000)

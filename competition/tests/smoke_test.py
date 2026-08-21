@@ -3511,6 +3511,104 @@ def test_herd_drives_stage_counts() -> None:
         os.unlink(path)
 
 
+def test_table_export() -> None:
+    """CSV 로 뽑아도 **등급과 각주가 따라가는가.**
+
+    CSV 는 서식이 없어서 화면의 배지와 각주가 통째로 사라진다. 그러면 격차
+    분해가 개입 효과처럼, 유도값이 실측처럼 읽힌다 — 이 프로젝트가 가장
+    조심해 온 오독이다. 그래서 머리말과 등급 열을 강제하고, 그게 유지되는지
+    본다.
+    """
+    import csv as _csv
+    import io
+    import tempfile
+
+    import table_export as tx
+
+    sys.path.insert(0, os.path.dirname(ROOT))
+    try:
+        from fastapi.testclient import TestClient
+
+        from competition.server.app import app
+    except Exception:
+        return                          # fastapi 미설치 환경
+    c = TestClient(app)
+
+    barns = c.get("/api/capacity/preset", params={"sows": 300}).json()["barns"]
+    setup = {"name": "예시", "n_sows": 300, "interval_days": 21,
+             "lactation_days": 24, "pre_farrow_days": 7, "washout_days": 7,
+             "barns": barns,
+             "performance": {"weaned": 10.0, "npd": 62.0,
+                             "farrowing_rate": 74.0}}
+    import farm_registry as fr
+    import synth_farm as sf
+    df = sf.generate(120, 1.0, "2025-01-01", 0, sf.Params())
+    fd, hp = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    try:
+        sf.to_herd_csv(df, hp, "2025-01-01")
+        recs, as_of = fr.herd_from_csv(hp)
+    finally:
+        os.unlink(hp)
+
+    bodies = {"capacity": {"setup": setup}, "interval": {"setup": setup},
+              "diagnosis": {"setup": setup}, "priority": {"setup": setup},
+              "season": {"sows": 300},
+              "targets": {"herd": {"as_of": as_of, "records": recs}}}
+    assert set(bodies) == set(tx.SHEETS)
+    listed = {s["key"] for s in c.get("/api/export/sheets").json()["sheets"]}
+    assert listed == set(tx.SHEETS), listed
+
+    for sheet, body in bodies.items():
+        r = c.post(f"/api/export/{sheet}", json=body)
+        assert r.status_code == 200, (sheet, r.text)
+        t = r.text
+        # 1) **엑셀이 한글을 안 깨뜨리게** BOM 이 있어야 한다
+        assert t.startswith("﻿"), sheet
+        # 2) 파일 이름에 **농장 이름을 넣지 않는다** — 식별자다
+        cd = r.headers["content-disposition"]
+        assert cd.startswith('attachment; filename="yangdon_'), cd
+        assert "예시" not in cd, cd
+        # 3) 머리말에 등급과 각주가 있어야 한다
+        head = [ln for ln in t.splitlines() if ln.lstrip("﻿").startswith("#")]
+        assert any("등급" in ln for ln in head), sheet
+        assert sum(1 for ln in head if "⚠" in ln) >= 2, (sheet, head)
+        # 4) **행마다 등급 열** — 머리말을 지우고 붙여넣어도 남는다
+        rows = list(_csv.DictReader(io.StringIO(
+            "\n".join(ln for ln in t.lstrip("﻿").splitlines()
+                      if not ln.startswith("#")))))
+        assert rows and list(rows[0])[0] == "등급", sheet
+        assert all(r0["등급"] in ("실측", "계산", "유도", "합성") for r0 in rows)
+        # 5) 한 표에 **등급을 섞지 않는다** — 섞이면 전부 실측으로 읽힌다
+        assert len({r0["등급"] for r0 in rows}) == 1, sheet
+
+    # 6) bare 는 머리말만 뺀다 — **등급 열은 못 뺀다**
+    b = c.post("/api/export/season?bare=true", json={"sows": 300}).text
+    assert "#" not in b and b.lstrip("﻿").startswith("등급,"), b[:60]
+
+    # 7) 축이 다른 표는 각주가 그 사실을 들고 다녀야 한다
+    pri = c.post("/api/export/priority", json={"setup": setup}).text
+    assert "개입 효과" in pri and "합산" in pri and "축이 다르다" in pri
+    tg = c.post("/api/export/targets",
+                json={"herd": {"as_of": as_of, "records": recs}}).text
+    assert "판정이 아니라 겨냥" in tg and "모델은 아직 없다" in tg
+
+    # 8) 화면과 **같은 수**여야 한다 — 여기서 다시 계산하면 갈린다
+    cap = c.post("/api/capacity", json=setup).json()
+    assert f',{cap["capacity"]["n_sows"]},' in \
+           c.post("/api/export/capacity", json={"setup": setup}).text \
+           or str(cap["capacity"]["n_sows"]) in \
+           c.post("/api/export/capacity", json={"setup": setup}).text
+
+    # 9) 없는 표·빈 입력은 거절한다. **비운 성적을 중앙값으로 채우지 않으므로**
+    #    낼 표가 없으면 없다고 말한다
+    assert c.post("/api/export/nope", json={"sows": 300}).status_code == 404
+    assert c.post("/api/export/capacity", json={}).status_code == 422
+    assert c.post("/api/export/diagnosis",
+                  json={"performance": {}}).status_code == 422
+    assert c.post("/api/export/targets", json={}).status_code == 422
+
+
 def test_vision_contract() -> None:
     """영상 모델이 꽂힐 자리 — **모델 없이 배선이 관통하는가.**
 
@@ -4811,7 +4909,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_table_export, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

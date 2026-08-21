@@ -126,6 +126,7 @@
         <b>비용은 계산하지 않습니다.</b></p></div>
     <div class="pbody">
       <div class="btns"><button class="act" id="b-relief">순서 보기</button>
+        <button class="act ex" data-sheet="capacity">돈사·병목 CSV</button>
         <span class="hint" id="h-relief"></span></div>
       <div id="relief"></div>
     </div>
@@ -139,6 +140,7 @@
         방은 넉넉해지는데 <b>배치가 커져 한 날에 몰립니다</b>.</p></div>
     <div class="pbody">
       <div class="btns"><button class="act" id="b-iv">간격별로 비교</button>
+        <button class="act ex" data-sheet="interval">CSV</button>
         <span class="hint" id="h-iv"></span></div>
       <div id="ivtab"></div>
     </div>
@@ -239,6 +241,8 @@
           <input id="d-sows" type="number" inputmode="numeric" min="1" max="20000" value="300"></label>
       </div>
       <div class="btns"><button class="act pri" id="b-diag">진단</button>
+        <button class="act ex" data-sheet="diagnosis">격차 CSV</button>
+        <button class="act ex" data-sheet="priority">처방 순서 CSV</button>
         <span class="hint" id="h-diag">비운 칸은 중앙값으로 채우지 않고 진단에서 뺍니다</span></div>
       <div id="diag-head"></div>
       <div id="diag-rows"></div>
@@ -280,6 +284,7 @@
           <input id="s-sows" type="number" inputmode="numeric" min="1" max="20000" value="300"></label>
       </div>
       <div class="btns"><button class="act pri" id="b-season">계산</button>
+        <button class="act ex" data-sheet="season">CSV</button>
         <span class="hint" id="h-season">두 칸을 비우면 국내 분포를 우리 규모로 환산한 범위가 나옵니다</span></div>
       <div id="season-head"></div>
       <div id="season-dist"></div>

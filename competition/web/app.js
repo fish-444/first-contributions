@@ -379,6 +379,56 @@ async function runInterval() {
   } finally { btn.disabled = false; }
 }
 
+/* ── 내보내기 ──────────────────────────────────── */
+// **파일을 브라우저가 만들지 않는다.** 서버가 CSV 를 내려주고 여기는 저장만
+// 시킨다. 화면이 자기 CSV 를 만들면 등급 열과 각주 머리말이 빠지고, 그러면
+// 격차 분해가 개입 효과처럼 읽힌다 — 그게 이 프로젝트가 막으려는 오독이다.
+function exportBody(sheet) {
+  if (sheet === "capacity" || sheet === "interval") return { setup: setup() };
+  if (sheet === "season") {
+    return { sows: Math.round(num("#s-sows") ?? lastCap?.capacity?.n_sows ?? 300) };
+  }
+  if (sheet === "diagnosis" || sheet === "priority") {
+    return {
+      sows: Math.round(num("#d-sows") ?? 300),
+      performance: {
+        weaned: num("#d-wl"), npd: num("#d-npd"),
+        farrowing_rate: num("#d-fr"), wean_to_estrus: num("#d-we")
+      }
+    };
+  }
+  return {};
+}
+
+async function runExport(btn) {
+  const sheet = btn.dataset.sheet;
+  const hint = btn.parentElement.querySelector(".hint");
+  const say = (cls, msg) => { if (hint) { hint.className = cls; hint.textContent = msg; } };
+  btn.disabled = true; say("hint", "내보내는 중…");
+  try {
+    const r = await fetch(`/api/export/${sheet}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(exportBody(sheet))
+    });
+    if (!r.ok) {
+      let m = r.statusText;
+      try { m = (await r.json()).detail ?? m; } catch (e) { /* 본문 없음 */ }
+      throw new Error(typeof m === "string" ? m : JSON.stringify(m));
+    }
+    // 파일 이름은 서버가 정한다 — **농장 이름을 넣지 않는다**(식별자다)
+    const cd = r.headers.get("content-disposition") || "";
+    const name = (cd.match(/filename="([^"]+)"/) || [])[1]
+      || `yangdon_${sheet}.csv`;
+    const url = URL.createObjectURL(await r.blob());
+    const a = el("a"); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    say("hint ok", name);
+  } catch (e) {
+    say("hint bad", e.message);
+  } finally { btn.disabled = false; }
+}
+
 /* ── 오늘 할 일 ────────────────────────────────── */
 async function runQueue() {
   const hint = $("#h-queue"), out = $("#queue");
@@ -699,6 +749,8 @@ $("#b-diag").onclick = runDiagnosis;
 $("#b-season").onclick = runSeason;
 $("#b-relief").onclick = runRelief;
 $("#b-iv").onclick = runInterval;
+document.querySelectorAll("button.ex").forEach(
+  b => { b.onclick = () => runExport(b); });
 $("#b-queue").onclick = runQueue;
 $("#b-save").onclick = async () => {
   const hint = $("#h-save"), name = $("#f-name").value.trim();
