@@ -1,4 +1,4 @@
-"""영상 모델이 꽂힐 자리 — **모델이 아직 없다.**
+"""영상 모델이 꽂힐 자리 — 첫 실모델이 꽂혔다.
 
 행동 분류 모델을 만드는 중이라, 여기는 완성된 모델이 들어올 계약과
 **오늘 어느 개체를 볼지** 까지만 낸다. 산술은 `vision_contract` 에 있고
@@ -69,10 +69,37 @@ def contract() -> dict:
                     "넘는 것이 등록 조건이고, 못 넘으면 기준선이 그대로 "
                     "돈다 — 1D-CNN 이 0.427 로 진 적이 있다"),
         },
-        "implemented": ["ReplayModel"],
-        "note": ("**모델이 아직 없다.** 지금 꽂혀 있는 것은 배선을 시험하는 "
-                 "스텁뿐이고, 이 응답은 계약과 겨냥까지다."),
+        "implemented": _implemented(),
+        "note": ("판정은 모델이 하고 이 응답은 계약과 겨냥까지다. 꽂힌 "
+                 "구현의 근거와 한계는 `implemented` 각 항목이 들고 있다 — "
+                 "가중치 파일(`*.pth`)은 커밋하지 않으므로 실제 추론은 "
+                 "파일이 있는 곳에서만 돈다."),
     }
+
+
+def _implemented() -> list:
+    """꽂혀 있는 구현들 — **각자 근거와 한계를 들고 다닌다.**
+
+    이름만 나열하면 "모델이 있다" 로 읽힌다. 스텁은 스텁이라고, 실모델은
+    15종 중 4종만 신뢰 가능하고 분만징후 헤드는 못 돈다고, 응답 자체가
+    말해야 한다.
+    """
+    import vision_pig_behavior as vpb
+
+    m = vpb.PigBehaviorModel()
+    return [
+        {"name": "ReplayModel", "kind": "스텁",
+         "why": "배선 시험용 — 모델이 아니다. 미리 정한 분포를 되돌려 준다"},
+        {"name": "PigBehaviorModel", "kind": "실모델(행동 분할)",
+         "classes_out": len(vpb.CLASSES),
+         "classes_contract": list(m.classes),
+         "holdout": m.holdout,
+         "heads": {h: s["runs"] for h, s in vc.head_support(m).items()},
+         "why": ("출력 15종 중 홀드아웃 AP 0.2 이상 4종만 계약에 신고한다. "
+                 "분만징후는 Scrubbing(AP 0.0) 이, 기침 질병은 Coughing"
+                 "(학습 표본 0) 이 없어 못 돈다 — 다음 학습이 채울 것의 "
+                 "이름이다")},
+    ]
 
 
 @router.post("/targets", summary="오늘 어느 개체를 어느 헤드로 볼 것인가")

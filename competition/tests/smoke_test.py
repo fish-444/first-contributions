@@ -3690,6 +3690,68 @@ def test_table_export() -> None:
     assert c.post("/api/export/targets", json={}).status_code == 422
 
 
+def test_pig_behavior_adapter() -> None:
+    """업로드된 행동 분할 모델이 계약에 **정직하게** 꽂혔는가.
+
+    이 모델은 15종을 출력하지만 홀드아웃에서 AP 0.2 를 넘은 건 4종뿐이다.
+    지키는 것 넷: (1) 어휘를 4종만 신고하는가 — 15종을 신고하면
+    head_support 가 분만징후를 "돈다" 고 답한다(Scrubbing AP 0.0 인데),
+    (2) 신뢰 밖 검출이 분포에 안 섞이는가, (3) 개체를 특정하는 척 안 하는가,
+    (4) 가중치 파일 없이도 접목 점검이 도는가(*.pth 는 미커밋).
+    """
+    import vision_contract as vc
+    import vision_pig_behavior as vpb
+    from pig_behavior.predictor import CLASSES, RELIABLE_CLASSES, Detection
+
+    # 1) 어휘 신고 — 15종 출력 중 신뢰 4종만, CLASSES 원래 순서 유지
+    m = vpb.PigBehaviorModel()
+    assert isinstance(m, vc.BehaviorModel)          # 계약 준수(runtime protocol)
+    assert len(CLASSES) == 15
+    assert set(m.classes) == set(RELIABLE_CLASSES) and len(m.classes) == 4
+    assert list(m.classes) == [c for c in CLASSES if c in RELIABLE_CLASSES]
+    # 신고 어휘의 근거(AP)가 응답에 붙어 다닌다 · 부풀린 0.953 은 없다
+    assert set(vpb.HOLDOUT_AP) == set(m.classes)
+    assert all(ap >= 0.2 for ap in vpb.HOLDOUT_AP.values())
+    assert "train==val" in m.holdout["note"]
+
+    # 2) head_support — 분만징후·기침 질병이 **막혀야 한다.** 뚫려 있으면
+    #    AP 0.0 짜리 출력을 근거로 경보를 낸다는 뜻이다
+    sup = vc.head_support(m)
+    assert sup["estrus"]["runs"] and sup["return"]["runs"]
+    assert not sup["farrowing"]["runs"]
+    assert sup["farrowing"]["missing"] == ["Scrubbing"]
+    assert not sup["disease"]["runs"]
+    assert sup["disease"]["missing"] == ["Coughing"]
+    # 반례: 15종을 그대로 신고하면 분만징후가 열린다 — 그래서 4종 신고다
+    class Naive:
+        version, classes = "naive", CLASSES
+        def predict(self, f, t): return []
+    assert vc.head_support(Naive())["farrowing"]["runs"]
+
+    # 3) fold — 신뢰 밖 검출은 세되 분포에 안 넣고, 개체를 특정하지 않는다
+    dets = [("2026-08-21T09:00", [Detection("Resting", 0.9, (0, 0, 1, 1)),
+                                  Detection("Eating", 0.6, (0, 0, 1, 1)),
+                                  Detection("Scrubbing", 0.99, (0, 0, 1, 1))]),
+            ("2026-08-21T09:05", [Detection("Resting", 0.5, (0, 0, 1, 1))])]
+    [r] = vpb.fold(dets, "cam1", "3동", "2방", model="pig-behavior-test")
+    o = r["obs"]
+    assert isinstance(o, vc.BehaviorObs)
+    assert (r["n_detections"], r["n_used"], r["n_dropped"]) == (4, 3, 1)
+    assert "Scrubbing" not in o.probs                # AP 0.0 은 분포에 안 섞인다
+    assert abs(sum(o.probs.values()) - 1.0) < 1e-3
+    assert abs(o.probs["Resting"] - 1.4 / 2.0) < 1e-3   # 점수 가중 구성비
+    assert o.animal_id is None and o.track_id is None   # 방 단위 — 거짓 확신 금지
+    assert (o.t0, o.t1) == ("2026-08-21T09:00", "2026-08-21T09:05")
+    assert o.model == "pig-behavior-test"
+    assert vpb.fold([], "c", "b", "p", model="x") == []
+
+    # 4) 가중치 없이 접목 점검이 돈다 — 무거운 초기화는 predict 까지 미룬다
+    assert m._pred is None
+    assert "가중치 미지정" in m.version
+    import vision_pig_behavior
+    assert vision_pig_behavior.main([]) == 0
+
+
 def test_vision_contract() -> None:
     """영상 모델이 꽂힐 자리 — **모델 없이 배선이 관통하는가.**
 
@@ -3798,9 +3860,16 @@ def test_vision_contract() -> None:
     assert c.post("/api/vision/targets",
                   json={"as_of": on, "records": []}).status_code == 422
     ct = c.get("/api/vision/contract").json()
-    # **모델이 없다는 것을 응답이 말해야 한다**
-    assert ct["implemented"] == ["ReplayModel"]
-    assert "모델이 아직 없다" in ct["note"]
+    # **구현마다 근거와 한계를 들고 다녀야 한다** — 이름만 나열하면
+    # "모델이 있다" 로 읽힌다. 스텁은 스텁이라고, 실모델은 신뢰 4종과
+    # 못 도는 헤드를 응답 자체가 말한다
+    impl = {x["name"]: x for x in ct["implemented"]}
+    assert impl["ReplayModel"]["kind"] == "스텁"
+    pb = impl["PigBehaviorModel"]
+    assert pb["classes_out"] == 15 and len(pb["classes_contract"]) == 4
+    assert pb["heads"] == {"estrus": True, "return": True,
+                           "farrowing": False, "disease": False}, pb["heads"]
+    assert "train==val" in pb["holdout"]["note"]
     assert ct["baseline"]["behavior_10cls"] == 0.485
     assert ct["windows"]["return"]["from_service"] == [vc.RETURN_FROM,
                                                        vc.RETURN_TO]
@@ -4990,7 +5059,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
