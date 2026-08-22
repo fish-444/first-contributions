@@ -10,7 +10,7 @@
 **한 줄**: 발정을 놓치면 번식이 무너진다. 그런데 번식만 잡아도 농장은 안 산다 —
 발정 탐지에서 출하까지 한 줄로 잇는다.
 
-**규모**: 모듈 75개 · 대시보드 뷰 23개 · 테스트 89개 · 외부 연결 0
+**규모**: 모듈 75개 · 대시보드 뷰 23개 · 테스트 90개 · 외부 연결 0
 
 ---
 
@@ -73,7 +73,7 @@ AI Hub · 케글 키가 이전 대화 기록에 노출됐다. **커밋 이력 �
 ## 1. 지금 상태
 
 ```bash
-python competition/tests/smoke_test.py      # 89/89 통과
+python competition/tests/smoke_test.py      # 90/90 통과
 python competition/tools/check_docs.py      # 불일치 0
 git status                                  # clean
 ```
@@ -236,7 +236,7 @@ git status                                  # clean
 ## 7. 바로 돌려 보기
 
 ```bash
-python competition/tests/smoke_test.py                       # 89/89
+python competition/tests/smoke_test.py                       # 90/90
 python competition/tools/check_docs.py                       # 불일치 0
 python competition/src/build_farm_setup.py                   # 등록 화면 생성
 python competition/src/run_farm.py --setup my_farm.json      # 여섯 단계 전체
@@ -245,6 +245,16 @@ python competition/src/psy_priority.py --sows 300            # 처방 순서
 ```
 
 ---
+
+## 7.5 pig-behavior-toolkit 정본 관계
+
+`fish-444/pig-behavior-toolkit` 저장소가 **개발 정본**이고, 여기
+`competition/src/pig_behavior/` 는 벤더 사본이다(바이트 동일 유지 —
+동기화는 `diff -r`). 이 세션이 정본에 `fix/cv-cut-and-coherence-gate`
+브랜치를 올렸다(호흡 CV 컷 0.35→0.2 재도출 · 결맞음 게이트 강등,
+pytest 11/11) — **로컬 자리에서 이 브랜치를 main 에 머지할 것.**
+사본은 이미 그 수정본(b15a2b4) 기준이다. 사본을 직접 고치지 말고
+정본에서 고친 뒤 다시 벤더링한다.
 
 ## 8. 로컬 실증 — 유튜브 CCTV 로 기준선 층 돌리기
 

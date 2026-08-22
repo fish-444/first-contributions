@@ -227,6 +227,17 @@ class PigBehaviorPredictor:
         return out
 
     def _predict_onnx(self, rgb: np.ndarray, with_mask: bool) -> List[Detection]:
+        """ONNX 그래프의 출력을 원본 좌표계로 되돌린다.
+
+        내보내기 설정이 ``export_postprocess_mask: false`` 라서
+        ``masks`` 는 전체 이미지가 아니라 **박스별 28x28 RoI 확률맵**이다
+        (assets/onnx/detail.json 로 확인). 전체 크기로 그냥 늘리면 안 되고,
+        각 박스 영역에 붙여 넣어야 한다.
+        ``dets`` 의 좌표는 리사이즈된 입력 텐서 기준이므로 scale 로 되돌린다.
+        """
+        import cv2
+
+        h, w = rgb.shape[:2]
         x, scale = _preprocess(rgb)
         outputs = self._sess.run(None, {self._input_name: x})
         dets, labels = outputs[0], outputs[1]
@@ -237,16 +248,30 @@ class PigBehaviorPredictor:
             score = float(dets[0, i, 4])
             if score < self.score_thr:
                 continue
-            bbox = tuple(float(v) / scale for v in dets[0, i, :4])
+            x1, y1, x2, y2 = (float(v) / scale for v in dets[0, i, :4])
+            bbox = (x1, y1, x2, y2)
+
             mask = None
             if masks is not None:
-                import cv2
-
-                m = masks[0, i]
-                mask = cv2.resize(m.astype(np.float32),
-                                  (rgb.shape[1], rgb.shape[0])) > 0.5
+                mask = self._paste_mask(masks[0, i], bbox, h, w)
             out.append(Detection(self.classes[int(labels[0, i])], score, bbox, mask))
         return out
+
+    @staticmethod
+    def _paste_mask(roi_mask: np.ndarray, bbox, h: int, w: int) -> Optional[np.ndarray]:
+        """28x28 RoI 확률맵을 원본 크기 bool 마스크의 박스 자리에 붙인다."""
+        import cv2
+
+        x1, y1, x2, y2 = bbox
+        cx1, cy1 = max(0, int(np.floor(x1))), max(0, int(np.floor(y1)))
+        cx2, cy2 = min(w, int(np.ceil(x2))), min(h, int(np.ceil(y2)))
+        if cx2 <= cx1 or cy2 <= cy1:
+            return None
+        patch = cv2.resize(roi_mask.astype(np.float32), (cx2 - cx1, cy2 - cy1),
+                           interpolation=cv2.INTER_LINEAR)
+        full = np.zeros((h, w), dtype=bool)
+        full[cy1:cy2, cx1:cx2] = patch > 0.5
+        return full
 
     def predict_batch(self, images: Iterable) -> List[List[Detection]]:
         """여러 장. 내부적으로는 한 장씩 돈다(배치 이득이 크지 않다)."""

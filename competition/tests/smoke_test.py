@@ -4123,6 +4123,39 @@ def test_barn_env_control() -> None:
     assert ec.main([]) == 0
 
 
+def test_pig_behavior_toolkit() -> None:
+    """로컬 자리에서 온 toolkit 합류 — **정본과 갈라지지 않았는가.**
+
+    pig-behavior-toolkit 저장소가 정본이고 여기 것은 벤더 사본이다.
+    지키는 것 넷: (1) 호흡수 합성 검증이 이 환경에서도 도는가 — 정답을
+    되찾고, 무호흡 흔들림에 안 속고, 짧으면 지어내지 않고 기각하는가
+    (컷 0.2·결맞음 강등은 이 환경 실측으로 정본에서 고친 것),
+    (2) analyze 가 규약대로 스스로 정하지 않는가(hut_type 검증),
+    (3) 날짜 파서, (4) 기존 접목(predictor 경로)이 toolkit 판으로도
+    그대로 도는가 — 이건 test_pig_behavior_adapter 가 같이 본다.
+    """
+    import numpy as np
+
+    import test_respiration as tr
+    from pig_behavior.analyze import HUT_TYPES, VideoAnalyzer, _date_parts
+    from pig_behavior.respiration import RespirationMeter, count_cycles
+
+    # 1) 호흡 — 합성 관통의 대표 다섯 (전체는 toolkit pytest 11개가 정본)
+    tr.test_count_cycles_on_pure_sine()
+    tr.test_count_cycles_on_white_noise()
+    tr.test_recovers_known_rate(45.0, 6.0, 20.0)      # 정답을 되찾는가
+    tr.test_rejects_when_no_breathing(20.0)           # 안 속는가
+    tr.test_too_short_is_refused_not_guessed()        # 지어내지 않는가
+    assert RespirationMeter().max_cycle_cv == 0.2     # 두 환경 실측 사이 컷
+
+    # 2)+3) analyze 경량 확인 — 무거운 것(영상·모델)은 로컬 실증 몫
+    assert HUT_TYPES == {"a": "스톨", "b": "방목", "c": "기타"}
+    assert _date_parts("녹음 2026-08-22 152041.mp4") == ("2026년도 08월 22일", "260822")
+    assert _date_parts("20260822_room3.mp4") == ("2026년도 08월 22일", "260822")
+    assert _date_parts("room3.mp4") == (None, None)
+    assert count_cycles is not None and VideoAnalyzer is not None
+
+
 def test_vision_contract() -> None:
     """영상 모델이 꽂힐 자리 — **모델 없이 배선이 관통하는가.**
 
@@ -5430,7 +5463,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

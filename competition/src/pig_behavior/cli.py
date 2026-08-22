@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """명령줄 인터페이스.
 
-    python -m pig_behavior.cli --checkpoint pig_polygon_epoch12.pth frame.jpg
-    python -m pig_behavior.cli --checkpoint ... --out result.jsonl 폴더/
-    python -m pig_behavior.cli --onnx end2end.onnx --bench frame.jpg
+    python -m pig_behavior.cli --onnx assets/onnx/end2end.onnx frame.jpg
+    python -m pig_behavior.cli --onnx ... --out result.jsonl 폴더/
+    python -m pig_behavior.cli --onnx ... --bench frame.jpg
+    python -m pig_behavior.cli --checkpoint pig_polygon_epoch12.pth frame.jpg   # pytorch 백엔드
 """
 
 from __future__ import annotations
