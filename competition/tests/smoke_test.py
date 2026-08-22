@@ -3947,6 +3947,69 @@ def test_behavior_head_train() -> None:
     assert tool.load_windows is ht.load_windows
 
 
+def test_mating_plan() -> None:
+    """교배 배정 — **근친이 인덱스를 이기는가.**
+
+    지키는 것 다섯: (1) 혈연계수가 교과서 값과 맞는가(반형매 0.125 ·
+    부모자식 0.25 · 전형매 0.25), (2) 혈통을 지우면 근친율이 내려가는가
+    (하한 성질 — 그래서 각주가 '하한'이라 말한다), (3) 최고 웅돈이라도
+    근친 한도에 걸리면 배정에서 빠지는가, (4) 배정 불가 사유가 근친/상한을
+    구분해 말하는가, (5) 배정 합이 전체 최적인가(탐욕이 아니라).
+    """
+    import mating_plan as mp
+
+    # 1) 혈연계수 — 교과서 값
+    ped = mp.Pedigree({"A": ("S", None), "B": ("S", None),      # 반형매
+                       "C": ("S", "D"), "E": ("S", "D"),        # 전형매
+                       "S": (None, None), "D": (None, None)})
+    assert abs(ped.kinship("A", "B") - 0.125) < 1e-12
+    assert abs(ped.kinship("C", "S") - 0.25) < 1e-12            # 부모-자식
+    assert abs(ped.kinship("C", "E") - 0.25) < 1e-12            # 전형매
+    assert abs(ped.kinship("A", "A") - 0.5) < 1e-12             # 자기(비근친)
+    # 2) 하한 성질 — 부 정보를 지우면 같은 쌍의 근친율이 내려간다
+    ped2 = mp.Pedigree({"A": (None, None), "B": ("S", None), "S": (None, None)})
+    assert ped2.kinship("A", "B") == 0.0 < ped.kinship("A", "B")
+    # 순환 혈통은 조용히 돌지 않고 죽는다
+    try:
+        mp.Pedigree({"X": ("Y", None), "Y": ("X", None)}).kinship("X", "Y")
+        raise AssertionError("순환 혈통을 통과시켰다")
+    except ValueError as e:
+        assert "순환" in str(e)
+
+    # 3)+5) 시연 구성 — 최고 웅돈 B-X 는 S001·S003 과 반형매(F 12.5%)라
+    #    한도(6.25%)에 걸린다. 전체 최적은 S002+X · S001+Y · S003+Y = 328.5
+    r = mp._demo()
+    pick = {row["모돈번호"]: row["웅돈번호"] for row in r["rows"]}
+    assert pick == {"S001": "B-Y", "S002": "B-X", "S003": "B-Y"}
+    assert not r["unassigned"]
+    assert abs(sum(row["후손의 예상인덱스"] for row in r["rows"]) - 328.5) < 1e-9
+    assert all(u["배정"] <= u["상한"] for u in r["boar_use"].values())
+    assert any("하한" in n for n in r["notes"])
+
+    # 4) 사유 구분 — 근친 전부 초과 vs 웅돈 상한에 밀림
+    sows = {"S1": {"index": 100.0, "sire": "F", "dam": None, "max_services": None},
+            "S2": {"index": 99.0, "sire": "F", "dam": None, "max_services": None}}
+    only_kin = {"B1": {"index": 120.0, "sire": "F", "dam": None,
+                       "max_services": 2}}
+    r2 = mp.plan(sows, only_kin)
+    assert len(r2["unassigned"]) == 2
+    assert all("근친 한도 초과" in u["사유"] for u in r2["unassigned"])
+    one_slot = {"B1": {"index": 120.0, "sire": "G", "dam": None,
+                       "max_services": 1}}
+    r3 = mp.plan(sows, one_slot)
+    assert len(r3["rows"]) == 1 and len(r3["unassigned"]) == 1
+    assert "상한에 밀림" in r3["unassigned"][0]["사유"]
+    # 상한에 밀릴 때 남는 자리는 인덱스 높은 모돈에게 간다(전체 최적)
+    assert r3["rows"][0]["모돈번호"] == "S1"
+
+    # CSV — 농장장 표의 열 + 등급 열 + 하한 각주가 파일을 떠나지 않는다
+    text = mp.to_csv(r)
+    assert "하한" in text and "등급,모돈번호,모돈인덱스,웅돈번호" in text
+    assert "후손의 예상인덱스,근친율(%),교배횟수" in text
+    bare = mp.to_csv(r, bare=True)
+    assert "#" not in bare.splitlines()[0]
+
+
 def test_vision_contract() -> None:
     """영상 모델이 꽂힐 자리 — **모델 없이 배선이 관통하는가.**
 
@@ -5254,7 +5317,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

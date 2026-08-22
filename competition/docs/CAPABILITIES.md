@@ -7,7 +7,7 @@
 > 정본은 `STATUS.md` 다. 여기 수치는 전부 거기서 오고 `tools/check_docs.py`
 > 가 대조한다 — 손으로 고치면 테스트가 깨진다.
 
-**규모**: 도메인·모델 모듈 73개 · 대시보드 뷰 23개 · 테스트 87개 · 외부 연결 0
+**규모**: 도메인·모델 모듈 74개 · 대시보드 뷰 23개 · 테스트 88개 · 외부 연결 0
 
 ## 등급 — 문장마다 붙인다
 
@@ -74,6 +74,7 @@
 | 작업 큐·준수율 | 긴급도 산식 → 정시/지각/미실시 → 다음 배치 보정 | `work_log` |
 | 열스트레스 | THI + **착상기(교배 후 7~21일)** 겨냥 | `barn_environment` |
 | 발정 원인 귀인·처방 | 문제 3종 × 원인 4종 + 개체별 처방 | `repro_cause_attribution` |
+| **교배 배정 계획** | 농장장 표 그대로(모돈·웅돈·예상인덱스·근친율·교배횟수) — 근친 한도·웅돈 상한 아래 예상인덱스 합 최대화(헝가리안). 근친율은 입력 혈통의 **하한** | `mating_plan` |
 
 정자 생존창과 난자 생존창의 **겹침 적분**으로 다시 계산했고, 현장 지침
 (발견 후 12~36시간)과 독립적으로 일치한다. 주기별로 **그 주기에서 가능한
@@ -340,7 +341,7 @@ GroupKFold)으로 **기준선 0.485 를 넘는 것이 등록 조건**이다 — 
 `dashboard/*.html` 을 브라우저로 열 수 있어야 하므로, 서버는 선택이다.
 
 ```
-server/   FastAPI — 도메인 모듈 73개를 HTTP 로 노출
+server/   FastAPI — 도메인 모듈 74개를 HTTP 로 노출
 web/      바닐라 JS — 빌드 단계 없음
 data/     SQLite (farms.db · 미커밋)
 ```
@@ -473,7 +474,7 @@ python competition/src/farm_gap.py --sows 300
 python competition/src/psy_priority.py --sows 300
 
 # 재현성
-python competition/tests/smoke_test.py     # 87/87 통과
+python competition/tests/smoke_test.py     # 88/88 통과
 python competition/tools/check_docs.py     # 문서 수치 대조
 
 # 백엔드 + 프론트 (선택 — 정적 뷰는 서버 없이도 돈다)
