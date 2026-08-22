@@ -4010,6 +4010,81 @@ def test_mating_plan() -> None:
     assert "#" not in bare.splitlines()[0]
 
 
+def test_barn_env_control() -> None:
+    """돈사 환경 두 층 — **센서 차이를 사육환경 차이로 읽지 않는가.**
+
+    지키는 것 다섯: (1) 지침 층(제어)은 이력이 없어도 돌고 편차 층은
+    기준선 미형성이면 침묵하는가, (2) 센서 오프셋이 편차 순위를 흔들지
+    못하는가, (3) 저온+고암모니아 상충에서 '환기 증대'가 아니라 최소
+    환기+열원이 나오는가, (4) 지침 안이지만 평소와 다른 창이 '제어'가
+    아니라 '점검'으로 나오는가, (5) 편차 산포·컷이 행동 기준선 층의
+    **같은 코드**인가(재구현 금지).
+    """
+    import numpy as np
+
+    import barn_env_control as ec
+    import behavior_baseline as bb
+
+    # 5) 같은 코드 — 이름만 같은 복제가 아니라 동일 객체
+    assert ec._robust is bb._robust and ec._calibrate_cut is bb._calibrate_cut
+    assert ec.MIN_WINDOWS is bb.MIN_WINDOWS
+
+    # 1) 이력 3개 — 기준선 미형성이어도 지침 층은 판정·제어를 낸다
+    r = ec.assess({"신설동": {"temp_c": [30.0, 30.5, 31.0],
+                             "nh3_ppm": [10.0, 11.0, 12.0]}},
+                  {"신설동": "교배·임신"})
+    s = r["barns"]["신설동"]["sensors"]["temp_c"]
+    assert not s["formed"] and s["z"] is None and s["guide_state"] == "고온 위반"
+    assert any("냉방" in a for a in r["barns"]["신설동"]["actions"])
+    assert r["ranking"] == []                     # 편차 층은 침묵
+
+    # 2) 센서 오프셋 불변 — 같은 환경, 한쪽 센서만 +3℃
+    rng = np.random.default_rng(3)
+    base = list(rng.normal(18, 0.5, 40))
+    nh3 = list(rng.normal(12, 1.5, 40))
+    r = ec.assess({"A": {"temp_c": base, "nh3_ppm": nh3},
+                   "B": {"temp_c": [v + 3.0 for v in base], "nh3_ppm": nh3}},
+                  {"A": "교배·임신", "B": "교배·임신"})
+    za = r["barns"]["A"]["sensors"]["temp_c"]["z"]
+    zb = r["barns"]["B"]["sensors"]["temp_c"]["z"]
+    assert abs(za - zb) < 1e-9                    # 오프셋은 z 에 흔적이 없다
+    raw_a = r["barns"]["A"]["sensors"]["temp_c"]["now"]
+    raw_b = r["barns"]["B"]["sensors"]["temp_c"]["now"]
+    assert raw_b - raw_a > 2.5                    # 원값 비교였다면 속았다
+
+    # 3) 겨울 상충 — 저온 위반 + 암모니아 초과
+    t = list(rng.normal(17, 0.5, 30)) + [13.0]
+    a = list(rng.normal(14, 1.5, 30)) + [32.0]
+    r = ec.assess({"3동": {"temp_c": t, "nh3_ppm": a}}, {"3동": "분만(모돈)"})
+    acts = r["barns"]["3동"]["actions"]
+    assert any("상충" in x and "최소 환기" in x for x in acts)
+    assert not any(x.startswith("환기 증대") for x in acts)
+
+    # 4) 지침 안 + 평소와 다름 → 점검이지 제어가 아니다
+    t = list(rng.normal(16, 0.15, 40)) + [19.5]   # 적온 안이지만 z 가 크다
+    a2 = list(rng.normal(12, 1.5, 40)) + [12.0]
+    r = ec.assess({"4동": {"temp_c": t, "nh3_ppm": a2}}, {"4동": "교배·임신"})
+    s = r["barns"]["4동"]["sensors"]["temp_c"]
+    assert s["guide_state"] == "적정" and s["alert"]
+    acts = r["barns"]["4동"]["actions"]
+    assert any("점검" in x and "제어가 아니라" in x for x in acts)
+    assert not any("냉방" in x or "보온" in x for x in acts)
+
+    # 반대로: 평소부터 더운 돈사(기준선이 높음)는 지침 위반이되 편차 무경보 —
+    # 두 층이 서로를 덮지 않고 각자 말한다
+    hot = list(rng.normal(24, 0.5, 40)) + [24.2]
+    r = ec.assess({"5동": {"temp_c": hot, "nh3_ppm": a2}}, {"5동": "교배·임신"})
+    s = r["barns"]["5동"]["sensors"]["temp_c"]
+    assert s["guide_state"] == "고온 위반" and not s["alert"]
+    assert any("냉방" in x for x in r["barns"]["5동"]["actions"])
+
+    # 시연 관통 + 노트 고정
+    log, stages = ec._demo()
+    r = ec.assess(log, stages)
+    assert any("점검 신호" in n for n in r["notes"])
+    assert ec.main([]) == 0
+
+
 def test_vision_contract() -> None:
     """영상 모델이 꽂힐 자리 — **모델 없이 배선이 관통하는가.**
 
@@ -5317,7 +5392,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
