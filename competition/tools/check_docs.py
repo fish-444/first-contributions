@@ -35,7 +35,10 @@ DOCS = [os.path.join(COMP, "README.md"),
         # 제안서 골격 — 제출본으로 옮겨질 수치라 낡으면 심사장까지 간다.
         os.path.join(COMP, "docs", "PROPOSAL.md"),
         # 두 기둥 근거표 — 별첨 자료출처의 뼈대라 같은 이유로 감시한다.
-        os.path.join(COMP, "docs", "PILLARS.md")]
+        os.path.join(COMP, "docs", "PILLARS.md"),
+        # 보고서 작성 팩 — 채팅에 통째로 올려 쓰는 파일이라 낡으면 그대로
+        # 제출본에 들어간다. 여기가 가장 위험하다.
+        os.path.join(COMP, "docs", "REPORT_PACK.md")]
 
 
 # -- 실제값 수집 -----------------------------------------------------------
@@ -234,8 +237,9 @@ def check_survival(report: list) -> None:
         # 오류를 싣는 게 이 프로젝트의 방식이라 그 문장을 지우면 안 된다.
         # 슬라이드 12(스스로 잡은 오류) 행처럼 고친 내역을 적은 줄은 통과시킨다.
         EXCUSE = ("틀렸", "처음엔", "잘못", "옛 ", "나왔는데", "폐기", "재계산")
+        skip = blacklist_lines(t)
         for ln, line in enumerate(t.splitlines(), 1):
-            if any(x in line for x in EXCUSE):
+            if ln in skip or any(x in line for x in EXCUSE):
                 continue
             for s in stale:
                 if s in line:
@@ -273,8 +277,9 @@ def check_season(report: list) -> None:
         if "교배" not in t or "여름" not in t:
             continue
         name = os.path.basename(path)
+        skip = blacklist_lines(t)
         for ln, line in enumerate(t.splitlines(), 1):
-            if any(x in line for x in EXCUSE):
+            if ln in skip or any(x in line for x in EXCUSE):
                 continue
             for s in stale:
                 if s in line:
@@ -356,6 +361,27 @@ KEYLIKE = [
 ]
 KEY_SKIP_DIRS = {".git", "__pycache__", "node_modules", "dashboard", "data",
                  "outputs", "models"}
+
+
+def blacklist_lines(text: str) -> set:
+    """"쓰면 안 되는 수치" 절의 줄 번호. 그 안의 옛 값은 **주장이 아니라
+    금지 목록**이라 낡음 검사에서 빼야 한다.
+
+    문맥 단어(EXCUSE)로 거르는 방법은 표의 칸마다 변명을 적게 만든다.
+    절 단위로 보면 표가 자연스럽게 쓰인다 — 다음 같은 급 제목까지가 절이다.
+    """
+    out, cur_level = set(), None
+    for ln, line in enumerate(text.splitlines(), 1):
+        if line.startswith("#"):
+            level = len(line) - len(line.lstrip("#"))
+            if cur_level is not None and level <= cur_level:
+                cur_level = None
+            if any(k in line for k in ("쓰면 안 되는", "쓰지 말", "금지 수치",
+                                       "낡은 수치")):
+                cur_level = level
+        if cur_level is not None:
+            out.add(ln)
+    return out
 
 
 def check_secrets(report: list) -> None:
