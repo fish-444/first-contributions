@@ -33,7 +33,9 @@ DOCS = [os.path.join(COMP, "README.md"),
         # 인계 문서는 **다른 대화로 퍼 나르라고 만든 것**이라 특히 낡기 쉽다.
         os.path.join(COMP, "docs", "HANDOFF.md"),
         # 제안서 골격 — 제출본으로 옮겨질 수치라 낡으면 심사장까지 간다.
-        os.path.join(COMP, "docs", "PROPOSAL.md")]
+        os.path.join(COMP, "docs", "PROPOSAL.md"),
+        # 두 기둥 근거표 — 별첨 자료출처의 뼈대라 같은 이유로 감시한다.
+        os.path.join(COMP, "docs", "PILLARS.md")]
 
 
 # -- 실제값 수집 -----------------------------------------------------------
