@@ -27,20 +27,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "src"))
 
 import behavior_baseline as bb          # noqa: E402
 import vision_pig_behavior as vpb       # noqa: E402
-from pig_behavior.predictor import Detection  # noqa: E402
-
-
-def load_windows(jsonl_path: str, per: int) -> list:
-    """JSONL 프레임들 → `fold()` 입력 창 목록. 꼬리 자투리 창은 버린다 —
-    창마다 프레임 수가 다르면 구성비의 잡음 수준이 달라진다."""
-    frames = []
-    with open(jsonl_path, encoding="utf-8") as f:
-        for line in f:
-            r = json.loads(line)
-            dets = [Detection(d["label"], d["score"], tuple(d["bbox"]))
-                    for d in r["detections"]]
-            frames.append((r["image"], dets))
-    return [frames[i:i + per] for i in range(0, len(frames) - per + 1, per)]
+from behavior_head_train import load_windows  # noqa: E402  창 묶기의 정본
 
 
 def main(argv=None) -> int:

@@ -10,7 +10,7 @@
 **한 줄**: 발정을 놓치면 번식이 무너진다. 그런데 번식만 잡아도 농장은 안 산다 —
 발정 탐지에서 출하까지 한 줄로 잇는다.
 
-**규모**: 모듈 72개 · 대시보드 뷰 23개 · 테스트 86개 · 외부 연결 0
+**규모**: 모듈 73개 · 대시보드 뷰 23개 · 테스트 87개 · 외부 연결 0
 
 ---
 
@@ -73,7 +73,7 @@ AI Hub · 케글 키가 이전 대화 기록에 노출됐다. **커밋 이력 �
 ## 1. 지금 상태
 
 ```bash
-python competition/tests/smoke_test.py      # 86/86 통과
+python competition/tests/smoke_test.py      # 87/87 통과
 python competition/tools/check_docs.py      # 불일치 0
 git status                                  # clean
 ```
@@ -236,7 +236,7 @@ git status                                  # clean
 ## 7. 바로 돌려 보기
 
 ```bash
-python competition/tests/smoke_test.py                       # 86/86
+python competition/tests/smoke_test.py                       # 87/87
 python competition/tools/check_docs.py                       # 불일치 0
 python competition/src/build_farm_setup.py                   # 등록 화면 생성
 python competition/src/run_farm.py --setup my_farm.json      # 여섯 단계 전체
@@ -308,4 +308,13 @@ competition/data/cctv/
 
 7) 보고: 방키별 창 수·기준선 형성 여부·컷·라벨별 점수 분포. 커밋은
    summary JSON 만 후보이고, 그것도 내(사용자) 확인 후에만.
+
+8) 헤드 가중치 학습(라벨이 있으면) — 규약은 PREREGISTRATION.md 등록 2 에
+   이미 못박혀 있다. 라벨 CSV 헤더는 room,video,start_sec,end_sec,label 고정:
+   python competition/src/behavior_head_train.py \
+     --dets-dir data/cctv/dets --labels data/cctv/labels/labels.csv \
+     --per 60 --sec-per-frame 30 --head estrus \
+     --positive 발정 --negative 비발정 --out data/cctv/summary/head_estrus.json
+   판정은 코드가 낸다(채택 후보/보류/등가중 유지/학습 불가) — 판정을
+   손보지 말고 그대로 보고한다. 등가중 교체는 사용자 확인 후에만.
 ```

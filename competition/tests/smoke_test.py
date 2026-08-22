@@ -3855,6 +3855,98 @@ def test_behavior_baseline() -> None:
     assert "판정이 아니라 의심" in a1["note"]
 
 
+def test_behavior_head_train() -> None:
+    """헤드 가중치 학습 — **사전 등록(등록 2)의 규칙이 코드에 박혔는가.**
+
+    지키는 것 다섯: (1) 라벨 헤더가 규약과 다르면 짐작하지 않고 죽는가,
+    (2) 성립 조건 미달이면 학습하지 않는가, (3) 동점이면 등가중을 유지
+    하는가(엄격히 이겨야 후보), (4) 이겨도 부호가 문헌과 충돌하면 보류
+    하는가, (5) 브리지 도구가 창 묶기를 재구현하지 않는가.
+    """
+    import csv
+    import json
+    import tempfile
+
+    import numpy as np
+
+    import behavior_head_train as ht
+
+    # 1) 헤더 규약 — 열을 짐작해서 맞으면 그게 더 위험하다
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "bad.csv")
+        with open(p, "w", encoding="utf-8", newline="") as f:
+            csv.writer(f).writerows([("방키", "영상", "s", "e", "라벨")])
+        try:
+            ht.load_labels(p)
+            raise AssertionError("틀린 헤더를 통과시켰다")
+        except SystemExit as e:
+            assert "규약과 다르다" in str(e)
+
+    # 2)+3) 합성 관통 — 방 4개 대비 성립 → 학습은 되지만 동점이라 등가중 유지
+    rng = np.random.default_rng(11)
+    with tempfile.TemporaryDirectory() as tmp:
+        ht._synth(tmp, rng, rooms=4, wins=16, pos_from=10)
+        rows = ht.load_labels(os.path.join(tmp, "labels.csv"))
+        rooms = ht.build_dataset(os.path.join(tmp, "dets"), rows,
+                                 60, 30.0, "발정", "비발정")
+        a = ht.audit(rooms)
+        assert a["ok"] and a["n_contrast"] == 4
+        r = ht.train(rooms, "estrus")
+        assert r["preregistered"].endswith("등록 2")
+        assert r["auc_learned_loro"] == r["auc_equal"] == 1.0
+        assert r["verdict"].startswith("등가중 유지")     # 동점은 승리가 아니다
+        # 성립 조건 미달 — 방 2개만 남기면 학습 자체를 거부한다
+        two = {k: rooms[k] for k in list(rooms)[:2]}
+        r2 = ht.train(two, "estrus")
+        assert r2["verdict"].startswith("학습 불가") and "방 2" in r2["verdict"]
+        assert "auc_learned_loro" not in r2
+
+    # 4) 부호 충돌 — 양성이 Eating↑ 이면 학습은 이기지만 문헌 부호(−)와
+    #    충돌한다 → 교체가 아니라 보류. 데이터가 문헌과 싸우면 멈추고 본다
+    def synth_eat(tmp, rng):
+        os.makedirs(os.path.join(tmp, "dets"), exist_ok=True)
+        rows = []
+        for k in range(3):
+            room, video = f"R{k}", f"v{k}"
+            with open(os.path.join(tmp, "dets", f"{video}.jsonl"), "w",
+                      encoding="utf-8") as f:
+                for i in range(16 * 60):
+                    pos = i // 60 >= 10
+                    w = [55, 25, 10, 6] if not pos else [30, 55, 6, 5]
+                    dets = [{"label": ["Resting", "Eating", "Walking",
+                                       "Searching"][rng.choice(4, p=np.array(w) / sum(w))],
+                             "score": 0.8, "bbox": [0, 0, 1, 1],
+                             "reliable": True} for _ in range(8)]
+                    f.write(json.dumps({"image": f"{i:06d}.jpg",
+                                        "detections": dets}) + "\n")
+            rows += [(room, video, i * 1800, (i + 1) * 1800,
+                      "발정" if i >= 10 else "비발정") for i in range(16)]
+        with open(os.path.join(tmp, "labels.csv"), "w", encoding="utf-8",
+                  newline="") as f:
+            wcsv = csv.writer(f)
+            wcsv.writerow(ht.LABEL_HEADER)
+            wcsv.writerows(rows)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        synth_eat(tmp, np.random.default_rng(5))
+        rows = ht.load_labels(os.path.join(tmp, "labels.csv"))
+        rooms = ht.build_dataset(os.path.join(tmp, "dets"), rows,
+                                 60, 30.0, "발정", "비발정")
+        r = ht.train(rooms, "estrus")
+        assert r["auc_learned_loro"] > r["auc_equal"]
+        assert "Eating" in r["sign_conflicts"]
+        assert r["verdict"].startswith("보류")
+
+    # 5) 브리지 도구는 창 묶기를 여기서 가져다 쓴다 — 재구현 금지
+    import importlib.util as iu
+    spec = iu.spec_from_file_location(
+        "baseline_from_dets",
+        os.path.join(ROOT, "tools", "baseline_from_dets.py"))
+    tool = iu.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    assert tool.load_windows is ht.load_windows
+
+
 def test_vision_contract() -> None:
     """영상 모델이 꽂힐 자리 — **모델 없이 배선이 관통하는가.**
 
@@ -5162,7 +5254,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
