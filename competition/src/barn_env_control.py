@@ -1,14 +1,16 @@
-"""돈사 환경 제어 — 지침 대역(절대)과 자기 기준선 편차(상대)를 **겹으로** 본다.
+"""돈사 환경 위험 알람 — 지침 대역(절대)과 자기 기준선 편차(상대)를 **겹으로** 본다.
+
+**알람만 낸다** — 제어 지시(냉방·환기 몇 단)는 내지 않는다. 조치는 장비와
+현장이 정하고, 이 모듈은 "지금 위험한가 · 평소와 다른가" 두 질문에만 답한다.
 
 온도·암모니아 센서는 돈사마다 설치 위치·보정이 달라 **절대값을 돈사끼리
 비교하면 센서 차이를 사육환경 차이로 착각한다.** 그래서 층을 가른다:
 
-- **지침 층 (절대·제어)** — 성장단계별 적온 대역과 암모니아 상한. 제어
-  목표는 여기서만 나온다. 이력이 없어도 동작한다.
-- **편차 층 (상대·점검)** — 돈사·센서별 자기 기준선(중앙값·IQR) 대비 z.
-  "이 돈사가 평소와 다르다"는 신호이고, **제어 목표가 아니라 점검
-  신호다** — 평소보다 3℃ 높은 것이 적온일 수도, 평소 그대로가 위반일
-  수도 있다. 돈사 간 비교는 이 층으로만 한다.
+- **위험 (지침 층·절대)** — 성장단계별 적온 대역과 암모니아 상한을
+  벗어나면 `위험`. 이력이 없어도 첫날부터 동작한다.
+- **주의 (편차 층·상대)** — 돈사·센서별 자기 기준선(중앙값·IQR) 대비
+  z 가 자기 이력 컷을 넘으면 `주의` — "지침 안이지만 평소와 다르다,
+  센서·급이·밀도·분뇨를 점검하라"까지다. 돈사 간 비교는 이 층으로만 한다.
 
 편차 계산은 행동 기준선 층(`behavior_baseline`)의 `_robust`(IQR 산포)와
 `_calibrate_cut`(자기 이력 경보율 0.5~5% 역산)을 **그대로 가져다 쓴다** —
@@ -21,11 +23,12 @@
 수준이다. 농장이 다른 기준을 쓰면 `guide=` 로 통째로 바꾼다 — 상수를
 바꾸려고 코드를 열게 하지 않는다.
 
-## 상충을 숨기지 않는다
+## 왜 제어 지시를 내지 않는가
 
-겨울의 고암모니아가 대표다: 환기를 늘리면 암모니아는 내려가지만 온도가
-무너진다. 이때 "환기 증대"라고만 말하면 틀린 조치다 — **최소 환기 유지 +
-열원·분뇨 관리 우선**으로, 두 지침이 싸우고 있다는 사실째로 내보낸다.
+겨울의 저온+고암모니아가 이유다: 환기를 늘리면 암모니아는 내려가지만
+온도가 무너진다 — 옳은 조치가 장비 구성(최소 환기율·열원)에 달려 있어서,
+로그만 보는 쪽이 지시를 내면 틀린다. 그래서 위험 둘을 **동시에** 울리는
+것까지가 이 모듈의 일이고, 조치의 우선순위는 현장 몫이다.
 
     python competition/src/barn_env_control.py                # 합성 시연
     python competition/src/barn_env_control.py --log env.csv  # barn,stage,time,temp_c,nh3_ppm
@@ -88,26 +91,19 @@ def _guide_state(stage: str, sensor: str, now: float,
     return "적정", f"상한 {guide['nh3']:g}ppm"
 
 
-def _actions(states: dict, deviation: dict) -> list:
-    """제어·점검 권고. 제어는 지침 층에서만, 편차는 점검 신호로만 나온다."""
-    acts = []
-    t, n = states["temp_c"][0], states["nh3_ppm"][0]
-    if n == "상한 초과" and t == "저온 위반":
-        acts.append("⚠ 상충 — 최소 환기 유지 + 열원·분뇨 관리 우선. "
-                    "환기로만 풀면 온도가 무너진다")
-    else:
-        if t == "고온 위반":
-            acts.append("냉방·환기 강화 (착상기 모돈이 있으면 그 돈사 먼저 — "
-                        "여름 손실은 착상기에서 난다)")
-        if t == "저온 위반":
-            acts.append("보온 — 최소 환기는 유지한다")
-        if n == "상한 초과":
-            acts.append("환기 증대 · 분뇨 제거")
-    for s, d in deviation.items():
-        if d.get("alert") and states[s][0] == "적정":
-            acts.append(f"{s} 지침 안이지만 평소와 다르다(z {d['z']:+.1f}) — "
-                        "센서·급이·밀도·분뇨 점검 (제어가 아니라 점검이다)")
-    return acts
+def _alarms(sensors: dict) -> list:
+    """알람만 — 지침 위반은 `위험`, 지침 안의 큰 편차는 `주의`(점검)."""
+    out = []
+    for s, v in sensors.items():
+        if v["guide_state"] != "적정":
+            out.append({"수준": "위험",
+                        "내용": f"{s} {v['guide_state']} — 지금 {v['now']:g}, "
+                               f"{v['guide']}"})
+        elif v["alert"]:
+            out.append({"수준": "주의",
+                        "내용": f"{s} 지침 안이지만 평소와 다르다"
+                               f"(z {v['z']:+.1f}) — 센서·급이·밀도·분뇨 점검"})
+    return out
 
 
 def assess(log: dict, stages: dict, guide: dict | None = None) -> dict:
@@ -121,7 +117,7 @@ def assess(log: dict, stages: dict, guide: dict | None = None) -> dict:
     barns = {}
     for barn, series in log.items():
         stage = stages.get(barn, "교배·임신")
-        sensors, deviation, states = {}, {}, {}
+        sensors = {}
         for s in SENSORS:
             hist, now = series[s][:-1], float(series[s][-1])
             b = baseline(hist)
@@ -129,14 +125,12 @@ def assess(log: dict, stages: dict, guide: dict | None = None) -> dict:
                  if b["formed"] else None)
             alert = bool(b["formed"] and b["cut"] is not None
                          and z is not None and abs(z) >= b["cut"])
-            states[s] = _guide_state(stage, s, now, guide)
-            sensors[s] = {"now": now, "guide": states[s][1],
-                          "guide_state": states[s][0],
+            st = _guide_state(stage, s, now, guide)
+            sensors[s] = {"now": now, "guide": st[1], "guide_state": st[0],
                           "baseline_n": b["n"], "formed": b["formed"],
                           "z": z, "cut": b["cut"], "alert": alert}
-            deviation[s] = {"z": z, "alert": alert}
         barns[barn] = {"stage": stage, "sensors": sensors,
-                       "actions": _actions(states, deviation)}
+                       "alarms": _alarms(sensors)}
     ranking = sorted(
         ((barn, s, v["z"]) for barn, d in barns.items()
          for s, v in d["sensors"].items() if v["z"] is not None),
@@ -145,8 +139,10 @@ def assess(log: dict, stages: dict, guide: dict | None = None) -> dict:
             "ranking": [{"돈사": b, "센서": s, "z": z} for b, s, z in ranking],
             "grade": "계산",
             "notes": [
-                "제어 목표는 지침 대역(절대)에서만 나온다 — 편차는 '평소와 "
-                "다르다'는 점검 신호이지 목표값이 아니다.",
+                "알람만 낸다 — 제어 지시는 장비 구성에 달려 있어 로그만 "
+                "보는 쪽이 정하면 틀린다(겨울 저온+고NH3 가 대표).",
+                "위험=지침 위반(절대), 주의=평소와 다름(자기 기준선 편차) — "
+                "두 층은 서로를 덮지 않는다.",
                 "돈사 간 비교는 |z| 로만 한다 — 센서가 돈사마다 달라 원값 "
                 "비교는 센서 차이를 사육환경 차이로 읽는다.",
                 f"적온 대역·암모니아 상한 {NH3_LIMIT:g}ppm 은 지침값이다. "
@@ -203,7 +199,7 @@ def main(argv=None) -> int:
         log, stages = _demo()
         r = assess(log, stages)
         print("=" * 72)
-        print("  돈사 환경 제어 — 합성 시연 (**등급 합성** — 실농장 아님)")
+        print("  돈사 환경 위험 알람 — 합성 시연 (**등급 합성** — 실농장 아님)")
         print("=" * 72)
     for barn, d in r["barns"].items():
         line = []
@@ -211,8 +207,8 @@ def main(argv=None) -> int:
             z = f"z {v['z']:+.1f}" if v["z"] is not None else "기준선 미형성"
             line.append(f"{s} {v['now']:.1f} [{v['guide_state']}·{z}]")
         print(f"  {barn}({d['stage']:<7}) " + " · ".join(line))
-        for a in d["actions"]:
-            print(f"      → {a}")
+        for a in d["alarms"]:
+            print(f"      🔔 [{a['수준']}] {a['내용']}")
     top = r["ranking"][:3]
     print("  편차 순위(|z|): " + " · ".join(
         f"{t['돈사']}/{t['센서']} {t['z']:+.1f}" for t in top))

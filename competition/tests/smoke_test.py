@@ -4011,14 +4011,14 @@ def test_mating_plan() -> None:
 
 
 def test_barn_env_control() -> None:
-    """돈사 환경 두 층 — **센서 차이를 사육환경 차이로 읽지 않는가.**
+    """돈사 환경 위험 알람 — **센서 차이를 사육환경 차이로 읽지 않는가.**
 
-    지키는 것 다섯: (1) 지침 층(제어)은 이력이 없어도 돌고 편차 층은
-    기준선 미형성이면 침묵하는가, (2) 센서 오프셋이 편차 순위를 흔들지
-    못하는가, (3) 저온+고암모니아 상충에서 '환기 증대'가 아니라 최소
-    환기+열원이 나오는가, (4) 지침 안이지만 평소와 다른 창이 '제어'가
-    아니라 '점검'으로 나오는가, (5) 편차 산포·컷이 행동 기준선 층의
-    **같은 코드**인가(재구현 금지).
+    알람만 낸다 — 제어 지시는 내지 않는다. 지키는 것 다섯: (1) 위험
+    (지침 층)은 이력이 없어도 울고 주의(편차 층)는 기준선 미형성이면
+    침묵하는가, (2) 센서 오프셋이 편차를 흔들지 못하는가, (3) 겨울
+    저온+고암모니아는 위험 둘이 동시에 우는가 — 조치 지시는 없는가,
+    (4) 지침 안이지만 평소와 다른 것이 주의(점검)로만 나오는가,
+    (5) 편차 산포·컷이 행동 기준선 층의 **같은 코드**인가(재구현 금지).
     """
     import numpy as np
 
@@ -4035,7 +4035,8 @@ def test_barn_env_control() -> None:
                   {"신설동": "교배·임신"})
     s = r["barns"]["신설동"]["sensors"]["temp_c"]
     assert not s["formed"] and s["z"] is None and s["guide_state"] == "고온 위반"
-    assert any("냉방" in a for a in r["barns"]["신설동"]["actions"])
+    al = r["barns"]["신설동"]["alarms"]
+    assert [a["수준"] for a in al] == ["위험"] and "고온 위반" in al[0]["내용"]
     assert r["ranking"] == []                     # 편차 층은 침묵
 
     # 2) 센서 오프셋 불변 — 같은 환경, 한쪽 센서만 +3℃
@@ -4056,9 +4057,12 @@ def test_barn_env_control() -> None:
     t = list(rng.normal(17, 0.5, 30)) + [13.0]
     a = list(rng.normal(14, 1.5, 30)) + [32.0]
     r = ec.assess({"3동": {"temp_c": t, "nh3_ppm": a}}, {"3동": "분만(모돈)"})
-    acts = r["barns"]["3동"]["actions"]
-    assert any("상충" in x and "최소 환기" in x for x in acts)
-    assert not any(x.startswith("환기 증대") for x in acts)
+    al = r["barns"]["3동"]["alarms"]
+    assert [x["수준"] for x in al] == ["위험", "위험"]   # 둘이 동시에 운다
+    assert any("저온 위반" in x["내용"] for x in al)
+    assert any("상한 초과" in x["내용"] for x in al)
+    # 조치 지시는 없다 — 겨울 상충에서 '환기 증대' 같은 지시는 틀릴 수 있다
+    assert not any(w in x["내용"] for x in al for w in ("환기", "냉방", "보온"))
 
     # 4) 지침 안 + 평소와 다름 → 점검이지 제어가 아니다
     t = list(rng.normal(16, 0.15, 40)) + [19.5]   # 적온 안이지만 z 가 크다
@@ -4066,9 +4070,9 @@ def test_barn_env_control() -> None:
     r = ec.assess({"4동": {"temp_c": t, "nh3_ppm": a2}}, {"4동": "교배·임신"})
     s = r["barns"]["4동"]["sensors"]["temp_c"]
     assert s["guide_state"] == "적정" and s["alert"]
-    acts = r["barns"]["4동"]["actions"]
-    assert any("점검" in x and "제어가 아니라" in x for x in acts)
-    assert not any("냉방" in x or "보온" in x for x in acts)
+    al = r["barns"]["4동"]["alarms"]
+    assert [x["수준"] for x in al if "temp_c" in x["내용"]] == ["주의"]
+    assert any("점검" in x["내용"] for x in al)
 
     # 반대로: 평소부터 더운 돈사(기준선이 높음)는 지침 위반이되 편차 무경보 —
     # 두 층이 서로를 덮지 않고 각자 말한다
@@ -4076,12 +4080,13 @@ def test_barn_env_control() -> None:
     r = ec.assess({"5동": {"temp_c": hot, "nh3_ppm": a2}}, {"5동": "교배·임신"})
     s = r["barns"]["5동"]["sensors"]["temp_c"]
     assert s["guide_state"] == "고온 위반" and not s["alert"]
-    assert any("냉방" in x for x in r["barns"]["5동"]["actions"])
+    al = r["barns"]["5동"]["alarms"]
+    assert [x["수준"] for x in al if "temp_c" in x["내용"]] == ["위험"]
 
     # 시연 관통 + 노트 고정
     log, stages = ec._demo()
     r = ec.assess(log, stages)
-    assert any("점검 신호" in n for n in r["notes"])
+    assert any("알람만 낸다" in n for n in r["notes"])
     assert ec.main([]) == 0
 
 
