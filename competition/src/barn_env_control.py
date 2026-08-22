@@ -47,16 +47,59 @@ sys.path.insert(0, HERE)
 
 from behavior_baseline import MIN_WINDOWS, _calibrate_cut, _robust  # noqa: E402
 
-SENSORS = ("temp_c", "nh3_ppm")
+# 아는 센서 — 로그에 있는 열만 본다. temp_c 와 nh3_ppm 이 기본이고
+# rh_pct(상대습도)·h2s_ppm(황화수소)은 있으면 같이 본다.
+SENSORS = ("temp_c", "nh3_ppm", "rh_pct", "h2s_ppm")
 
-# 성장단계별 적온 대역(℃) — 표준 사양관리 권장 범위. `지침` 등급.
+# ── 지침 상수 — 전부 `지침` 등급, 출처가 붙어 있다 ──────────────────────
+# 성장단계별 적온 대역(℃) — 사용자 제공 표준 사양관리 표(2026-08-22).
 TEMP_GUIDE = {
-    "교배·임신": (15.0, 21.0),
-    "분만(모돈)": (18.0, 22.0),
-    "자돈(이유 초기)": (26.0, 30.0),
-    "육성·비육": (18.0, 24.0),
+    "임신돈·웅돈": (16.0, 21.0),
+    "포유모돈": (18.0, 21.0),
+    "포유자돈": (30.0, 35.0),
+    "이유자돈": (22.0, 29.0),
+    "육성초기": (20.0, 27.0),
+    "육성후기": (18.0, 22.0),
+    "비육돈": (16.0, 21.0),
 }
-NH3_LIMIT = 25.0   # ppm — 축사 환경 권고 상한. `지침` 등급.
+# 성장단계별 습도 대역(%) — 「환절기 돼지 사양관리」 표1 을 단계에 맞춘 것.
+# 출처끼리 갈린다: 같은 글 본문은 60~70, 사용자 자료는 50~60 을 권한다.
+# 표1(단계별)이 가장 구체적이라 그걸 쓰되 이 갈림을 여기 적어 둔다.
+RH_GUIDE = {
+    "포유자돈": (60.0, 70.0),
+    "이유자돈": (60.0, 80.0),
+    "육성초기": (50.0, 80.0),
+    "육성후기": (40.0, 60.0),
+    "비육돈": (40.0, 60.0),
+    "임신돈·웅돈": (40.0, 60.0),
+    "포유모돈": (40.0, 60.0),
+}
+NH3_LIMIT = 15.0   # ppm — 「환절기 돼지 사양관리」(국립축산과학원): 15ppm 초과 금지
+H2S_LIMIT = 5.0    # ppm — 같은 자료: 황화수소 5ppm 초과 금지
+
+# 최적온도 아래로 떨어질 때의 추가 사료요구량(g/일/두) — 사용자 제공 표.
+# 행 = 체중(kg), 열 = 최적온도 대비 부족분(℃).
+FEED_EXTRA = {
+    20: {-2: 25, -4: 50, -6: 75, -8: 100, -10: 125},
+    40: {-2: 31, -4: 62, -6: 92, -8: 123, -10: 154},
+    60: {-2: 36, -4: 72, -6: 108, -8: 145, -10: 181},
+    80: {-2: 42, -4: 83, -6: 125, -8: 166, -10: 208},
+    100: {-2: 47, -4: 94, -6: 141, -8: 188, -10: 235},
+    120: {-2: 53, -4: 105, -6: 158, -8: 210, -10: 263},
+}
+
+# 환경온도×풍속별 "이 주령 이하는 불쾌" 문턱(주령) — 사용자 제공 표.
+# 열 = 풍속 ≤0.15 / 0.15~0.25 / 0.25~0.36 m/s. 0 = 전 주령 쾌적, 99 = 전부 불쾌.
+COMFORT_UNCOMFY_BELOW_WEEKS = {
+    21: (0, 0, 0), 18: (1, 5, 12), 15: (10 / 7, 3, 12), 13: (8, 12, 14),
+    10: (15, 14, 16), 7: (20, 16, 20), 4: (20, 20, 20), 2: (99, 99, 99),
+}
+
+# 단열 점검 기준 — 사용자 제공 자료: 자리 간 온도차 2.8℃ 이상, 일교차
+# 8.3℃ 이상이면 단열을 점검한다. 출처끼리 또 갈린다: 축산원 자료는
+# 육성·비육 일일 온도차 5℃ 이내, 환절기 외기 일교차 10℃ 를 위험으로 본다.
+SPOT_DIFF_LIMIT = 2.8
+DAILY_RANGE_LIMIT = 8.3
 
 
 def baseline(history: list) -> dict:
@@ -80,25 +123,43 @@ def _guide_state(stage: str, sensor: str, now: float,
                  guide: dict) -> tuple:
     """지침 층 판정 → (상태, 대역 설명)."""
     if sensor == "temp_c":
-        lo, hi = guide["temp"].get(stage, guide["temp"]["교배·임신"])
+        lo, hi = guide["temp"].get(stage, guide["temp"]["임신돈·웅돈"])
         if now < lo:
             return "저온 위반", f"적온 {lo:g}~{hi:g}℃"
         if now > hi:
             return "고온 위반", f"적온 {lo:g}~{hi:g}℃"
         return "적정", f"적온 {lo:g}~{hi:g}℃"
-    if now > guide["nh3"]:
-        return "상한 초과", f"상한 {guide['nh3']:g}ppm"
-    return "적정", f"상한 {guide['nh3']:g}ppm"
+    if sensor == "rh_pct":
+        lo, hi = guide["rh"].get(stage, guide["rh"]["임신돈·웅돈"])
+        if now < lo:
+            return "저습 위반", f"권장 {lo:g}~{hi:g}%"
+        if now > hi:
+            return "과습 위반", f"권장 {lo:g}~{hi:g}%"
+        return "적정", f"권장 {lo:g}~{hi:g}%"
+    limit = guide["h2s"] if sensor == "h2s_ppm" else guide["nh3"]
+    if now > limit:
+        return "상한 초과", f"상한 {limit:g}ppm"
+    return "적정", f"상한 {limit:g}ppm"
 
 
 def _alarms(sensors: dict) -> list:
-    """알람만 — 지침 위반은 `위험`, 지침 안의 큰 편차는 `주의`(점검)."""
+    """알람만 — 지침 위반은 `위험`, 지침 안의 큰 편차는 `주의`(점검).
+
+    지침 위반인데 **편차로는 평소와 같은 수준**(편차 경보 없음)이면 그
+    사실을 알람에 붙인다 — 상시 위반이거나 센서가 치우친 것이고, 어느
+    쪽이든 급한 조치보다 센서 교정 확인이 먼저다. 편차 층이 절대값
+    알람의 센서 바이어스를 걸러 주는 자리이고, 새 문턱은 없다(기존
+    편차 경보 정의를 그대로 쓴다).
+    """
     out = []
     for s, v in sensors.items():
         if v["guide_state"] != "적정":
-            out.append({"수준": "위험",
-                        "내용": f"{s} {v['guide_state']} — 지금 {v['now']:g}, "
-                               f"{v['guide']}"})
+            msg = (f"{s} {v['guide_state']} — 지금 {v['now']:.1f}, "
+                   f"{v['guide']}")
+            if v["formed"] and not v["alert"]:
+                msg += (f" · 평소와 같은 수준(z {v['z']:+.1f}) — 상시 "
+                        "위반이거나 센서 치우침, 교정 확인")
+            out.append({"수준": "위험", "내용": msg})
         elif v["alert"]:
             out.append({"수준": "주의",
                         "내용": f"{s} 지침 안이지만 평소와 다르다"
@@ -113,12 +174,13 @@ def assess(log: dict, stages: dict, guide: dict | None = None) -> dict:
     비교인데 **원값이 아니라 |z| 로 줄 세운다** — 센서가 돈사마다 달라
     원값 비교는 센서 차이를 사육환경 차이로 읽는 짓이다.
     """
-    guide = guide or {"temp": TEMP_GUIDE, "nh3": NH3_LIMIT}
+    guide = guide or {"temp": TEMP_GUIDE, "rh": RH_GUIDE,
+                      "nh3": NH3_LIMIT, "h2s": H2S_LIMIT}
     barns = {}
     for barn, series in log.items():
-        stage = stages.get(barn, "교배·임신")
+        stage = stages.get(barn, "임신돈·웅돈")
         sensors = {}
-        for s in SENSORS:
+        for s in (k for k in SENSORS if k in series):
             hist, now = series[s][:-1], float(series[s][-1])
             b = baseline(hist)
             z = (round((now - b["center"]) / b["spread"], 2)
@@ -145,11 +207,60 @@ def assess(log: dict, stages: dict, guide: dict | None = None) -> dict:
                 "두 층은 서로를 덮지 않는다.",
                 "돈사 간 비교는 |z| 로만 한다 — 센서가 돈사마다 달라 원값 "
                 "비교는 센서 차이를 사육환경 차이로 읽는다.",
-                f"적온 대역·암모니아 상한 {NH3_LIMIT:g}ppm 은 지침값이다. "
+                f"적온·습도 대역, NH3 {NH3_LIMIT:g}ppm·H2S {H2S_LIMIT:g}ppm "
+                "상한은 지침값이다(국립축산과학원 자료·사용자 제공 표). "
                 "농장 기준이 다르면 guide= 로 통째로 바꾼다.",
+                "출처끼리 갈리는 값은 갈린 채로 적었다 — 습도(50~60 vs "
+                "60~70 vs 표1 단계별)·일교차(5 vs 8.3 vs 외기 10℃).",
                 "편차 컷은 자기 이력 경보율 0.5~5% 역산이다 — 행동 기준선 "
                 "층과 같은 방법, 같은 코드다.",
             ]}
+
+
+def cold_feed_penalty(weight_kg: float, deficit_c: float) -> int:
+    """최적온도 아래 deficit_c(음수, ℃)일 때 추가 사료요구량(g/일/두).
+
+    사용자 제공 지침표의 조회다 — 보간하지 않고 **가장 가까운 칸**을
+    읽는다(표 밖 외삽 금지: 체중은 20~120, 부족분은 -2~-10 에 물린다).
+    """
+    if deficit_c > -2:
+        return 0
+    w = min(FEED_EXTRA, key=lambda k: abs(k - weight_kg))
+    d = max(-10, min(-2, round(deficit_c / 2) * 2))
+    return FEED_EXTRA[w][d]
+
+
+def comfort(temp_c: float, wind_ms: float, age_weeks: float) -> str:
+    """환경온도×풍속×주령 → '쾌적'/'불쾌'. 사용자 제공 표의 조회다."""
+    rows = sorted(COMFORT_UNCOMFY_BELOW_WEEKS, reverse=True)
+    row = next((t for t in rows if temp_c >= t), rows[-1])
+    col = 0 if wind_ms <= 0.15 else (1 if wind_ms <= 0.25 else 2)
+    return "불쾌" if age_weeks <= COMFORT_UNCOMFY_BELOW_WEEKS[row][col] else "쾌적"
+
+
+def insulation_alarms(day_temps: list | None = None,
+                      spot_temps: list | None = None) -> list:
+    """단열 점검 알람 — 일교차·자리 간 온도차. 데이터가 있을 때만 잰다.
+
+    `day_temps` 는 같은 날 한 돈사의 온도들, `spot_temps` 는 같은 시각
+    여러 지점의 온도들이다. 기준(8.3℃·2.8℃)은 사용자 제공 자료이고,
+    축산원 자료는 육성·비육 일일 온도차 5℃ 이내를 권한다 — 더 엄한
+    기준을 쓰려면 인자로 바꾼다.
+    """
+    out = []
+    if day_temps and len(day_temps) >= 2:
+        rng = max(day_temps) - min(day_temps)
+        if rng >= DAILY_RANGE_LIMIT:
+            out.append({"수준": "주의",
+                        "내용": f"일교차 {rng:.1f}℃ ≥ {DAILY_RANGE_LIMIT}℃ — "
+                               "돈사 단열 점검"})
+    if spot_temps and len(spot_temps) >= 2:
+        diff = max(spot_temps) - min(spot_temps)
+        if diff >= SPOT_DIFF_LIMIT:
+            out.append({"수준": "주의",
+                        "내용": f"자리 간 온도차 {diff:.1f}℃ ≥ {SPOT_DIFF_LIMIT}℃ — "
+                               "돈사 단열 점검"})
+    return out
 
 
 def load_log(path: str) -> tuple:
@@ -161,10 +272,11 @@ def load_log(path: str) -> tuple:
     rows.sort(key=lambda r: (r["barn"], r["time"]))
     log, stages = {}, {}
     for r in rows:
-        d = log.setdefault(r["barn"], {s: [] for s in SENSORS})
-        for s in SENSORS:
+        present = [s for s in SENSORS if (r.get(s) or "").strip() != ""]
+        d = log.setdefault(r["barn"], {s: [] for s in present})
+        for s in present:
             d[s].append(float(r[s]))
-        stages[r["barn"]] = r.get("stage") or "교배·임신"
+        stages[r["barn"]] = r.get("stage") or "임신돈·웅돈"
     return log, stages
 
 
@@ -177,13 +289,14 @@ def _demo() -> tuple:
     #  1동: 평범.  2동: 같은 환경인데 센서가 +3℃ 치우침 — 원값 비교의 함정.
     log["1동"] = {"temp_c": list(base + rng.normal(0, .2, n)),
                   "nh3_ppm": list(rng.normal(12, 2, n))}
-    log["2동"] = {"temp_c": list(base + 3.0 + rng.normal(0, .2, n)),
+    log["2동"] = {"temp_c": list(base + 3.5 + rng.normal(0, .2, n)),
                   "nh3_ppm": list(rng.normal(11, 2, n))}
-    #  3동: 오늘 암모니아가 평소의 갑절 + 저온 — 겨울 상충 케이스
-    t3 = list(rng.normal(16.5, 0.6, n)); t3[-1] = 13.8
-    a3 = list(rng.normal(14, 2, n)); a3[-1] = 31.0
-    log["3동"] = {"temp_c": t3, "nh3_ppm": a3}
-    stages = {"1동": "교배·임신", "2동": "교배·임신", "3동": "분만(모돈)"}
+    #  3동: 오늘 암모니아가 평소의 갑절 + 저온 + 저습 — 겨울 케이스
+    t3 = list(rng.normal(19.0, 0.6, n)); t3[-1] = 13.8
+    a3 = list(rng.normal(9, 1.5, n)); a3[-1] = 22.0
+    h3 = list(rng.normal(52, 3, n)); h3[-1] = 34.0
+    log["3동"] = {"temp_c": t3, "nh3_ppm": a3, "rh_pct": h3}
+    stages = {"1동": "임신돈·웅돈", "2동": "임신돈·웅돈", "3동": "포유모돈"}
     return log, stages
 
 

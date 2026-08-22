@@ -4032,7 +4032,7 @@ def test_barn_env_control() -> None:
     # 1) 이력 3개 — 기준선 미형성이어도 지침 층은 판정·제어를 낸다
     r = ec.assess({"신설동": {"temp_c": [30.0, 30.5, 31.0],
                              "nh3_ppm": [10.0, 11.0, 12.0]}},
-                  {"신설동": "교배·임신"})
+                  {"신설동": "임신돈·웅돈"})
     s = r["barns"]["신설동"]["sensors"]["temp_c"]
     assert not s["formed"] and s["z"] is None and s["guide_state"] == "고온 위반"
     al = r["barns"]["신설동"]["alarms"]
@@ -4045,7 +4045,7 @@ def test_barn_env_control() -> None:
     nh3 = list(rng.normal(12, 1.5, 40))
     r = ec.assess({"A": {"temp_c": base, "nh3_ppm": nh3},
                    "B": {"temp_c": [v + 3.0 for v in base], "nh3_ppm": nh3}},
-                  {"A": "교배·임신", "B": "교배·임신"})
+                  {"A": "임신돈·웅돈", "B": "임신돈·웅돈"})
     za = r["barns"]["A"]["sensors"]["temp_c"]["z"]
     zb = r["barns"]["B"]["sensors"]["temp_c"]["z"]
     assert abs(za - zb) < 1e-9                    # 오프셋은 z 에 흔적이 없다
@@ -4056,7 +4056,7 @@ def test_barn_env_control() -> None:
     # 3) 겨울 상충 — 저온 위반 + 암모니아 초과
     t = list(rng.normal(17, 0.5, 30)) + [13.0]
     a = list(rng.normal(14, 1.5, 30)) + [32.0]
-    r = ec.assess({"3동": {"temp_c": t, "nh3_ppm": a}}, {"3동": "분만(모돈)"})
+    r = ec.assess({"3동": {"temp_c": t, "nh3_ppm": a}}, {"3동": "포유모돈"})
     al = r["barns"]["3동"]["alarms"]
     assert [x["수준"] for x in al] == ["위험", "위험"]   # 둘이 동시에 운다
     assert any("저온 위반" in x["내용"] for x in al)
@@ -4067,7 +4067,7 @@ def test_barn_env_control() -> None:
     # 4) 지침 안 + 평소와 다름 → 점검이지 제어가 아니다
     t = list(rng.normal(16, 0.15, 40)) + [19.5]   # 적온 안이지만 z 가 크다
     a2 = list(rng.normal(12, 1.5, 40)) + [12.0]
-    r = ec.assess({"4동": {"temp_c": t, "nh3_ppm": a2}}, {"4동": "교배·임신"})
+    r = ec.assess({"4동": {"temp_c": t, "nh3_ppm": a2}}, {"4동": "임신돈·웅돈"})
     s = r["barns"]["4동"]["sensors"]["temp_c"]
     assert s["guide_state"] == "적정" and s["alert"]
     al = r["barns"]["4동"]["alarms"]
@@ -4077,11 +4077,44 @@ def test_barn_env_control() -> None:
     # 반대로: 평소부터 더운 돈사(기준선이 높음)는 지침 위반이되 편차 무경보 —
     # 두 층이 서로를 덮지 않고 각자 말한다
     hot = list(rng.normal(24, 0.5, 40)) + [24.2]
-    r = ec.assess({"5동": {"temp_c": hot, "nh3_ppm": a2}}, {"5동": "교배·임신"})
+    r = ec.assess({"5동": {"temp_c": hot, "nh3_ppm": a2}}, {"5동": "임신돈·웅돈"})
     s = r["barns"]["5동"]["sensors"]["temp_c"]
     assert s["guide_state"] == "고온 위반" and not s["alert"]
     al = r["barns"]["5동"]["alarms"]
     assert [x["수준"] for x in al if "temp_c" in x["내용"]] == ["위험"]
+    # 지침 밖인데 편차로는 평소 수준 → 센서 치우침/상시 위반 주석이 붙는다.
+    # 센서 차이 문제를 편차가 걸러 주는 자리다 — 새 문턱 없이.
+    assert "센서 치우침" in al[0]["내용"]
+    # 반대로 갑작스런 위반(3동 저온, 편차 경보 동반)에는 주석이 없다
+    r36 = ec.assess({"3동": {"temp_c": t, "nh3_ppm": a}}, {"3동": "포유모돈"})
+    tmsg = next(x["내용"] for x in r36["barns"]["3동"]["alarms"]
+                if "temp_c" in x["내용"])
+    assert "센서 치우침" not in tmsg
+
+    # 지침값이 제공 자료 그대로인가 — 상한을 임의로 완화하면 여기서 깨진다
+    assert ec.TEMP_GUIDE["포유자돈"] == (30.0, 35.0)
+    assert ec.TEMP_GUIDE["이유자돈"] == (22.0, 29.0)
+    assert ec.NH3_LIMIT == 15.0 and ec.H2S_LIMIT == 5.0   # 축산원 환절기 자료
+    # 습도·황화수소 — 지침 층 판정
+    rh = list(rng.normal(52, 2, 20)) + [34.0]
+    hs = list(rng.normal(2, 0.5, 20)) + [6.0]
+    r = ec.assess({"6동": {"temp_c": [18.0] * 21, "rh_pct": rh,
+                           "h2s_ppm": hs}}, {"6동": "임신돈·웅돈"})
+    st6 = r["barns"]["6동"]["sensors"]
+    assert st6["rh_pct"]["guide_state"] == "저습 위반"
+    assert st6["h2s_ppm"]["guide_state"] == "상한 초과"
+    # 지침표 조회 — 한랭 추가 사료요구량·풍속 쾌적성·단열 점검
+    assert ec.cold_feed_penalty(60, -6) == 108
+    assert ec.cold_feed_penalty(120, -10) == 263
+    assert ec.cold_feed_penalty(58, -5.6) == 108          # 가장 가까운 칸
+    assert ec.cold_feed_penalty(60, -1) == 0
+    assert ec.comfort(21, 0.1, 1) == "쾌적"
+    assert ec.comfort(13, 0.1, 6) == "불쾌"               # 8주령 이하 불쾌
+    assert ec.comfort(13, 0.1, 10) == "쾌적"
+    assert ec.comfort(2, 0.1, 30) == "불쾌"               # 비육돈도 불쾌
+    ia = ec.insulation_alarms(day_temps=[14.0, 23.0], spot_temps=[18.0, 21.0])
+    assert len(ia) == 2 and all("단열" in x["내용"] for x in ia)
+    assert ec.insulation_alarms(day_temps=[18.0, 22.0]) == []
 
     # 시연 관통 + 노트 고정
     log, stages = ec._demo()
