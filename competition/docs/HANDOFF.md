@@ -328,3 +328,55 @@ competition/data/cctv/
    판정은 코드가 낸다(채택 후보/보류/등가중 유지/학습 불가) — 판정을
    손보지 말고 그대로 보고한다. 등가중 교체는 사용자 확인 후에만.
 ```
+
+---
+
+## 9. 자세 CNN 재학습 — 로컬 CLI 에 붙여넣을 프롬프트
+
+학습은 케글 GPU 에서 돈다(로컬 CPU 는 LOVO 7폴드에 50분). 규약은
+`PREREGISTRATION.md` **등록 3** 에 이미 못박혀 있다 — 아래 프롬프트는
+그 등록의 실행이지 새 재량이 아니다.
+
+```
+자세 CNN 을 재학습한다. 규약은 PREREGISTRATION.md 등록 3 이 정본이고
+거기 적힌 것만 바꾼다.
+
+0) 시작: git fetch origin 후 origin/claude/yangdon-ai-competition-3x2ukm
+   에 rebase (HANDOFF 0절). python competition/tests/smoke_test.py 통과 확인.
+   그리고 등록 3 을 먼저 읽는다 — 목표는 0.861 이 아니다(폐기된 전제 위의
+   수다). 겨냥은 횡와↔복와↔기립 혼동이다.
+
+1) 노트북 생성: python competition/src/build_kaggle_notebooks.py
+   → posture_cnn_kaggle 을 케글 New Notebook 에 통째로 붙여넣는다.
+   Add Input: Competition multi-view-pig-posture-recognition ·
+   Accelerator GPU(T4) · Internet On(resnet18/34 가중치를 받는다).
+
+2) 등록 3 의 네 가지만 고친다:
+   A CROP 96 → 160          (PAD 0.12 은 그대로)
+   B 좌우 뒤집기 + 라벨 교환  — 지금 코드는 뒤집기를 금지한다. 뒤집을 때
+     Lateral_lying_left ↔ Lateral_lying_right 라벨을 함께 바꾸면 올바른
+     증강이다. cls3 라벨에는 영향이 없어야 한다(둘 다 '횡와'로 접힌다) —
+     접는 코드를 먼저 읽고 확인할 것.
+   C make_net: resnet18 → resnet34
+   D train_fold: epochs 12 → 25   (bs 는 160px 에서 OOM 나면 128→64 로만 줄인다)
+   그 밖은 손대지 않는다. **특히 LOVO 폴드 구성·클래스 가중·MIN_FOLD·
+   저장 JSON 스키마는 그대로** — 평가 규약을 건드리면 비교가 무효다.
+
+3) 시드 3개(0·1·2)로 돌려 평균과 표준편차를 낸다. 한 번만 돌리고
+   "올랐다"고 하지 말 것 — 등록 1 이 세운 규칙이 시드 SD 안쪽 개선은
+   승리가 아니라는 것이다.
+
+4) 결과 JSON(/kaggle/working/posture_cnn.json)을 받아
+   competition/data/posture_cnn.json 을 덮어쓴다. 그다음:
+   python competition/tools/check_docs.py     # 문서 수치가 자동으로 걸린다
+   python competition/tests/smoke_test.py
+   check_docs 가 잡아주는 문서 수치를 전부 새 값으로 고친다.
+
+5) 보고: cls3/cls5/좌우한정 각각의 시드 평균±SD, 기준선 대비, 그리고
+   혼동행렬에서 횡와↔복와↔기립 누수가 줄었는지. **안 올랐으면 안 올랐다고
+   그대로 적고 0.732 를 유지한다** — PREREGISTRATION 등록 3 의 '결과' 절에
+   기록하는 것까지가 이 작업이다.
+
+6) 커밋: 등록 3 결과 절 + posture_cnn.json + 문서 수치. 가중치는
+   커밋하지 않는다(.gitignore).
+```
