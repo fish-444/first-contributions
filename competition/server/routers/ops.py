@@ -56,7 +56,9 @@ def env(body: EnvIn) -> dict:
     empty = [k for k, v in log.items() if not v]
     if empty:
         raise HTTPException(400, f"센서 값이 없는 돈사: {', '.join(empty)}")
-    out = ec.assess(log, {b.barn: b.stage for b in body.barns})
+    out = ec.assess(log, {b.barn: b.stage for b in body.barns},
+                    implantation={b.barn for b in body.barns
+                                  if b.implantation})
     out["insulation"] = {b.barn: ec.insulation_alarms(
         day_temps=b.day_temps or None, spot_temps=b.spot_temps or None)
         for b in body.barns}

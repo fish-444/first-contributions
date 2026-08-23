@@ -3722,6 +3722,18 @@ def test_pig_behavior_adapter() -> None:
     assert sup["farrowing"]["missing"] == ["Scrubbing"]
     assert not sup["disease"]["runs"]
     assert sup["disease"]["missing"] == ["Coughing"]
+    # 채널 신고 — 어휘 판정(runs)은 그대로 두고(다음 학습 목록이 남게)
+    # resp 채널이 질병·분만징후를 **따로** 연다. 등급(합성·실증 0회)이
+    # 신고에 붙어 다닌다. 채널 없이 부르면 아무것도 안 열린다.
+    sup_ch = vc.head_support(m, channels=("resp",))
+    assert not sup_ch["disease"]["runs"]              # 어휘로는 여전히 막힘
+    assert sup_ch["disease"]["channel_runs"]
+    assert sup_ch["farrowing"]["channel_runs"]
+    assert "합성" in sup_ch["disease"]["channel_why"]
+    assert "실증 0회" in sup_ch["disease"]["channel_why"]
+    assert not sup_ch["estrus"]["channel_runs"]       # resp 는 발정을 안 연다
+    assert not sup["disease"]["channel_runs"]         # 기본 호출은 채널 없음
+
     # 반례: 15종을 그대로 신고하면 분만징후가 열린다 — 그래서 4종 신고다
     class Naive:
         version, classes = "naive", CLASSES
@@ -3741,6 +3753,10 @@ def test_pig_behavior_adapter() -> None:
     assert abs(sum(o.probs.values()) - 1.0) < 1e-3
     assert abs(o.probs["Resting"] - 1.4 / 2.0) < 1e-3   # 점수 가중 구성비
     assert o.animal_id is None and o.track_id is None   # 방 단위 — 거짓 확신 금지
+    assert o.activity_px == 0.0 and o.resp_bpm is None   # 안 준 채널은 빈 채로
+    [r2] = vpb.fold(dets, "cam1", "3동", "2방", model="t",
+                    activity_px=12.3, resp_bpm=44.0)
+    assert (r2["obs"].activity_px, r2["obs"].resp_bpm) == (12.3, 44.0)
     assert (o.t0, o.t1) == ("2026-08-21T09:00", "2026-08-21T09:05")
     assert o.model == "pig-behavior-test"
     assert vpb.fold([], "c", "b", "p", model="x") == []
@@ -3849,6 +3865,26 @@ def test_behavior_baseline() -> None:
     b_full = bb.fit(hist2["3동/2방"], "3동/2방", classes=vpb.CONTRACT_CLASSES)
     assert b_full.formed
     assert b_full.head_score(hist2["3동/2방"][0], "estrus") is not None
+
+    # 보조 신호 — 있으면 등가중 합류, 없어도 헤드를 닫지 않는다.
+    # activity(AUC 0.739 실측)가 그동안 기준선 층에 안 오고 버려지고 있었다
+    hist_act = [dict(h, activity_px=10 + i % 3) for i, h in enumerate(hist)]
+    b_act = bb.fit(hist_act, "방")
+    est_act = dict(est, activity_px=22.0)             # 발정 창 — 활동 급등
+    s_with = b_act.head_score(est_act, "estrus")
+    s_wo = b.head_score(est, "estrus")
+    assert s_with > s_wo                              # 활동이 발정을 보강
+    assert "activity_px" in bb.HEAD_EXTRA["estrus"]
+    assert bb.HEAD_EXTRA["disease"]["resp_bpm"] == +1.0   # 빈호흡=질병 부호
+    # summarize 가 채널을 구성비와 **나란히** 얹는다(분포에 섞지 않는다)
+    import vision_pig_behavior as _vpb
+    from pig_behavior.predictor import Detection as _D
+    [fr] = _vpb.fold([("t0", [_D("Resting", 0.9, (0, 0, 1, 1))])],
+                     "c", "동", "방", model="t", activity_px=7.5, resp_bpm=41.0)
+    ent = bb.summarize([fr])["동/방"][0]
+    assert ent["activity_px"] == 7.5 and ent["resp_bpm"] == 41.0
+    assert abs(sum(v for k, v in ent.items()
+                   if k not in ("activity_px", "resp_bpm")) - 1.0) < 1e-6
 
     # 한계 신고 고정 — 등가중임을, 판정이 아니라 의심임을 응답이 스스로 말한다
     assert "등가중" in a1["weights"] and a1["grade"] == "계산"
@@ -4115,6 +4151,23 @@ def test_barn_env_control() -> None:
     ia = ec.insulation_alarms(day_temps=[14.0, 23.0], spot_temps=[18.0, 21.0])
     assert len(ia) == 2 and all("단열" in x["내용"] for x in ia)
     assert ec.insulation_alarms(day_temps=[18.0, 22.0]) == []
+
+    # 번식 달력 결합 — 같은 고온 위반이라도 착상기 모돈이 있는 돈사가
+    # 먼저다(여름 실측: 임신사고 구성이 1차 재발 쪽으로 +8.0%p). 정보는
+    # 달력이 주고 환경 층은 표시만 한다 — 스스로 판정하지 않는다
+    hot2 = list(rng.normal(24, 0.5, 30)) + [26.0]
+    n2 = list(rng.normal(10, 1.5, 30)) + [10.0]
+    r = ec.assess({"임신1동": {"temp_c": hot2, "nh3_ppm": n2},
+                   "비육동": {"temp_c": list(hot2), "nh3_ppm": list(n2)}},
+                  {"임신1동": "임신돈·웅돈", "비육동": "비육돈"},
+                  implantation={"임신1동"})
+    a_imp = next(x for x in r["barns"]["임신1동"]["alarms"]
+                 if "temp_c" in x["내용"])
+    a_no = next(x for x in r["barns"]["비육동"]["alarms"]
+                if "temp_c" in x["내용"])
+    assert "착상기" in a_imp["내용"] and "먼저 보라" in a_imp["내용"]
+    assert "착상기" not in a_no["내용"]
+    assert r["barns"]["임신1동"]["implantation"] is True
 
     # 시연 관통 + 노트 고정
     log, stages = ec._demo()

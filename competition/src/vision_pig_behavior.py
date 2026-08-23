@@ -59,7 +59,8 @@ HOLDOUT_NOTE = ("bbox mAP 0.205 · 처음 보는 200장(AI Hub 622 ts06). "
 
 
 def fold(dets_by_time: list, camera_id: str, barn: str, pen: str,
-         model: str) -> list:
+         model: str, activity_px: float = 0.0,
+         resp_bpm: float | None = None) -> list:
     """프레임별 검출 → 시간창 하나의 `BehaviorObs` (방 단위).
 
     `dets_by_time` 은 `[(iso시각, [Detection, ...]), ...]`.
@@ -89,7 +90,8 @@ def fold(dets_by_time: list, camera_id: str, barn: str, pen: str,
     obs = vc.BehaviorObs(camera_id=camera_id, barn=barn, pen=pen,
                          t0=str(t0), t1=str(t1), track_id=None,
                          animal_id=None, probs=probs,
-                         activity_px=0.0, model=model)
+                         activity_px=float(activity_px), resp_bpm=resp_bpm,
+                         model=model)
     # BehaviorObs 는 frozen dataclass 라 부가정보는 따로 낸다
     return [{"obs": obs, "n_detections": n_all, "n_used": n_used,
              "n_dropped": n_all - n_used}]

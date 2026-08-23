@@ -140,6 +140,9 @@ class BarnEnv(BaseModel):
     nh3_ppm: list[float] = Field(default_factory=list, max_length=100000)
     rh_pct: list[float] = Field(default_factory=list, max_length=100000)
     h2s_ppm: list[float] = Field(default_factory=list, max_length=100000)
+    implantation: bool = Field(
+        False, description="착상기(교배 후 7~21일) 모돈 재실 — 번식 달력이 "
+                           "아는 정보다. 고온 위반 알람의 우선순위 표시에 쓴다")
     day_temps: list[float] = Field(default_factory=list, max_length=1000,
                                    description="같은 날 온도들 — 일교차 점검")
     spot_temps: list[float] = Field(default_factory=list, max_length=1000,

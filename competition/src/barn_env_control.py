@@ -142,7 +142,11 @@ def _guide_state(stage: str, sensor: str, now: float,
     return "적정", f"상한 {limit:g}ppm"
 
 
-def _alarms(sensors: dict) -> list:
+IMPLANTATION_NOTE = (" · 착상기(교배 후 7~21일) 모돈 재실 — 여름 손실이 "
+                     "나는 창이 바로 이 돈사다, 먼저 보라")
+
+
+def _alarms(sensors: dict, implantation: bool = False) -> list:
     """알람만 — 지침 위반은 `위험`, 지침 안의 큰 편차는 `주의`(점검).
 
     지침 위반인데 **편차로는 평소와 같은 수준**(편차 경보 없음)이면 그
@@ -159,6 +163,11 @@ def _alarms(sensors: dict) -> list:
             if v["formed"] and not v["alert"]:
                 msg += (f" · 평소와 같은 수준(z {v['z']:+.1f}) — 상시 "
                         "위반이거나 센서 치우침, 교정 확인")
+            # 번식 달력 결합 — 고온이 임신사고로 이어지는 경로는 착상기다
+            # (여름 실측: 임신사고 구성이 1차 재발 쪽으로 +8.0%p). 같은
+            # 고온 위반이라도 착상기 모돈이 있는 돈사가 먼저다.
+            if implantation and s == "temp_c" and v["guide_state"] == "고온 위반":
+                msg += IMPLANTATION_NOTE
             out.append({"수준": "위험", "내용": msg})
         elif v["alert"]:
             out.append({"수준": "주의",
@@ -167,15 +176,20 @@ def _alarms(sensors: dict) -> list:
     return out
 
 
-def assess(log: dict, stages: dict, guide: dict | None = None) -> dict:
+def assess(log: dict, stages: dict, guide: dict | None = None,
+           implantation: set | None = None) -> dict:
     """{돈사: {센서: [이력..., 현재]}} → 돈사별 두 층 판정과 권고.
 
-    마지막 값이 현재, 그 앞이 이력이다. 반환의 `ranking` 은 돈사 간
+    마지막 값이 현재, 그 앞이 이력이다. `implantation` 은 **착상기
+    (교배 후 7~21일) 모돈이 있는 돈사 이름들** — 이 정보는 번식 달력
+    (`pregnancy_check`·개체 이력)이 알고 있고, 여기서는 받아서 고온 위반
+    알람의 우선순위 표시에만 쓴다. 반환의 `ranking` 은 돈사 간
     비교인데 **원값이 아니라 |z| 로 줄 세운다** — 센서가 돈사마다 달라
     원값 비교는 센서 차이를 사육환경 차이로 읽는 짓이다.
     """
     guide = guide or {"temp": TEMP_GUIDE, "rh": RH_GUIDE,
                       "nh3": NH3_LIMIT, "h2s": H2S_LIMIT}
+    implantation = implantation or set()
     barns = {}
     for barn, series in log.items():
         stage = stages.get(barn, "임신돈·웅돈")
@@ -192,7 +206,9 @@ def assess(log: dict, stages: dict, guide: dict | None = None) -> dict:
                           "baseline_n": b["n"], "formed": b["formed"],
                           "z": z, "cut": b["cut"], "alert": alert}
         barns[barn] = {"stage": stage, "sensors": sensors,
-                       "alarms": _alarms(sensors)}
+                       "implantation": barn in implantation,
+                       "alarms": _alarms(sensors,
+                                         implantation=barn in implantation)}
     ranking = sorted(
         ((barn, s, v["z"]) for barn, d in barns.items()
          for s, v in d["sensors"].items() if v["z"] is not None),

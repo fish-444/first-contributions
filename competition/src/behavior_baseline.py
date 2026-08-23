@@ -69,6 +69,18 @@ HEAD_SIGNS = {
 # 연속 창을 요구한다. estrus_early_warning 의 SUSTAIN 과 같은 생각이다.
 SUSTAIN = {"estrus": 1, "farrowing": 1, "disease": 2}
 
+# 보조 신호 — **있으면 등가중으로 합류하고, 없어도 헤드를 닫지 않는다.**
+# 어휘(HEAD_SIGNS)와 달리 이건 모델 밖 채널이라 이력에 없는 것이 흠이
+# 아니다. activity_px 는 이 프로젝트에서 가장 단단한 신호(AUC 0.739
+# 실측)인데 그동안 기준선 층까지 오지 않고 버려지고 있었다. resp_bpm 은
+# 합성 검증뿐이다(실증 대기). 부호는 문헌: 발정·분만 임박은 불안정으로
+# 활동↑, 질병은 무기력으로 활동↓ · 빈호흡↑.
+HEAD_EXTRA = {
+    "estrus": {"activity_px": +1.0},
+    "farrowing": {"activity_px": +1.0},
+    "disease": {"activity_px": -1.0, "resp_bpm": +1.0},
+}
+
 MIN_WINDOWS = 12          # 기준선을 만들 최소 창 수 — 미달이면 만들지 않는다
 RATE_BAND = (0.005, 0.05)  # 목표 경보율 대역. 컷은 여기서 역산한다
 _Z_GRID = np.arange(0.5, 6.01, 0.1)
@@ -121,7 +133,11 @@ class Baseline:
         signs = HEAD_SIGNS[head]
         if any(c not in d for c in signs):
             return None                              # 어휘 미비 — 못 잰다
-        return round(sum(s * d[c] for c, s in signs.items()) / len(signs), 3)
+        terms = dict(signs)
+        for c, sgn in HEAD_EXTRA.get(head, {}).items():
+            if c in d:                               # 보조는 있을 때만 합류
+                terms[c] = sgn
+        return round(sum(s * d[c] for c, s in terms.items()) / len(terms), 3)
 
 
 def fit(history: list, key: str, classes: tuple | None = None) -> Baseline:
@@ -230,7 +246,14 @@ def summarize(folded: list) -> dict:
     for r in folded:
         o = r["obs"] if isinstance(r, dict) else r
         key = f"{o.barn}/{o.pen}"
-        hist.setdefault(key, []).append(dict(o.probs))
+        entry = dict(o.probs)
+        # 채널은 구성비(합 1)가 아니라 **따로 온 신호**라 키를 나란히 얹는다.
+        # 편차(z)는 무차원이라 스케일이 달라도 섞인다. 0/None 은 "안 쟀다"다.
+        if getattr(o, "activity_px", 0.0):
+            entry["activity_px"] = float(o.activity_px)
+        if getattr(o, "resp_bpm", None) is not None:
+            entry["resp_bpm"] = float(o.resp_bpm)
+        hist.setdefault(key, []).append(entry)
     return hist
 
 
