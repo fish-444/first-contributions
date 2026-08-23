@@ -151,6 +151,9 @@ class BarnEnv(BaseModel):
 
 class EnvIn(BaseModel):
     barns: list[BarnEnv] = Field(..., max_length=200)
+    guide: dict | None = Field(
+        None, description="지침 오버라이드 — temp/rh/nh3/h2s 중 바꿀 것만. "
+                          "농장 기준이 다르면 여기로 통째로 바꾼다")
 
 
 class BaselineIn(BaseModel):
@@ -160,8 +163,9 @@ class BaselineIn(BaseModel):
     가른다. 생략하면 전 헤드를 계산하지만 그건 시연·감사용이다.
     """
     key: str = Field("방", max_length=40)
-    history: list[dict] = Field(..., max_length=100000)
-    now: dict = Field(...)
-    recent: list[dict] = Field(default_factory=list, max_length=100)
+    history: list[dict[str, float]] = Field(..., max_length=100000)
+    now: dict[str, float] = Field(...)
+    recent: list[dict[str, float]] = Field(default_factory=list,
+                                           max_length=100)
     classes: list[str] = Field(default_factory=list, max_length=50)
     heads: list[str] = Field(default_factory=list, max_length=10)

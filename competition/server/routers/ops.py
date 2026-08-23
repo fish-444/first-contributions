@@ -34,6 +34,13 @@ router = APIRouter(prefix="/api/ops", tags=["ops"])
 @router.post("/mating", summary="교배 배정 — 근친 한도 아래 예상인덱스 최대화")
 def mating(body: MatingIn) -> dict:
     """농장장 표 그대로. 배정은 모돈별 최고가 아니라 **농장 전체 최적**이다."""
+    for name, xs in (("모돈", body.sows), ("웅돈", body.boars)):
+        ids = [x.id for x in xs]
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        if dup:
+            raise HTTPException(
+                400, f"{name} 번호가 중복이다: {', '.join(dup)} — 조용히 "
+                     "접으면 한 마리가 계획 밖에서 교배된다")
     sows = {s.id: {"index": s.index, "sire": s.sire, "dam": s.dam,
                    "max_services": None} for s in body.sows}
     boars = {b.id: {"index": b.index, "sire": b.sire, "dam": b.dam,
@@ -49,14 +56,30 @@ def mating(body: MatingIn) -> dict:
 @router.post("/env", summary="돈사 환경 위험 알람 — 지침 위반과 자기 편차")
 def env(body: EnvIn) -> dict:
     """마지막 값이 현재, 그 앞이 이력이다. **알람만** 낸다."""
+    names = [b.barn for b in body.barns]
+    dup = sorted({n for n in names if names.count(n) > 1})
+    if dup:
+        raise HTTPException(400, f"돈사 이름이 중복이다: {', '.join(dup)} — "
+                                 "한쪽 이력이 소리 없이 사라진다")
     log = {b.barn: {k: v for k, v in
                     (("temp_c", b.temp_c), ("nh3_ppm", b.nh3_ppm),
                      ("rh_pct", b.rh_pct), ("h2s_ppm", b.h2s_ppm))
                     if v} for b in body.barns}
-    empty = [k for k, v in log.items() if not v]
+    # 센서 없이 day/spot 온도만 준 돈사는 단열 점검 전용으로 받는다 —
+    # 둘 다 없을 때만 거절한다
+    empty = [b.barn for b in body.barns
+             if not log[b.barn] and not b.day_temps and not b.spot_temps]
     if empty:
         raise HTTPException(400, f"센서 값이 없는 돈사: {', '.join(empty)}")
-    out = ec.assess(log, {b.barn: b.stage for b in body.barns},
+    sensored = {k: v for k, v in log.items() if v}
+    guide = None
+    if body.guide:
+        guide = {"temp": ec.TEMP_GUIDE, "rh": ec.RH_GUIDE,
+                 "nh3": ec.NH3_LIMIT, "h2s": ec.H2S_LIMIT}
+        guide.update({k: body.guide[k] for k in list(guide)
+                      if k in body.guide})
+    out = ec.assess(sensored, {b.barn: b.stage for b in body.barns},
+                    guide=guide,
                     implantation={b.barn for b in body.barns
                                   if b.implantation})
     out["insulation"] = {b.barn: ec.insulation_alarms(

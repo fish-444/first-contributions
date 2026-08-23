@@ -3876,6 +3876,18 @@ def test_behavior_baseline() -> None:
     assert s_with > s_wo                              # 활동이 발정을 보강
     assert "activity_px" in bb.HEAD_EXTRA["estrus"]
     assert bb.HEAD_EXTRA["disease"]["resp_bpm"] == +1.0   # 빈호흡=질병 부호
+    # 리뷰가 실행으로 확인한 결함 둘의 회귀 방지 — 채널 부재는 0 이 아니다:
+    # 추적기가 꺼진 평시 창이 질병 경보로 둔갑하지 않고, 간헐 측정 이력이
+    # 채널 중심을 0 쪽으로 끌어내리지 않는다
+    normal_no_act = window(0.61, 0.24, 0.10)
+    d1 = bb.assess(b_act, normal_no_act)["heads"]["disease"]
+    assert not d1["over"], "미측정 채널이 z 로 계산됐다(부재=0 결함 재발)"
+    half = [dict(h) for h in hist_act]
+    for h_ in half[::2]:
+        h_.pop("activity_px")
+    b_half = bb.fit(half, "방")
+    assert b_half.center["activity_px"] > 8, "간헐 측정이 중심을 오염시켰다"
+
     # summarize 가 채널을 구성비와 **나란히** 얹는다(분포에 섞지 않는다)
     import vision_pig_behavior as _vpb
     from pig_behavior.predictor import Detection as _D
@@ -4316,6 +4328,28 @@ def test_ops_api_and_view() -> None:
     assert got["baseline"]["min_windows"] == bb.MIN_WINDOWS
     assert c.post("/api/ops/baseline",
                   json={"history": [], "now": now}).status_code == 400
+
+    # 리뷰 반영 — 중복 id 는 조용히 접지 않고 400, 단열 전용 요청은 통과,
+    # guide 오버라이드는 부분만 줘도 동작한다
+    dup = animals(sows) + [animals(sows)[0]]
+    assert c.post("/api/ops/mating", json={"sows": dup,
+                                           "boars": animals(boars, True)}
+                  ).status_code == 400
+    r = c.post("/api/ops/env", json={"barns": [
+        {"barn": "1동", "day_temps": [15.0, 24.0],
+         "spot_temps": [18.0, 21.5]}]})
+    assert r.status_code == 200
+    assert len(r.json()["insulation"]["1동"]) == 2      # 일교차·자리차 둘 다
+    r = c.post("/api/ops/env", json={
+        "barns": [{"barn": "A", "stage": "임신돈·웅돈",
+                   "nh3_ppm": [10.0] * 15 + [20.0]}],
+        "guide": {"nh3": 30.0}})
+    assert r.status_code == 200
+    a = r.json()["barns"]["A"]["sensors"]["nh3_ppm"]
+    assert a["guide_state"] == "적정"                   # 농장 기준 30 이 이겼다
+    assert c.post("/api/ops/baseline",
+                  json={"history": [{"Eating": None}], "now": {"Eating": 0.3}}
+                  ).status_code == 422                  # 비수치는 500 이 아니라 422
 
     # 지침 상수를 서버가 베끼지 않았다 — 모듈이 정본이다
     g = c.get("/api/ops/guide").json()

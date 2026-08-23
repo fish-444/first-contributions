@@ -80,6 +80,11 @@ HEAD_EXTRA = {
     "farrowing": {"activity_px": +1.0},
     "disease": {"activity_px": -1.0, "resp_bpm": +1.0},
 }
+# 채널 키 — 구성비와 **부재의 뜻이 다르다.** 구성비에서 빠진 클래스는
+# "그 행동이 0"이지만(검출 안 됨), 채널이 빠진 창은 "안 쟀다"다.
+# 0 으로 채우면 추적기가 꺼진 창이 z≈-7 로 계산돼 허위 질병 경보가
+# 난다 — 리뷰가 실행으로 확인한 결함이라 여기 선을 긋는다.
+CHANNEL_KEYS = ("activity_px", "resp_bpm")
 
 MIN_WINDOWS = 12          # 기준선을 만들 최소 창 수 — 미달이면 만들지 않는다
 RATE_BAND = (0.005, 0.05)  # 목표 경보율 대역. 컷은 여기서 역산한다
@@ -116,8 +121,12 @@ class Baseline:
         """구성비 하나 → 클래스별 이탈 z. 기준선 미형성이면 빈 dict."""
         if not self.formed:
             return {}
-        return {c: (float(probs.get(c, 0.0)) - self.center[c]) / self.spread[c]
-                for c in self.classes}
+        out = {}
+        for c in self.classes:
+            if c in CHANNEL_KEYS and (c not in probs or c not in self.center):
+                continue                    # 안 쟀으면 z 도 없다 — 0 이 아니다
+            out[c] = (float(probs.get(c, 0.0)) - self.center[c]) / self.spread[c]
+        return out
 
     def head_score(self, probs: dict, head: str) -> float | None:
         """헤드 하나의 이탈 점수 — 부호는 문헌, 크기는 등가중.
@@ -156,7 +165,13 @@ def fit(history: list, key: str, classes: tuple | None = None) -> Baseline:
     if not b.formed:
         return b
     for c in b.classes:
-        x = np.array([float(h.get(c, 0.0)) for h in history])
+        if c in CHANNEL_KEYS:
+            vals = [float(h[c]) for h in history if c in h]
+            if len(vals) < MIN_WINDOWS:
+                continue                    # 간헐 측정 — 이 채널 기준선 미형성
+            x = np.array(vals)
+        else:
+            x = np.array([float(h.get(c, 0.0)) for h in history])
         b.center[c], b.spread[c] = _robust(x)
     # 경보 컷 — 자기 이력에서 경보율이 대역에 들어오는 z 를 찾는다.
     # 3σ 일괄이 필드마다 0건/10.2% 로 갈렸던 그 사고를 피하는 방법이다.

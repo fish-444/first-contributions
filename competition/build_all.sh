@@ -36,6 +36,7 @@ VID=$(ls /tmp/edvid/color.mp4 /tmp/edin_vids/2019_11_05_000009/color.mp4 2>/dev/
 [ -n "$VID" ] && run $SRC/build_behavior_gallery.py competition/data/edinburgh/2019_11_05/000009 "$VID"
 # PC 통합 콘솔 — 위 여섯 뷰를 한 파일로 합친다(반드시 그 뒤에 돌 것)
 run $SRC/build_pc_suite.py
+run $SRC/build_ops_console.py
 # 통합 허브(마지막)
 VID2=$(ls /tmp/edvid/color.mp4 /tmp/edin_vids/2019_11_05_000009/color.mp4 2>/dev/null | head -1)
 [ -n "$VID2" ] && run $SRC/build_estrus_timeline.py competition/data/edinburgh/2019_11_05/000009 "$VID2"

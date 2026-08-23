@@ -14,7 +14,7 @@
 
 이 판이 보여 주려는 것 둘:
 
-- **근친이 인덱스를 이긴다** — 최고 웅돈(120)이 반형매 모돈에는 막혀
+- **근친이 인덱스를 이긴다** — 인덱스 최고 웅돈이 반형매 모돈에는 막혀
   차선으로 비켜간다. 모돈별 최고를 주는 탐욕이 아니라 농장 전체 최적이다.
 - **센서 차이를 사육환경 차이로 읽지 않는다** — 같은 환경인데 센서만
   치우친 돈사는 원값으로 더워 보이지만 편차(z)에는 흔적이 없다.
@@ -57,7 +57,6 @@ def gather() -> dict:
 
     log, stages = ec._demo()
     return {"mating": mp._demo(), "env": ec.assess(log, stages),
-            "log": log, "stages": stages,
             "guide_nh3": ec.NH3_LIMIT, "guide_h2s": ec.H2S_LIMIT}
 
 
@@ -82,13 +81,13 @@ def mating_card(r: dict) -> str:
 <table><thead><tr><th>모돈번호</th><th>모돈인덱스</th><th>웅돈번호</th>
 <th>웅돈인덱스</th><th>후손 예상인덱스</th><th>근친율</th><th>교배횟수</th>
 </tr></thead><tbody>{rows}</tbody></table>{un}
-<p class="lead">인덱스 최고 웅돈 <b>B-X(120)</b> 가 반형매 모돈에게는
-근친 12.5% 라 막혀 차선으로 비켜갔다 — 모돈별 최고가 아니라
-<b>농장 전체 최적</b>이다.</p>
+<p class="lead">인덱스가 가장 높은 웅돈이 반형매 모돈에게는 근친
+한도에 걸려 차선으로 비켜갔다 — 모돈별 최고가 아니라 <b>농장 전체
+최적</b>이다. 수치는 위 표가 정본이다.</p>
 <ul class="notes">{notes}</ul></div>"""
 
 
-def env_card(r: dict, log: dict, nh3: float, h2s: float) -> str:
+def env_card(r: dict, nh3: float, h2s: float) -> str:
     cells = []
     for barn, d in r["barns"].items():
         svs = []
@@ -116,10 +115,10 @@ def env_card(r: dict, log: dict, nh3: float, h2s: float) -> str:
 <p class="sub">지침 NH₃ {nh3:g}ppm · H₂S {h2s:g}ppm ·
 편차 순위(|z|) {esc(rank)}</p>
 <div class="barns">{''.join(cells)}</div>
-<p class="lead">2동은 1동과 <b>같은 환경</b>인데 센서가 +3.5℃ 치우쳐 있다.
-원값(21.5)으로 비교하면 더워 보이지만 편차는 z −0.4 라 흔적이 없고,
+<p class="lead">2동은 1동과 <b>같은 환경</b>인데 센서만 치우쳐 있다.
+원값으로 비교하면 더워 보이지만 자기 기준선 편차(z)에는 흔적이 없고,
 알람에 <b>“센서 치우침, 교정 확인”</b> 이 붙는다 — 센서 차이를 사육환경
-차이로 읽지 않는 자리다.</p>
+차이로 읽지 않는 자리다. 수치는 위 돈사 칸이 정본이다.</p>
 <ul class="notes">{notes}</ul></div>"""
 
 
@@ -195,7 +194,7 @@ padding:2px 0;flex-wrap:wrap}}
 계산은 <code>mating_plan</code> · <code>barn_env_control</code> 이 하고
 이 파일은 값을 받아 그리기만 한다.</div>
 {mating_card(d['mating'])}
-{env_card(d['env'], d['log'], d['guide_nh3'], d['guide_h2s'])}
+{env_card(d['env'], d['guide_nh3'], d['guide_h2s'])}
 </div></html>"""
 
 

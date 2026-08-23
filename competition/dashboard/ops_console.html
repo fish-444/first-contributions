@@ -76,9 +76,9 @@ padding:2px 0;flex-wrap:wrap}
 <table><thead><tr><th>모돈번호</th><th>모돈인덱스</th><th>웅돈번호</th>
 <th>웅돈인덱스</th><th>후손 예상인덱스</th><th>근친율</th><th>교배횟수</th>
 </tr></thead><tbody><tr><td>S001</td><td class=n>110</td><td>B-Y</td><td class=n>112</td><td class='n hi'>111</td><td class=n>0%</td><td class=n>2</td></tr><tr><td>S002</td><td class=n>105</td><td>B-X</td><td class=n>120</td><td class='n hi'>112.5</td><td class=n>0%</td><td class=n>1</td></tr><tr><td>S003</td><td class=n>98</td><td>B-Y</td><td class=n>112</td><td class='n hi'>105</td><td class=n>0%</td><td class=n>2</td></tr></tbody></table>
-<p class="lead">인덱스 최고 웅돈 <b>B-X(120)</b> 가 반형매 모돈에게는
-근친 12.5% 라 막혀 차선으로 비켜갔다 — 모돈별 최고가 아니라
-<b>농장 전체 최적</b>이다.</p>
+<p class="lead">인덱스가 가장 높은 웅돈이 반형매 모돈에게는 근친
+한도에 걸려 차선으로 비켜갔다 — 모돈별 최고가 아니라 <b>농장 전체
+최적</b>이다. 수치는 위 표가 정본이다.</p>
 <ul class="notes"><li>근친율은 입력한 혈통에서의 <b>하한</b>이다 — 혈통표에 없는 조상은 무관으로 치므로, 기록이 얕을수록 실제보다 낮게 나온다.</li><li>후손의 예상인덱스는 중간부모 기대값이다 — 인덱스(유전평가) 자체의 정확도는 입력의 질을 따라간다.</li><li>근친 한도 6.25% 는 지침값(사촌 교배 수준)이다.</li><li>배정은 모돈별 최고가 아니라 농장 전체 최적이다(헝가리안).</li></ul></div>
 <div class="card">
 <div class="ch"><span class="cn">환경 알람</span>
@@ -86,9 +86,9 @@ padding:2px 0;flex-wrap:wrap}
 <p class="sub">지침 NH₃ 15ppm · H₂S 5ppm ·
 편차 순위(|z|) 3동/nh3_ppm +8.4 · 3동/temp_c -7.9 · 3동/rh_pct -4.8</p>
 <div class="barns"><div class="barn"><div class="bh">1동<span class="stg">임신돈·웅돈</span></div><div class="sv"><span class="sk">temp_c</span><span class="svv">18.2</span><span class="sz ">적정 · z -0.3</span></div><div class="sv"><span class="sk">nh3_ppm</span><span class="svv">10.3</span><span class="sz ">적정 · z -1.2</span></div><div class=ok>알람 없음</div></div><div class="barn"><div class="bh">2동<span class="stg">임신돈·웅돈</span></div><div class="sv"><span class="sk">temp_c</span><span class="svv">21.5</span><span class="sz bad">고온 위반 · z -0.4</span></div><div class="sv"><span class="sk">nh3_ppm</span><span class="svv">11.4</span><span class="sz ">적정 · z +0.2</span></div><div class="al lv1">[위험] temp_c 고온 위반 — 지금 21.5, 적온 16~21℃ · 평소와 같은 수준(z -0.4) — 상시 위반이거나 센서 치우침, 교정 확인</div></div><div class="barn"><div class="bh">3동<span class="stg">포유모돈</span></div><div class="sv"><span class="sk">temp_c</span><span class="svv">13.8</span><span class="sz bad">저온 위반 · z -7.9</span></div><div class="sv"><span class="sk">nh3_ppm</span><span class="svv">22.0</span><span class="sz bad">상한 초과 · z +8.4</span></div><div class="sv"><span class="sk">rh_pct</span><span class="svv">34.0</span><span class="sz bad">저습 위반 · z -4.8</span></div><div class="al lv1">[위험] temp_c 저온 위반 — 지금 13.8, 적온 18~21℃</div><div class="al lv1">[위험] nh3_ppm 상한 초과 — 지금 22.0, 상한 15ppm</div><div class="al lv1">[위험] rh_pct 저습 위반 — 지금 34.0, 권장 40~60%</div></div></div>
-<p class="lead">2동은 1동과 <b>같은 환경</b>인데 센서가 +3.5℃ 치우쳐 있다.
-원값(21.5)으로 비교하면 더워 보이지만 편차는 z −0.4 라 흔적이 없고,
+<p class="lead">2동은 1동과 <b>같은 환경</b>인데 센서만 치우쳐 있다.
+원값으로 비교하면 더워 보이지만 자기 기준선 편차(z)에는 흔적이 없고,
 알람에 <b>“센서 치우침, 교정 확인”</b> 이 붙는다 — 센서 차이를 사육환경
-차이로 읽지 않는 자리다.</p>
+차이로 읽지 않는 자리다. 수치는 위 돈사 칸이 정본이다.</p>
 <ul class="notes"><li>알람만 낸다 — 제어 지시는 장비 구성에 달려 있어 로그만 보는 쪽이 정하면 틀린다(겨울 저온+고NH3 가 대표).</li><li>위험=지침 위반(절대), 주의=평소와 다름(자기 기준선 편차) — 두 층은 서로를 덮지 않는다.</li><li>돈사 간 비교는 |z| 로만 한다 — 센서가 돈사마다 달라 원값 비교는 센서 차이를 사육환경 차이로 읽는다.</li><li>적온·습도 대역, NH3 15ppm·H2S 5ppm 상한은 지침값이다(국립축산과학원 자료·사용자 제공 표). 농장 기준이 다르면 guide= 로 통째로 바꾼다.</li><li>출처끼리 갈리는 값은 갈린 채로 적었다 — 습도(50~60 vs 60~70 vs 표1 단계별)·일교차(5 vs 8.3 vs 외기 10℃).</li><li>편차 컷은 자기 이력 경보율 0.5~5% 역산이다 — 행동 기준선 층과 같은 방법, 같은 코드다.</li></ul></div>
 </div></html>
