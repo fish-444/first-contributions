@@ -164,7 +164,10 @@ def notebook(cells: list) -> dict:
 def posture_nb() -> dict:
     return notebook([
         md(f"""
-# 자세 CNN — 원리적 상한 {CEILING} 을 넘을 수 있는가
+# 자세 CNN 재학습 — 겨냥은 횡와↔복와↔기립 혼동이다
+
+> 규약은 `docs/PREREGISTRATION.md` **등록 3**(2026-08-23, 실행 전 커밋)이
+> 정본이다. 이 노트북은 거기 적힌 넷만 바꾼 판이다.
 
 ## 실행 전 설정 셋 (오른쪽 패널)
 
@@ -172,41 +175,52 @@ def posture_nb() -> dict:
 |---|---|---|
 | **Add Input** | Competition `multi-view-pig-posture-recognition` | 데이터 |
 | **Accelerator** | **GPU T4 ×2** | ⚠️ **P100 은 안 된다** — sm_60 이라 최신 PyTorch 에 커널이 없다 |
-| **Internet** | **On** | resnet18 사전학습 가중치를 받는다 |
+| **Internet** | **On** | resnet34 사전학습 가중치를 받는다 |
 
 > 인터넷을 끄면 가중치를 못 받아 **scratch 학습으로 자동 폴백**한다. 죽지는
 > 않지만 23,450장으로 밑바닥부터 배우는 셈이라 성능이 크게 떨어진다.
 > 셀 출력에 `사전학습 가중치 못 받음 → scratch` 가 찍히면 그 상태다.
 
-## 이 노트북이 묻는 것 하나
+## 목표가 아닌 것부터 — {CEILING} 은 겨냥이 아니다
 
-좌/우 횡와는 **bbox 기하로 원리상 구분 불가**다. 둘 다 옆으로 누운 같은
-모양의 상자라, 기존 모델은 좌횡와를 좌 157 / 우 210 으로 사실상 동전을
-던진다. 두 클래스가 전체의 27.8% 이므로 **5클래스 상한이 1.0 이 아니라
-{CEILING}** 이다.
+{CEILING} 은 "좌/우 횡와는 bbox 기하로 원리상 구분 불가" 라는 **폐기된
+전제** 위에서 나온 5클래스 상한이다. 지난 판이 그 전제를 스스로 물렀다:
+좌우한정 정확도가 **0.699**(동전 0.5)라 픽셀에는 방향 정보가 있고,
+cls5 는 **0.557** 로 상한에서 한참 아래라 **상한이 병목이 아니다.**
 
-기존 파이프라인은 크롭을 60차원으로 요약해 쓴다 — 방향 정보가 이미
-뭉개진다. **원본 크롭 픽셀을 직접 보는 CNN 만이 머리 방향을 볼 수 있고,
-그래야 상한 자체가 올라간다.**
+진짜 병목은 혼동행렬이 가리킨다 — 정답이 좌/우인 6,485건 중 좌/우로
+예측된 건 27.1% 뿐이고, 나머지는 복와(39.4%)·기립(30.3%)으로 샜다.
+**이번 재학습이 겨냥하는 것은 그 누수다.**
 
-재는 것 셋:
-1. 5클래스 정확도가 **{CEILING} 을 넘는가**
-2. **좌/우 횡와만 떼어낸 이진 정확도** — 0.5 근처면 여전히 동전
-3. 발정 3클래스(기립/기좌/횡와) — 응용 지표. 기존 0.636
+## 바꾸는 것 넷 (그 밖은 고정)
 
-## 검증
+| | 이전 | 이번 | 왜 |
+|---|---|---|---|
+| A 크롭 | 96px | **160px** | 복와/횡와는 실루엣·다리 가림으로 갈리는데 96px 은 그 단서를 잃을 만큼 작다 |
+| B 증강 | 뒤집기 금지 | **뒤집기 + 좌↔우 라벨 교환** | 뒤집으면서 라벨을 같이 바꾸면 올바른 증강이다 |
+| C 구조 | resnet18 | **resnet34** | 용량 |
+| D 에폭 | 12 | **25** | 23,450 크롭에 12 에폭은 덜 배웠을 수 있다 |
 
-카메라(뷰)를 **통째로** 빼는 LOVO. 같은 카메라가 학습·검증에 걸치면
-배경을 외운다 — 이 프로젝트가 0.642 를 폐기한 이유가 그것이다.
+**시드 3개(0·1·2)** 로 돌려 평균과 표준편차를 낸다 — 한 번 돌리고
+"올랐다" 고 하지 않는다. **시드 SD 안쪽 개선은 승리로 치지 않는다.**
 
-## 밟기 쉬운 함정 둘 — 둘 다 아래 셀에서 막아 뒀다
+## 절대 바꾸지 않는 것 — 건드리면 비교가 무효다
+
+카메라(뷰)를 **통째로** 빼는 LOVO 7폴드 · 클래스 가중 손실 · MIN_FOLD ·
+저장 JSON 스키마. 같은 카메라가 학습·검증에 걸치면 배경을 외운다 —
+이 프로젝트가 0.642 를 폐기한 이유가 그것이다. 숫자를 올리는 가장 쉬운
+방법이 규약을 무르는 것이라 여기 못박는다.
+
+## 밟기 쉬운 함정 둘
 
 1. **`train1` + `train2` 를 그냥 concat 하면 안 된다.** 두 CSV 는 이미지
    3,090장을 공유한다. 그대로 합치면 46,384행이 되는데 실제 고유 상자는
    23,450개다. 중복이 train/valid 로 갈리면 정답을 외운다 — 이 프로젝트가
    자세 정확도 **0.642 를 폐기한 원인이 정확히 이것**이다.
-2. **좌우 뒤집기 증강을 쓰면 안 된다.** 좌횡와를 뒤집으면 우횡와가 되므로
-   라벨이 바뀐다. 이 과제에서 가장 하기 쉬운 실수다.
+2. **좌우 뒤집기는 라벨을 같이 바꿔야만 옳다.** 그냥 뒤집으면 좌횡와가
+   우횡와가 되므로 정답이 거짓이 된다. 아래 `train_fold` 는 뒤집은 표본에
+   한해 좌↔우 라벨을 교환한다. cls3 는 좌/우가 둘 다 '횡와' 로 접히므로
+   (`TO3`) 이 교환의 영향을 받지 않는다.
 """),
         code(f"""
 import os, ast, time, json
@@ -222,7 +236,10 @@ if not os.path.exists(os.path.join(IN, "train1.csv")):
     IN = cand[0]
 print("입력:", IN)
 print(" ", sorted(os.listdir(IN))[:8])
-CEILING, MIN_FOLD, CROP, PAD = {CEILING}, {MIN_FOLD}, 96, 0.12
+# 등록 3 의 A — 96 → 160. 그 밖(PAD)은 그대로.
+CEILING, MIN_FOLD, CROP, PAD = {CEILING}, {MIN_FOLD}, 160, 0.12
+SEEDS = (0, 1, 2)          # 등록 3 — 시드 SD 안쪽 개선은 승리로 치지 않는다
+EPOCHS, ARCH = 25, "resnet34"    # 등록 3 의 D · C
 
 # ── 사전 점검 ────────────────────────────────────────────────────────────
 # **비싼 일(크롭 추출 ~50초) 전에 환경부터 본다.** 예전엔 크롭을 다 뽑고
@@ -248,8 +265,8 @@ DEV = pick_device()
 # 사전학습 가중치를 지금 받아 둔다. 인터넷이 꺼져 있으면 여기서 바로 안다.
 PRETRAINED = True
 try:
-    from torchvision.models import resnet18
-    resnet18(weights="IMAGENET1K_V1")
+    from torchvision.models import resnet34
+    resnet34(weights="IMAGENET1K_V1")
     print("사전학습 가중치: OK")
 except Exception as e:
     PRETRAINED = False
@@ -326,13 +343,13 @@ import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
 def make_net(n_cls):
-    """resnet18. 가중치 가용 여부는 위 사전 점검(PRETRAINED)에서 이미 정해졌다."""
-    from torchvision.models import resnet18
-    m = resnet18(weights="IMAGENET1K_V1" if PRETRAINED else None)
+    """등록 3 의 C — resnet18 → resnet34. 가중치 가용 여부는 위 사전 점검."""
+    import torchvision.models as tvm
+    m = getattr(tvm, ARCH)(weights="IMAGENET1K_V1" if PRETRAINED else None)
     m.fc = nn.Linear(m.fc.in_features, n_cls)
     return m
 
-def train_fold(Xtr, ytr, Xte, n_cls, epochs=12, bs=128, lr=3e-4, seed=0):
+def _run(Xtr, ytr, Xte, n_cls, epochs, bs, lr, seed, swap):
     torch.manual_seed(seed)
     net = make_net(n_cls).to(DEV)
     cnt = np.bincount(ytr, minlength=n_cls).astype(np.float32)
@@ -351,10 +368,21 @@ def train_fold(Xtr, ytr, Xte, n_cls, epochs=12, bs=128, lr=3e-4, seed=0):
         net.train()
         for xb, yb in dl:
             xb = xb.to(DEV, non_blocking=True).float().div_(255)
-            # 밝기 지터만. **좌우 뒤집기는 라벨을 바꾸므로 금지.**
             if torch.rand(1).item() < 0.5:
                 xb = (xb * (0.85 + 0.3 * torch.rand(1, device=DEV))).clamp_(0, 1)
             yb = yb.to(DEV, non_blocking=True)
+            # ── 등록 3 의 B — 좌우 뒤집기 + 라벨 교환 ────────────────────
+            # 그냥 뒤집으면 좌횡와가 우횡와가 되어 정답이 거짓이 된다.
+            # 뒤집은 표본에 한해 좌↔우를 맞바꾸면 올바른 증강이고 표본이
+            # 두 배가 된다. swap 이 None 이면(3클래스 등) 교환 없이 뒤집는다.
+            fl = torch.rand(xb.shape[0], device=DEV) < 0.5
+            if fl.any():
+                xb[fl] = torch.flip(xb[fl], dims=[3])
+                if swap is not None:
+                    L, R = swap
+                    isL, isR = (yb == L) & fl, (yb == R) & fl
+                    yb = torch.where(isL, torch.full_like(yb, R), yb)
+                    yb = torch.where(isR, torch.full_like(yb, L), yb)
             opt.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=(DEV == "cuda")):
                 loss = lossf(net(xb), yb)
@@ -362,62 +390,100 @@ def train_fold(Xtr, ytr, Xte, n_cls, epochs=12, bs=128, lr=3e-4, seed=0):
             sched.step()
     net.eval(); out = []
     with torch.no_grad(), torch.amp.autocast("cuda", enabled=(DEV == "cuda")):
-        for i in range(0, len(Xte), 512):
-            xb = torch.from_numpy(Xte[i:i+512]).permute(0, 3, 1, 2)
+        for i in range(0, len(Xte), 256):
+            xb = torch.from_numpy(Xte[i:i+256]).permute(0, 3, 1, 2)
             xb = xb.to(DEV).float().div_(255)
             out.append(net(xb).argmax(1).cpu().numpy())
+    del net, opt, dl, ds
+    if DEV == "cuda":
+        torch.cuda.empty_cache()
     return np.concatenate(out)
+
+def train_fold(Xtr, ytr, Xte, n_cls, epochs=None, bs=128, lr=3e-4, seed=0,
+               swap=None):
+    """등록 3 의 D — 에폭 12 → 25. bs 는 160px 에서 OOM 날 때만 64 로 내린다."""
+    epochs = EPOCHS if epochs is None else epochs
+    try:
+        return _run(Xtr, ytr, Xte, n_cls, epochs, bs, lr, seed, swap)
+    except torch.cuda.OutOfMemoryError:
+        torch.cuda.empty_cache()
+        print(f"    ⚠️ bs {bs} 에서 OOM → 64 로 내려 재시도(등록 3 이 허용한 유일한 조정)")
+        return _run(Xtr, ytr, Xte, n_cls, epochs, 64, lr, seed, swap)
 '''),
         code(f'''
-# ── LOVO (카메라를 통째로 뺀다) ──────────────────────────────────────────
+# ── LOVO (카메라를 통째로 뺀다) × 시드 3개 ──────────────────────────────
+# 폴드 구성·클래스 가중·MIN_FOLD 는 등록 3 이 고정한 것이라 손대지 않는다.
+# 바뀐 것은 바깥의 시드 루프뿐 — 한 번 돌리고 "올랐다" 고 하지 않기 위해서다.
+from sklearn.metrics import confusion_matrix
+
 c2i = {{c: i for i, c in enumerate(classes)}}
 y5 = full["cls"].map(c2i).to_numpy()
 LEFT, RIGHT = c2i["Lateral_lying_left"], c2i["Lateral_lying_right"]
 
 vs = full["view"].value_counts()
 views = [v for v in sorted(vs.index) if vs[v] >= MIN_FOLD]
-print("폴드:", views)
+print("폴드:", views, "· 시드", list(SEEDS), f"· {{ARCH}} · {{CROP}}px · {{EPOCHS}}ep")
 
-rows5, rows3, lrs, lrs_rest, per_fold = [], [], [], [], []
-ALL_TRUE, ALL_PRED, ALL_VIEW = [], [], []      # 혼동행렬용 — 전 폴드 누적
-for v in views:
-    m = (full["view"] == v).to_numpy()
-    t = time.time()
-    p5 = train_fold(imgs[~m], y5[~m], imgs[m], len(classes))
-    yv = y5[m]
-    ALL_TRUE.append(yv); ALL_PRED.append(p5)
-    ALL_VIEW.append(np.full(len(yv), v))
-    s5 = score(yv, p5); rows5.append(s5)
-    p3 = np.array([TO3[classes[i]] for i in p5])
-    s3 = score(full.loc[m, "cls3"].to_numpy(), p3); rows3.append(s3)
+def run_lovo(seed):
+    rows5, rows3, lrs, lrs_rest, per_fold = [], [], [], [], []
+    AT, AP = [], []
+    for v in views:
+        m = (full["view"] == v).to_numpy()
+        t = time.time()
+        # swap=(LEFT, RIGHT) — 뒤집힌 표본만 좌↔우 라벨을 맞바꾼다(등록 3 B)
+        p5 = train_fold(imgs[~m], y5[~m], imgs[m], len(classes),
+                        seed=seed, swap=(LEFT, RIGHT))
+        yv = y5[m]
+        AT.append(yv); AP.append(p5)
+        s5 = score(yv, p5); rows5.append(s5)
+        p3 = np.array([TO3[classes[i]] for i in p5])
+        s3 = score(full.loc[m, "cls3"].to_numpy(), p3); rows3.append(s3)
 
-    sel = np.isin(yv, [LEFT, RIGHT])
-    slr = score(yv[sel], p5[sel]) if sel.sum() >= 30 else None
-    if slr: lrs.append(slr)
-    # **위 좌우 지표만으로는 해석이 안 된다.** 정답이 좌/우인데 예측이
-    # 5클래스 아무거나일 수 있어서, 낮은 값이 (a) 좌↔우 반전인지
-    # (b) 복와로 몰린 건지 구분이 안 된다. 결론이 정반대인데.
-    # → **예측도 좌/우인 경우로 한정**해서 다시 잰다. 이건 순수하게
-    #   "좌우를 가리는가" 만 본다(동전 = 0.5).
-    both = sel & np.isin(p5, [LEFT, RIGHT])
-    srest = score(yv[both], p5[both]) if both.sum() >= 30 else None
-    if srest: lrs_rest.append(srest)
+        sel = np.isin(yv, [LEFT, RIGHT])
+        slr = score(yv[sel], p5[sel]) if sel.sum() >= 30 else None
+        if slr: lrs.append(slr)
+        # **위 좌우 지표만으로는 해석이 안 된다.** 정답이 좌/우인데 예측이
+        # 5클래스 아무거나일 수 있어서, 낮은 값이 (a) 좌↔우 반전인지
+        # (b) 복와로 몰린 건지 구분이 안 된다. 결론이 정반대인데.
+        # → **예측도 좌/우인 경우로 한정**해서 다시 잰다. 이건 순수하게
+        #   "좌우를 가리는가" 만 본다(동전 = 0.5).
+        both = sel & np.isin(p5, [LEFT, RIGHT])
+        srest = score(yv[both], p5[both]) if both.sum() >= 30 else None
+        if srest: lrs_rest.append(srest)
 
-    per_fold.append({{"view": v, "n": int(m.sum()), "cls5": s5["acc"],
-                     "cls3": s3["acc"],
-                     "lr": (slr["acc"] if slr else None),
-                     "lr_restricted": (srest["acc"] if srest else None),
-                     "lr_n": int(sel.sum()), "lr_pred_lr_n": int(both.sum())}})
-    print(f"  {{v:<16}} n={{int(m.sum()):>5}}  5cls {{s5['acc']:.3f}}  "
-          f"3cls {{s3['acc']:.3f}}  좌우 {{(slr['acc'] if slr else float('nan')):.3f}}"
-          f"  좌우한정 {{(srest['acc'] if srest else float('nan')):.3f}}"
-          f"  ({{time.time()-t:.0f}}s)")
+        per_fold.append({{"view": v, "n": int(m.sum()), "cls5": s5["acc"],
+                         "cls3": s3["acc"],
+                         "lr": (slr["acc"] if slr else None),
+                         "lr_restricted": (srest["acc"] if srest else None),
+                         "lr_n": int(sel.sum()), "lr_pred_lr_n": int(both.sum())}})
+        print(f"  s{{seed}} {{v:<16}} n={{int(m.sum()):>5}}  5cls {{s5['acc']:.3f}}  "
+              f"3cls {{s3['acc']:.3f}}  좌우 {{(slr['acc'] if slr else float('nan')):.3f}}"
+              f"  좌우한정 {{(srest['acc'] if srest else float('nan')):.3f}}"
+              f"  ({{time.time()-t:.0f}}s)", flush=True)
+    AT = np.concatenate(AT); AP = np.concatenate(AP)
+    return {{"seed": seed, "cls5": weighted(rows5), "cls3": weighted(rows3),
+            "left_right": weighted(lrs), "left_right_restricted": weighted(lrs_rest),
+            "per_fold": per_fold,
+            "confusion": confusion_matrix(AT, AP,
+                                         labels=range(len(classes))).tolist()}}
 
-ALL_TRUE = np.concatenate(ALL_TRUE); ALL_PRED = np.concatenate(ALL_PRED)
-ALL_VIEW = np.concatenate(ALL_VIEW)
+RUNS = []
+t_all = time.time()
+for _s in SEEDS:
+    RUNS.append(run_lovo(_s))
+    # **시드마다 즉시 저장한다.** 캐글 세션이 끊기면 여기까지는 건진다.
+    json.dump(RUNS, open("/kaggle/working/posture_cnn_seeds.json", "w"),
+              ensure_ascii=False, indent=1)
+    r = RUNS[-1]
+    print(f"  ── 시드 {{_s}} 끝: cls3 {{r['cls3']['acc']:.3f}} · "
+          f"cls5 {{r['cls5']['acc']:.3f}} · "
+          f"좌우한정 {{r['left_right_restricted']['acc']:.3f}} "
+          f"({{time.time()-t_all:.0f}}s 누적)", flush=True)
+
 '''),
         code('''
 # ── 기준선 먼저, 그다음 결과 ─────────────────────────────────────────────
+# 기준선(다수 클래스)은 시드와 무관하게 결정적이라 한 번만 낸다.
 def majority_lovo(df, label, group, min_fold=MIN_FOLD):
     vs = df[group].value_counts()
     rows = []
@@ -428,70 +494,126 @@ def majority_lovo(df, label, group, min_fold=MIN_FOLD):
         rows.append(score(df.loc[m, label], np.full(int(m.sum()), maj)))
     return weighted(rows)
 
-m5, m3, mlr = weighted(rows5), weighted(rows3), weighted(lrs)
 b5 = majority_lovo(full, "cls", "view")
 b3 = majority_lovo(full, "cls3", "view")
+
+# ── 시드 집계 — 평균과 표준편차 ──────────────────────────────────────────
+# **한 번 돌리고 "올랐다" 고 하지 않는다.** 등록 1 이 세운 규칙 그대로,
+# 시드 SD 안쪽 개선은 승리로 치지 않는다.
+def agg(key, field):
+    return np.array([r[key][field] for r in RUNS], dtype=float)
+
+def mean_block(key):
+    """블록(cls5 등)의 각 필드를 시드 평균으로.
+
+    n·folds 는 cls3/cls5 에서는 시드 불변이지만, 좌우한정은 '예측도 좌/우'
+    인 표본만 세므로 시드마다 갈린다 — 그래서 여기도 평균을 낸다.
+    """
+    out = {}
+    for f in RUNS[0][key]:
+        v = [r[key][f] for r in RUNS]
+        out[f] = int(round(np.mean(v))) if f in ("n", "folds") \
+            else float(np.mean(v))
+    return out
+
+SD = {}
+print("  ── 시드별 (평균 ± SD, SD 는 표본표준편차 n=3) ──")
+for key, label in (("cls3", "발정 3클래스"), ("cls5", "5클래스"),
+                   ("left_right_restricted", "좌우한정"),
+                   ("left_right", "좌우(원지표)")):
+    for field in ("acc", "mf1"):
+        a = agg(key, field)
+        SD[f"{key}_{field}"] = float(a.std(ddof=1))
+        if field == "acc":
+            print(f"  {label:<12} acc {a.mean():.3f} ± {a.std(ddof=1):.3f}   "
+                  f"시드별 {[round(float(x), 3) for x in a]}")
+        else:
+            print(f"  {'':<12} mf1 {a.mean():.3f} ± {a.std(ddof=1):.3f}   "
+                  f"시드별 {[round(float(x), 3) for x in a]}")
+
+m5, m3 = mean_block("cls5"), mean_block("cls3")
+mlr, mrest = mean_block("left_right"), mean_block("left_right_restricted")
 report("5클래스 (원본 과제)", m5, b5)
 report("발정 3클래스 (응용 지표)", m3, b3)
 
-print(f"\\n  ── 이 실험의 핵심 ──")
-print(f"  bbox 기하의 원리적 상한   {CEILING:.3f}")
-print(f"  CNN 5클래스 정확도        {m5['acc']:.3f}  "
-      f"({'✅ 상한 돌파' if m5['acc'] > CEILING else '❌ 상한 이하'})")
-print(f"  좌/우 횡와 이진 정확도    {mlr['acc']:.3f}  (동전 = 0.500, 표본 {mlr['n']:,})")
-print("  폴드별 좌/우:", [(p["view"], p["lr"]) for p in per_fold])
+# ── 등록 3 의 판정 — 이전 값과 시드 SD 로 가른다 ─────────────────────────
+PREV = {"cls3_acc": 0.732, "cls3_mf1": 0.534, "cls5_acc": 0.557,
+        "lr_restricted_acc": 0.699}
+d3 = m3["acc"] - PREV["cls3_acc"]
+sd3 = SD["cls3_acc"]
+print(f"\\n  ── 등록 3 판정 ──")
+print(f"  cls3 정확도  이전 {PREV['cls3_acc']:.3f} → 이번 {m3['acc']:.3f} "
+      f"({d3:+.3f}) · 시드 SD {sd3:.3f}")
+if d3 > sd3:
+    print("  → **채택 후보.** 시드 SD 를 넘어 올랐다. 문서 수치를 교체한다.")
+elif d3 > 0:
+    print("  → **승리가 아니다.** 올랐지만 시드 SD 안쪽이다 — 0.732 를 유지한다.")
+else:
+    print("  → **안 올랐다.** 0.732 를 유지하고 그대로 기록한다.")
+print(f"  cls5 정확도  이전 {PREV['cls5_acc']:.3f} → {m5['acc']:.3f} "
+      f"({m5['acc']-PREV['cls5_acc']:+.3f}) · SD {SD['cls5_acc']:.3f}"
+      f"   [상한 {CEILING:.3f} 은 겨냥이 아니다]")
+print(f"  좌우한정     이전 {PREV['lr_restricted_acc']:.3f} → {mrest['acc']:.3f} "
+      f"({mrest['acc']-PREV['lr_restricted_acc']:+.3f}) · "
+      f"SD {SD['left_right_restricted_acc']:.3f}")
 
-# ── 좌/우가 왜 낮은가 — 혼동행렬로 가른다 ────────────────────────────────
-# 위 '좌/우' 는 정답이 좌/우인 행만 골랐을 뿐 예측은 5클래스 전부다.
-# 낮게 나오는 이유가 둘인데 결론이 정반대라, 여기서 갈라야 한다.
-from sklearn.metrics import confusion_matrix
-cm = confusion_matrix(ALL_TRUE, ALL_PRED, labels=range(len(classes)))
-print("\\n  ── 혼동행렬 (행=정답, 열=예측) ──")
+# ── 겨냥한 누수가 실제로 줄었는가 — 혼동행렬 ─────────────────────────────
+# 판정에는 안 쓴다(등록 3 의 부수 산출). 정확도가 같아도 누수 구조가
+# 바뀌면 다음 수를 정하는 근거가 된다.
+cm = np.mean([np.array(r["confusion"]) for r in RUNS], axis=0).round().astype(int)
+print("\\n  ── 혼동행렬 (시드 3개 평균, 행=정답, 열=예측) ──")
 print("  " + " " * 21 + "".join(f"{c[:9]:>11}" for c in classes))
 for i, c in enumerate(classes):
     print(f"  {c:<21}" + "".join(f"{cm[i][j]:>11,}" for j in range(len(classes))))
 
 lr_i = [LEFT, RIGHT]
-tot_lr = cm[lr_i].sum()
-to_lr = cm[np.ix_(lr_i, lr_i)].sum()
-correct = cm[LEFT][LEFT] + cm[RIGHT][RIGHT]
-swapped = cm[LEFT][RIGHT] + cm[RIGHT][LEFT]
-mrest = weighted(lrs_rest)
+tot_lr = int(cm[lr_i].sum())
+to_lr = int(cm[np.ix_(lr_i, lr_i)].sum())
+correct = int(cm[LEFT][LEFT] + cm[RIGHT][RIGHT])
+swapped = int(cm[LEFT][RIGHT] + cm[RIGHT][LEFT])
+row_sum = cm.sum(1)
+leak = {classes[j]: round(float(cm[lr_i, j].sum() / tot_lr), 3)
+        for j in range(len(classes)) if j not in lr_i}
+recall = {classes[i]: round(float(cm[i][i] / row_sum[i]), 3) if row_sum[i] else None
+          for i in range(len(classes))}
 print(f"\\n  정답이 좌/우인 {tot_lr:,}건 중")
 print(f"    예측도 좌/우  {to_lr:,} ({to_lr/tot_lr:.1%}) "
       f"— 그중 맞음 {correct:,} · 뒤집힘 {swapped:,}")
-print(f"    다른 자세로 샘  {tot_lr-to_lr:,} ({1-to_lr/tot_lr:.1%})")
+print(f"    다른 자세로 샘  {tot_lr-to_lr:,} ({1-to_lr/tot_lr:.1%})  {leak}")
+print(f"  [이전 판: 좌/우로 예측 27.1% · 복와 39.4% · 기립 30.3% 로 샘]")
 print(f"\\n  **좌/우 한정 정확도 {mrest['acc']:.3f}** (동전 = 0.500, "
       f"표본 {mrest['n']:,})")
-if mrest["acc"] < 0.35:
-    print("   → **체계적 반전.** 방향은 가리는데 부호가 뒤집힌다. 좌/우는")
-    print("     '돼지 기준' 라벨이라, 카메라가 반대편에서 찍으면 이미지상")
-    print("     방향이 뒤집힌다. 카메라 자세를 모르면 부호를 정할 수 없다 —")
-    print("     모델 문제가 아니라 **라벨 정의가 카메라 상대적**인 것이다.")
-    print(f"     (뒤집으면 {1-mrest['acc']:.3f} — 방향 정보는 픽셀에 있다)")
-elif mrest["acc"] < 0.60:
-    print("   → 좌/우를 못 가린다. 픽셀에도 방향 정보가 충분치 않다.")
-else:
-    print("   → 좌/우를 가린다. bbox 로는 원리상 불가능했던 부분이다.")
-if to_lr / tot_lr < 0.5:
-    print(f"   ※ 다만 절반 이상({1-to_lr/tot_lr:.0%})이 아예 다른 자세로 샜다 —")
-    print("     위 한정 정확도는 '좌/우로 찍은 경우' 에 대한 값이다.")
-print("""
-  읽는 법:
-   · 0.5 근처  → 크롭 픽셀에도 방향 정보가 없거나 이 해상도로는 못 잡는다
-   · 0.5 훨씬 아래 → **체계적 반전**. 카메라가 반대편에서 찍으면 같은 자세가
-     좌↔우로 보인다는 뜻이다. 그렇다면 좌/우는 '개체 기준' 라벨이고
-     카메라 방향을 모르면 부호를 정할 수 없다 — 모델 문제가 아니다.
-   · 0.6 이상  → 갈린다. bbox 로는 원리상 불가능했던 부분이다.
-""")
+
+# ── 저장 — 스키마는 등록 3 이 고정했다. 키를 **더하기만** 한다 ───────────
+per_fold = []
+for k, pf0 in enumerate(RUNS[0]["per_fold"]):
+    row = dict(pf0)
+    for f in ("cls5", "cls3", "lr", "lr_restricted"):
+        v = [r["per_fold"][k][f] for r in RUNS if r["per_fold"][k][f] is not None]
+        row[f] = float(np.mean(v)) if v else None
+    per_fold.append(row)
+
 json.dump({"cls5": m5, "cls3": m3, "left_right": mlr, "baseline_cls5": b5,
            "baseline_cls3": b3, "ceiling": CEILING, "per_fold": per_fold,
            "pretrained": PRETRAINED, "device": DEV, "crop_px": CROP,
            "left_right_restricted": mrest,
-           "confusion": cm.tolist(), "classes": classes},
+           "confusion": cm.tolist(), "classes": classes,
+           # ── 아래는 등록 3 에서 새로 더한 키다(기존 키는 그대로) ──
+           "arch": ARCH, "epochs": EPOCHS, "hflip_label_swap": True,
+           "seeds": list(SEEDS), "seed_sd": SD,
+           "seed_runs": [{"seed": r["seed"],
+                          "cls3_acc": r["cls3"]["acc"], "cls3_mf1": r["cls3"]["mf1"],
+                          "cls5_acc": r["cls5"]["acc"], "cls5_mf1": r["cls5"]["mf1"],
+                          "lr_restricted_acc": r["left_right_restricted"]["acc"]}
+                         for r in RUNS],
+           "left_right_verdict": {
+               "restricted_acc": round(mrest["acc"], 3),
+               "true_lr_total": tot_lr, "predicted_as_lr": to_lr,
+               "share_predicted_as_lr": round(to_lr / tot_lr, 3),
+               "leaked_to": leak, "recall_by_class": recall}},
           open("/kaggle/working/posture_cnn.json", "w"),
           ensure_ascii=False, indent=1)
-print("저장: /kaggle/working/posture_cnn.json")
+print("\\n저장: /kaggle/working/posture_cnn.json · posture_cnn_seeds.json")
 '''),
     ])
 
