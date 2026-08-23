@@ -7,7 +7,7 @@
 > 정본은 `STATUS.md` 다. 여기 수치는 전부 거기서 오고 `tools/check_docs.py`
 > 가 대조한다 — 손으로 고치면 테스트가 깨진다.
 
-**규모**: 도메인·모델 모듈 75개 · 대시보드 뷰 23개 · 테스트 90개 · 외부 연결 0
+**규모**: 도메인·모델 모듈 75개 · 대시보드 뷰 24개 · 테스트 91개 · 외부 연결 0
 
 ## 등급 — 문장마다 붙인다
 
@@ -41,6 +41,7 @@
 | **개체 이력 → 단계별 두수** | `--herd my_herd.csv` | ③단계 두수를 되푸는 대신 **센다** + 유도값 대조 | `farm_registry.counts_from_herd` |
 | **영상 겨냥** | 개체 이력 + 기준일 | 오늘 어느 개체를 **어느 헤드로** 볼지 (발정·재발·분만징후·질병) | `vision_contract.targets` |
 | **CSV 내보내기** | 위 표들 | 등급 열 + 각주 머리말이 붙은 CSV 여섯 종 | `table_export` |
+| **번식·환경 API** | 모돈·웅돈 목록 / 센서 로그 / 창별 구성비 | 교배 배정 · 환경 위험 알람 · 행동 기준선 · 지침 상수 조회 | `POST /api/ops/{mating,env,baseline}` · `GET /api/ops/guide` |
 
 ### 이 축이 지키는 성질 셋
 
@@ -352,7 +353,7 @@ numpy 2.4)에서 무호흡 잡음 CV 가 0.31 로 내려와 컷 0.35 를 뚫었�
 
 ## H′. 백엔드 · 프론트엔드 `계산`
 
-정적 뷰 23개는 그대로 두고 **그 위에 얹었다.** 심사위원이 서버를 못 띄워도
+정적 뷰 24개는 그대로 두고 **그 위에 얹었다.** 심사위원이 서버를 못 띄워도
 `dashboard/*.html` 을 브라우저로 열 수 있어야 하므로, 서버는 선택이다.
 
 ```
@@ -489,7 +490,7 @@ python competition/src/farm_gap.py --sows 300
 python competition/src/psy_priority.py --sows 300
 
 # 재현성
-python competition/tests/smoke_test.py     # 90/90 통과
+python competition/tests/smoke_test.py     # 91/91 통과
 python competition/tools/check_docs.py     # 문서 수치 대조
 
 # 백엔드 + 프론트 (선택 — 정적 뷰는 서버 없이도 돈다)

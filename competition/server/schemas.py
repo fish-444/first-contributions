@@ -103,3 +103,62 @@ class ExportIn(BaseModel):
     performance: Performance | None = None
     herd: HerdIn | None = None
     sows: int | None = Field(None, ge=1, le=20000)
+
+
+# -- ops 라우터 (교배 배정 · 환경 알람 · 행동 기준선) ------------------------
+class Animal(BaseModel):
+    """모돈·웅돈 한 마리. **혈통은 비워도 된다** — 대신 근친율이 하한이 된다.
+
+    `sire`/`dam` 이 목록에 없는 번호면 시조로 친다. 같은 부 번호를 적은 두
+    개체는 그만큼의 혈연으로 이어진다.
+    """
+    id: str = Field(..., min_length=1, max_length=40)
+    index: float = Field(..., description="유전평가 인덱스 — 정확도는 입력의 질")
+    sire: str | None = Field(None, max_length=40)
+    dam: str | None = Field(None, max_length=40)
+    max_services: int | None = Field(None, ge=1, le=50,
+                                     description="웅돈 전용 사용 상한")
+
+
+class MatingIn(BaseModel):
+    max_f: float = Field(0.0625, ge=0, le=0.5,
+                         description="근친 한도 — 기본은 지침(사촌 수준)")
+    services: int = Field(3, ge=1, le=50, description="웅돈 상한 기본값")
+    sows: list[Animal] = Field(..., max_length=2000)
+    boars: list[Animal] = Field(..., max_length=200)
+
+
+class BarnEnv(BaseModel):
+    """한 돈사의 센서 이력. **마지막 값이 현재**고 그 앞이 기준선 재료다.
+
+    센서는 있는 것만 넣는다 — 습도·황화수소가 없는 농장이 흔하고, 없는
+    센서를 0 으로 채우면 그게 곧 위반으로 잡힌다.
+    """
+    barn: str = Field(..., min_length=1, max_length=40)
+    stage: str = Field("임신돈·웅돈", max_length=20)
+    temp_c: list[float] = Field(default_factory=list, max_length=100000)
+    nh3_ppm: list[float] = Field(default_factory=list, max_length=100000)
+    rh_pct: list[float] = Field(default_factory=list, max_length=100000)
+    h2s_ppm: list[float] = Field(default_factory=list, max_length=100000)
+    day_temps: list[float] = Field(default_factory=list, max_length=1000,
+                                   description="같은 날 온도들 — 일교차 점검")
+    spot_temps: list[float] = Field(default_factory=list, max_length=1000,
+                                    description="같은 시각 지점별 — 자리 편차")
+
+
+class EnvIn(BaseModel):
+    barns: list[BarnEnv] = Field(..., max_length=200)
+
+
+class BaselineIn(BaseModel):
+    """행동 구성비의 자기 기준선. `heads` 는 **달력이 연 헤드**만 넘긴다.
+
+    발정과 분만 임박은 신호가 겹쳐서(둘 다 Eating↓·Walking↑) 점수로는 못
+    가른다. 생략하면 전 헤드를 계산하지만 그건 시연·감사용이다.
+    """
+    key: str = Field("방", max_length=40)
+    history: list[dict] = Field(..., max_length=100000)
+    now: dict = Field(...)
+    recent: list[dict] = Field(default_factory=list, max_length=100)
+    classes: list[str] = Field(default_factory=list, max_length=50)
+    heads: list[str] = Field(default_factory=list, max_length=10)

@@ -4134,19 +4134,25 @@ def test_pig_behavior_toolkit() -> None:
     (3) 날짜 파서, (4) 기존 접목(predictor 경로)이 toolkit 판으로도
     그대로 도는가 — 이건 test_pig_behavior_adapter 가 같이 본다.
     """
-    import numpy as np
-
-    import test_respiration as tr
     from pig_behavior.analyze import HUT_TYPES, VideoAnalyzer, _date_parts
     from pig_behavior.respiration import RespirationMeter, count_cycles
 
-    # 1) 호흡 — 합성 관통의 대표 다섯 (전체는 toolkit pytest 11개가 정본)
-    tr.test_count_cycles_on_pure_sine()
-    tr.test_count_cycles_on_white_noise()
-    tr.test_recovers_known_rate(45.0, 6.0, 20.0)      # 정답을 되찾는가
-    tr.test_rejects_when_no_breathing(20.0)           # 안 속는가
-    tr.test_too_short_is_refused_not_guessed()        # 지어내지 않는가
-    assert RespirationMeter().max_cycle_cv == 0.2     # 두 환경 실측 사이 컷
+    # 컷 상수는 pytest 없이도 지킨다 — 두 환경 실측으로 정한 값이다
+    assert RespirationMeter().max_cycle_cv == 0.2
+
+    # 1) 호흡 — 합성 관통의 대표 다섯 (전체는 toolkit pytest 11개가 정본).
+    #    합성 영상 생성이 pytest 를 쓰므로 없으면 건너뛴다 — 정적 뷰가
+    #    서버 없이 돌아야 하는 것과 같은 이유로 전체를 실패시키지 않는다.
+    try:
+        import test_respiration as tr
+    except ImportError as e:
+        print(f"      (pytest 없음 — 호흡 합성 검증 건너뜀: {e})")
+    else:
+        tr.test_count_cycles_on_pure_sine()
+        tr.test_count_cycles_on_white_noise()
+        tr.test_recovers_known_rate(45.0, 6.0, 20.0)  # 정답을 되찾는가
+        tr.test_rejects_when_no_breathing(20.0)       # 안 속는가
+        tr.test_too_short_is_refused_not_guessed()    # 지어내지 않는가
 
     # 2)+3) analyze 경량 확인 — 무거운 것(영상·모델)은 로컬 실증 몫
     assert HUT_TYPES == {"a": "스톨", "b": "방목", "c": "기타"}
@@ -4154,6 +4160,117 @@ def test_pig_behavior_toolkit() -> None:
     assert _date_parts("20260822_room3.mp4") == ("2026년도 08월 22일", "260822")
     assert _date_parts("room3.mp4") == (None, None)
     assert count_cycles is not None and VideoAnalyzer is not None
+
+
+def test_ops_api_and_view() -> None:
+    """새 기능 셋이 **서버·화면까지 이어졌는가.**
+
+    최근에 만든 기능이 CLI 에만 있으면 심사장에서는 없는 기능이다. 그런데
+    화면과 서버가 각자 계산하기 시작하면 같은 농장에 다른 답을 한다 —
+    이 프로젝트가 이미 두 번 겪은 사고다. 그래서 넷을 고정한다:
+    (1) 라우터 응답이 모듈 출력과 **같은 객체**인가, (2) 정적 뷰가 같은
+    함수를 불러 구워졌는가, (3) 지침 상수를 서버가 제 것으로 베끼지
+    않았는가, (4) 허브에 등록됐는가.
+    """
+    import barn_env_control as ec
+    import behavior_baseline as bb
+    import build_dashboard_hub as hub
+    import mating_plan as mp
+
+    # 4) 허브 등록 + 뷰 파일
+    assert any(v[0] == "ops_console.html" for v in hub.VIEWS)
+    out = os.path.join(ROOT, "dashboard", "ops_console.html")
+    assert os.path.exists(out), "build_ops_console.py 를 돌려야 한다"
+    html = open(out, encoding="utf-8").read()
+
+    # 2) 뷰가 모듈 값을 박아 넣었는가 — 화면이 제 산식을 갖지 않았다는 뜻
+    ref = mp._demo()
+    for row in ref["rows"]:
+        assert f'{row["후손의 예상인덱스"]:g}' in html
+    assert "등급 합성" in html and "서버가 필요하다" in html
+    assert "센서 치우침" in html            # 편차가 바이어스를 거르는 자리
+    import build_ops_console as boc
+    assert "계산은 여기서 하지 않는다" in boc.__doc__
+
+    try:
+        from fastapi.testclient import TestClient
+    except (ImportError, RuntimeError) as e:
+        print(f"      (fastapi 없음 — ops API 건너뜀: {type(e).__name__})")
+        return
+    import tempfile
+    repo = os.path.dirname(ROOT)
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    os.environ.setdefault("YANGDON_DB",
+                          os.path.join(tempfile.mkdtemp(), "t.db"))
+    from competition.server.app import app
+    c = TestClient(app)
+
+    # 1) 교배 — 서버가 모듈과 같은 답인가
+    def animals(d, boar=False):
+        return [{"id": k, "index": v["index"], "sire": v["sire"],
+                 "dam": v["dam"],
+                 **({"max_services": v["max_services"]} if boar else {})}
+                for k, v in d.items()]
+    sows = {"S001": {"index": 110.0, "sire": "F1", "dam": None},
+            "S002": {"index": 105.0, "sire": "F2", "dam": None},
+            "S003": {"index": 98.0, "sire": "F1", "dam": None}}
+    boars = {"B-X": {"index": 120.0, "sire": "F1", "dam": None, "max_services": 2},
+             "B-Y": {"index": 112.0, "sire": "F3", "dam": None, "max_services": 2},
+             "B-Z": {"index": 104.0, "sire": "F4", "dam": None, "max_services": 2}}
+    r = c.post("/api/ops/mating", json={"sows": animals(sows),
+                                        "boars": animals(boars, True)})
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"] == ref["rows"]
+    # 혈통 순환은 조용히 돌지 않고 400 이다
+    bad = [{"id": "X", "index": 100.0, "sire": "Y"},
+           {"id": "Y", "index": 100.0, "sire": "X"}]
+    assert c.post("/api/ops/mating",
+                  json={"sows": bad, "boars": animals(boars, True)}
+                  ).status_code == 400
+
+    # 2) 환경 — 같은 답 + 센서 없는 돈사는 400(0 으로 채우면 위반이 된다)
+    log, stages = ec._demo()
+    body = {"barns": [{"barn": b, "stage": stages[b],
+                       **{k: list(v) for k, v in log[b].items()}} for b in log]}
+    r = c.post("/api/ops/env", json=body)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    exp = ec.assess(log, stages)
+    assert got["barns"]["3동"]["alarms"] == exp["barns"]["3동"]["alarms"]
+    assert got["ranking"] == exp["ranking"]
+    assert c.post("/api/ops/env",
+                  json={"barns": [{"barn": "빈동"}]}).status_code == 400
+
+    # 3) 기준선 — 달력 게이팅이 서버에서도 도는가
+    import numpy as np
+    rng = np.random.default_rng(7)
+
+    def win(rest, eat, walk):
+        raw = {"Resting": rest, "Eating": eat, "Walking": walk,
+               "Searching": max(0.0, 1 - rest - eat - walk)}
+        tot = sum(raw.values())
+        return {k: v / tot for k, v in raw.items()}
+    hist = [win(0.60 + rng.normal(0, .03), 0.25 + rng.normal(0, .03),
+                0.10 + rng.normal(0, .02)) for _ in range(42)]
+    now = win(0.42, 0.14, 0.32)
+    r = c.post("/api/ops/baseline", json={"key": "3동/2방", "history": hist,
+                                          "now": now, "heads": ["estrus"]})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    exp = bb.assess(bb.fit(hist, "3동/2방"), now, heads=("estrus",))
+    assert got["heads"] == exp["heads"] and list(got["heads"]) == ["estrus"]
+    assert got["baseline"]["min_windows"] == bb.MIN_WINDOWS
+    assert c.post("/api/ops/baseline",
+                  json={"history": [], "now": now}).status_code == 400
+
+    # 지침 상수를 서버가 베끼지 않았다 — 모듈이 정본이다
+    g = c.get("/api/ops/guide").json()
+    assert g["nh3_ppm_limit"] == ec.NH3_LIMIT
+    assert g["h2s_ppm_limit"] == ec.H2S_LIMIT
+    assert g["mating_max_inbreeding"] == mp.MAX_F_GUIDE
+    assert g["temp_c"]["포유자돈"] == list(ec.TEMP_GUIDE["포유자돈"])
+    assert g["grade"] == "지침"
 
 
 def test_vision_contract() -> None:
@@ -5463,7 +5580,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
