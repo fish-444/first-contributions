@@ -4360,6 +4360,128 @@ def test_ops_api_and_view() -> None:
     assert g["grade"] == "지침"
 
 
+def test_farm_scale_and_formula() -> None:
+    """등록 규모와 공식 — **두 수를 섞지 않는가.**
+
+    상시모돈(번식 모돈만)과 총사육수(전 두수)는 다른 수다. 한 칸에 몰아
+    받으면 300두 농장이 어떤 화면에선 300, 어떤 화면에선 3,000 이 된다.
+    지키는 것 여섯: (1) 두 수가 따로 담기고 모순이면 잡는가, (2) 동별
+    사육수가 자리를 넘으면 잡는가, (3) 무허가면적을 '적법화 대상일 수
+    있다'까지만 말하는가(위법 판정 금지), (4) 법정 기준이 없는 번식사에
+    밀도를 지어내지 않는가, (5) 공식이 비운 입력을 채우지 않고 '무엇이
+    없어서 못 냈는지'로 답하는가, (6) 회전율 표기 대조를 숨기지 않는가.
+    """
+    import farm_scale as fs
+    import perf_formula as pf
+
+    # 1) 두 수 분리 — 상시모돈 > 총사육수면 모순이다
+    r = fs.reconcile(fs._demo())
+    assert r["n_sows"] == 300 and r["n_head_total"] == 3200
+    bad = dict(fs._demo(), n_sows=5000)
+    msgs = [c["내용"] for c in fs.reconcile(bad)["checks"]]
+    assert any("상시모돈" in m and "총사육수" in m for m in msgs)
+    assert any(c["수준"] == "위험" for c in fs.reconcile(bad)["checks"])
+
+    # 2) 사육수 > 자리 (5동: 430두 vs 6방×66=396)
+    msgs = [c["내용"] for c in r["checks"]]
+    assert any("사육수 430" in m and "자리 396" in m for m in msgs)
+    # 동별 합 ≠ 총사육수도 잡는다
+    assert any("동별 사육수 합" in m for m in msgs)
+
+    # 3) 무허가면적 — 표시까지, 위법 판정은 하지 않는다
+    non = next(m for m in msgs if "무허가면적" in m)
+    assert "적법화 대상일 수 있다" in non
+    assert "위법" not in non and "불법" not in non
+
+    # 4) 번식사에는 법정 밀도를 지어내지 않는다 — 자돈사만 나온다
+    stages = {d["동"] for d in r["density"]}
+    assert stages == {"5동"}                       # 교배사·임신사는 기준 없음
+    d5 = r["density"][0]
+    assert d5["기준"] == "허가면적" and d5["overcrowded"]
+    assert "교배사" not in fs.DENSITY_STAGE and "임신사" not in fs.DENSITY_STAGE
+    # 밀도는 growth_flow 를 그대로 부른다 — 재구현 금지
+    import growth_flow as gf
+    assert d5["required_m2"] == gf.density_check(1, 1.0, "이유자돈")["required_m2"]
+
+    # 5) 공식 — 비운 입력은 채우지 않고 이름으로 답한다
+    out = pf.compute(pf._demo())
+    res = out["results"]
+    assert res["psy"]["value"] == 22.87 and res["msy"]["value"] == 21.5
+    assert res["turnover"]["value"] == 2.21
+    # MSY = PSY × 이유후육성율 — 공식 사슬이 자기모순 없이 닫힌다
+    assert abs(res["msy"]["value"]
+               - res["psy"]["value"] * 94.0 / 100) < 0.02
+    r7 = res["return_7d_rate"]
+    assert r7["value"] is None and "필요하다" in r7["why"]
+    assert "7일이내 재귀복수" in out["missing"]
+    # 어느 입력이 들어갔는지 결과가 들고 다닌다
+    assert "실산자수" in res["psy"]["uses"] and "비생산일수(연간)" in res["psy"]["uses"]
+
+    # 6) 회전율 — 제공 표기 그대로의 값도 같이 낸다(숨기지 않는다)
+    v = res["turnover"]["variants"]
+    assert len(v) == 2 and all(x < res["turnover"]["value"] for x in v.values())
+    assert "466행" in res["turnover"]["basis"]
+    # 총량 읽기는 복당 읽기와 **따로** 낸다
+    tot = pf.compute(dict(pf._demo(), weaned_total=7200, n_sows=300))
+    assert tot["results"]["psy_from_total"]["value"] == 24.0
+    assert tot["results"]["psy"]["value"] == 22.87   # 서로 덮지 않는다
+    assert pf.compute({})["results"]["psy"]["value"] is None
+
+
+def test_improve_path() -> None:
+    """현재 ↔ 달성 가능 상한 — **허수를 목표로 걸지 않는가.**
+
+    상위 10% 가 복당 12두를 낸다고 우리 목표를 12두로 잡으면 자돈사가 못
+    받는 생산량을 '낼 수 있다' 고 말하게 된다(그렇게 허수 594두·1.4억원을
+    낸 적이 있다). 지키는 것 다섯: (1) 돈사 천장이 분포 상한을 깎는가,
+    (2) 개별 여지를 **더하지 않는가**(PSY 는 곱셈 항등식), (3) 이미 상한
+    위인 지표를 지렛대로 세지 않는가, (4) 임신기간을 권고에서 뺐는가,
+    (5) PSY 를 재구현하지 않고 farm_gap 을 부르는가.
+    """
+    import farm_gap as fg
+    import improve_path as ip
+
+    # 5) 재구현 금지 — 같은 함수를 쓴다
+    assert ip._psy({"weaned": 11.0, "npd": 43.0, "lactation": 24.8,
+                    "gestation": 115.0}) == fg.psy_from(11.0, 43.0, 24.8, 115.0)
+
+    # 1) 돈사 천장이 분포 상한(p90=12.0)을 11.0 으로 깎는다
+    with_barn = ip.plan(ip._demo(), weaned_ceiling=11.0)
+    no_barn = ip.plan(ip._demo())
+    assert no_barn["ceilings"]["weaned"]["ceiling"] == 12.0
+    assert "466농장" in no_barn["ceilings"]["weaned"]["source"]
+    assert with_barn["ceilings"]["weaned"]["ceiling"] == 11.0
+    assert "돈사 상한" in with_barn["ceilings"]["weaned"]["source"]
+    # 깎였으므로 여지도 작아야 한다 — 허수가 줄어든 것이다
+    assert with_barn["psy_all_ceiling"] < no_barn["psy_all_ceiling"]
+    # 천장이 분포보다 높으면 분포가 이긴다(더 낙관적으로 가지 않는다)
+    loose = ip.plan(ip._demo(), weaned_ceiling=20.0)
+    assert loose["ceilings"]["weaned"]["ceiling"] == 12.0
+
+    # 2) 합산 금지 — 개별 합과 전부 상한이 **다르다는 것을 스스로 말한다**
+    assert with_barn["sum_of_each"] != with_barn["headroom_total"]
+    assert any("합이 아니다" in n for n in with_barn["notes"])
+    assert any("개입 효과가 아니다" in n for n in with_barn["notes"])
+
+    # 3) 이미 상한 위면 여지 0 이고 이유를 말한다
+    good = ip.plan({"weaned": 12.5, "npd": 20.0, "lactation": 20.0,
+                    "gestation": 115.0})
+    assert all(r["여지"] == 0.0 for r in good["rows"])
+    assert all("이미 상한" in (r["왜"] or "") for r in good["rows"])
+    assert good["steps"] == []                    # 지렛대가 없으면 빈 경로
+
+    # 4) 임신기간은 지렛대가 아니다
+    assert "gestation" not in ip.LEVERS
+    assert not any("임신기간" == r["지표"] for r in with_barn["rows"])
+
+    # 경로는 여지 큰 순 + 무엇을 해야 하는지가 붙는다(새 처방을 짓지 않는다)
+    steps = with_barn["steps"]
+    assert steps[0]["지표"] == "비생산일수(연간)"
+    assert steps[0]["PSY 여지"] >= steps[-1]["PSY 여지"]
+    assert "재발" in steps[0]["무엇을"]
+    assert "민감도" in with_barn["note_order"]     # 효과 순서가 아니라고 말한다
+
+
 def test_vision_contract() -> None:
     """영상 모델이 꽂힐 자리 — **모델 없이 배선이 관통하는가.**
 
@@ -5667,7 +5789,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

@@ -24,9 +24,13 @@ from fastapi import APIRouter, HTTPException
 
 import barn_env_control as ec                                  # noqa: E402
 import behavior_baseline as bb                                 # noqa: E402
+import farm_scale as fs                                        # noqa: E402
+import improve_path as ip                                      # noqa: E402
 import mating_plan as mp                                       # noqa: E402
+import perf_formula as pf                                      # noqa: E402
 
-from ..schemas import BaselineIn, EnvIn, MatingIn
+from ..schemas import (BaselineIn, EnvIn, FarmSetup, ImproveIn,
+                       MatingIn, PerfFormulaIn)
 
 router = APIRouter(prefix="/api/ops", tags=["ops"])
 
@@ -102,6 +106,44 @@ def baseline(body: BaselineIn) -> dict:
                        "min_windows": bb.MIN_WINDOWS,
                        "rate_band": list(bb.RATE_BAND)}
     return out
+
+
+@router.post("/scale", summary="등록 규모 검산 — 총사육수·허가면적 대조")
+def scale(body: FarmSetup) -> dict:
+    """**상시모돈과 총사육수는 다른 수다.** 둘과 동별 사육수·자리·허가면적을
+    서로 대보고 어긋나는 곳을 이름으로 말한다. 판정하지 않는다."""
+    return fs.reconcile(body.model_dump())
+
+
+@router.post("/formula", summary="번식 성적 공식 — 입력 변수 → PSY·MSY 등")
+def formula(body: PerfFormulaIn) -> dict:
+    """공식 정의가 정본이다. 비운 입력은 채우지 않고 못 낸 이유로 돌려준다."""
+    d = body.model_dump()
+    return pf.compute(d, head_basis=d.pop("head_basis", "상시모돈"))
+
+
+@router.get("/formula/inputs", summary="공식이 쓰는 입력 변수 명세")
+def formula_inputs() -> dict:
+    """등록 화면이 칸을 만들 때 보는 표 — 이름·단위·범위·쓰는 결과."""
+    return {
+        "inputs": {k: {"label": v[0], "unit": v[1], "min": v[2], "max": v[3]}
+                   for k, v in pf.INPUTS.items()},
+        "uses": {k: list(v) for k, v in pf.USES.items()},
+        "national_fields": fs.NATIONAL_FIELDS,
+    }
+
+
+@router.post("/improve", summary="현재 ↔ 달성 가능 상한 + 개선 경로")
+def improve(body: ImproveIn) -> dict:
+    """상한은 **분포 상위10% 와 돈사 천장 중 작은 쪽**이다.
+
+    개입 효과를 주장하지 않는다 — "그 값이었다면 공식상 이렇게" 까지다.
+    개별 여지를 더하지 않는다(PSY 는 곱셈 항등식).
+    """
+    d = body.model_dump()
+    return ip.plan({k: d[k] for k in ("weaned", "npd", "lactation",
+                                      "gestation") if d.get(k) is not None},
+                   weaned_ceiling=d.get("weaned_ceiling"))
 
 
 @router.get("/guide", summary="환경 지침 상수 — 출처와 함께")

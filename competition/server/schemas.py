@@ -26,6 +26,15 @@ class Barn(BaseModel):
     per: int = Field(..., ge=1, le=9999, description="방당 자리(분만사는 분만틀 수)")
     housing: str = "group"
     area_m2: float | None = Field(None, ge=0, description="방당 면적. 비우면 밀사 판정만 못 한다")
+    # 국가 등록 스키마(농식품부 축사 사육시설내역정보) 대응 칸 — 행정 단위다.
+    # 위 area_m2 는 **방당** 운영 면적이고 아래는 **동 전체** 허가면적이라
+    # 다른 수다. farm_scale 이 둘을 대조한다.
+    head: int | None = Field(None, ge=0, le=200000,
+                             description="이 동의 사육수 (BRD_CO)")
+    permit_area_m2: float | None = Field(
+        None, ge=0, description="축산허가면적, 동 전체 (STKRS_PRMISN_AR)")
+    nonpermit_area_m2: float | None = Field(
+        None, ge=0, description="축산무허가면적, 동 전체 (STKRS_NRT_AR)")
 
 
 class Performance(BaseModel):
@@ -40,7 +49,14 @@ class Performance(BaseModel):
 class FarmSetup(BaseModel):
     """등록 화면(`farm_setup.html`)이 내보내는 JSON 과 같은 모양이다."""
     name: str | None = None
-    n_sows: int | None = Field(None, ge=1, le=20000)
+    n_sows: int | None = Field(None, ge=1, le=20000,
+                               description="**상시모돈** — 번식 모돈만. "
+                                           "배치·용량 계산이 쓰는 수다")
+    n_head_total: int | None = Field(
+        None, ge=1, le=500000,
+        description="**총사육수** — 모돈·자돈·육성·비육·웅돈 전부. 국가 "
+                    "스키마의 BRD_CO 가 이쪽이고 법정 밀도도 이 수로 잰다. "
+                    "n_sows 와 섞지 않는다")
     interval_days: float = Field(21, ge=3.5, le=35)
     lactation_days: float = Field(24, ge=14, le=42)
     pre_farrow_days: float = Field(7, ge=0, le=14)
@@ -154,6 +170,40 @@ class EnvIn(BaseModel):
     guide: dict | None = Field(
         None, description="지침 오버라이드 — temp/rh/nh3/h2s 중 바꿀 것만. "
                           "농장 기준이 다르면 여기로 통째로 바꾼다")
+
+
+class PerfFormulaIn(BaseModel):
+    """번식 성적 공식의 입력 변수. **비운 칸은 비운 채로 간다** — 못 낸
+    결과가 무엇 때문에 못 나왔는지 이름으로 돌아온다."""
+    live_born: float | None = Field(None, ge=4, le=20, description="실산자수 두/복")
+    pre_wean_survival: float | None = Field(None, ge=50, le=100)
+    post_wean_survival: float | None = Field(None, ge=50, le=100)
+    gestation: float | None = Field(None, ge=108, le=120)
+    lactation: float | None = Field(None, ge=14, le=42)
+    npd: float | None = Field(None, ge=0, le=200, description="연간 비생산일수")
+    n_sows: int | None = Field(None, ge=1, le=20000)
+    services: int | None = Field(None, ge=0, le=100000, description="교배복수")
+    farrowings: int | None = Field(None, ge=0, le=100000, description="분만복수")
+    returns_total: int | None = Field(None, ge=0, le=100000)
+    returns_7d: int | None = Field(None, ge=0, le=100000)
+    weaned_total: int | None = Field(None, ge=0, le=1000000)
+    shipped_total: int | None = Field(None, ge=0, le=1000000)
+    head_basis: str = Field("상시모돈", max_length=30,
+                            description="모돈수의 정의. 제공 정의는 "
+                                        "'6개월 전 임신한 모돈수'")
+
+
+class ImproveIn(BaseModel):
+    """현재 성적 + (있으면) 돈사 천장. **비운 칸은 실측 중앙으로 대신하되
+    그 사실이 응답에 남는다** — 지렛대 계산은 있는 값으로만 한다."""
+    weaned: float | None = Field(None, ge=5, le=18, description="복당 이유두수")
+    npd: float | None = Field(None, ge=0, le=200, description="연간 비생산일수")
+    lactation: float | None = Field(None, ge=14, le=42)
+    gestation: float | None = Field(None, ge=108, le=120)
+    weaned_ceiling: float | None = Field(
+        None, ge=5, le=18,
+        description="자돈사 자리가 정하는 복당 이유두수 천장 "
+                    "(capacity_from_rooms.weaned_ceiling). 주면 분포 상한을 깎는다")
 
 
 class BaselineIn(BaseModel):
