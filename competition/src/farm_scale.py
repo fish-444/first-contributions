@@ -42,16 +42,13 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-import growth_flow as gf                                       # noqa: E402
+import legal_density as ld                                     # noqa: E402
 
-# 등록 축사 용도 → 법정 밀도 기준을 가진 성장단계. 번식사(교배·임신·분만·
-# 후보)는 `growth_flow.STAGES` 에 없다 — 그쪽 기준은 자돈~비육 것이라
-# 갖다 붙이면 틀린다. 없는 것은 없다고 말한다.
-DENSITY_STAGE = {
-    "자돈사": "이유자돈",
-    "육성사": "육성돈",
-    "비육사": "비육돈",
-}
+# 법정 면적의 정본은 `legal_density` 다 — 「축산법 시행령」[별표 1] 조문표.
+# 예전에는 자돈~비육만 보고 "번식사는 기준이 없다" 고 적었는데 **틀렸다**:
+# 조문에 웅돈 6.0 · 임신돈 1.4 · 분만돈 3.9 · 종부대기돈 1.4/2.6 ·
+# 후보돈 2.3 이 있다. 그동안 번식사 과밀을 아예 못 잡고 있었다.
+DENSITY_STAGE = dict(ld.BARN_TO_LAW)
 # 국가 스키마 필드명 — 나중에 실데이터가 붙을 때 이 대응표만 보면 된다.
 NATIONAL_FIELDS = {
     "permit_area_m2": "STKRS_PRMISN_AR (축산허가면적)",
@@ -93,20 +90,37 @@ def _barn_checks(b: dict) -> list:
 
 
 def barn_density(b: dict) -> dict | None:
-    """동 하나의 법정 밀도 — **허가면적 기준**. 기준이 없는 용도면 None.
+    """동 하나의 법정 밀도 — **허가면적 기준**. 기준을 못 정하면 이유를 낸다.
 
     운영표의 방당 면적으로 재던 검사와 **다른 질문**이다: 저쪽은 "이 방이
     좁은가", 이쪽은 "허가받은 면적에 이만큼 넣어도 되는가"다. 둘 다 낼 수
     있으면 둘 다 낸다 — 하나로 합치면 어느 쪽이 걸린 건지 모른다.
+
+    사육방식이 갈리는 용도(교배사=종부대기돈, 후보사=후보돈)는 방식을
+    받아야 값이 정해진다. 방식을 모르면 **판정하지 않고 그 사실을 낸다.**
     """
-    stage = DENSITY_STAGE.get(b.get("stage"))
     head, permit = b.get("head"), b.get("permit_area_m2")
-    if not (stage and head and permit):
+    if not (head and permit):
         return None
-    d = gf.density_check(int(head), float(permit), stage)
-    d["기준"] = "허가면적"
-    d["동"] = b.get("name")
-    return d
+    req = ld.for_barn(b.get("stage"), b.get("housing"))
+    if req.get("value") is None:
+        return {"동": b.get("name"), "stage": b.get("stage"),
+                "기준": "허가면적", "regulated": False, "why": req.get("why"),
+                "options": req.get("options")}
+    n, area, need = int(head), float(permit), float(req["value"])
+    per = area / max(1, n)
+    return {"동": b.get("name"), "stage": b.get("stage"), "기준": "허가면적",
+            "regulated": True, "law_stage": req["law_stage"],
+            "housing": req.get("housing"),
+            "n_pigs": n, "area_m2": area,
+            "per_head_m2": round(per, 3), "required_m2": need,
+            "ratio": round(per / need, 2), "overcrowded": per < need,
+            "capacity": int(area // need),
+            "excess": max(0, n - int(area // need)),
+            "source": ld.SOURCE,
+            **({"interpreted": req["interpreted"]} if req.get("interpreted")
+               else {}),
+            **({"note": req["note"]} if req.get("note") else {})}
 
 
 def reconcile(setup: dict) -> dict:
@@ -156,8 +170,11 @@ def reconcile(setup: dict) -> dict:
             "따로 낸다 — 합치면 어느 쪽이 걸렸는지 모른다.",
             "무허가면적은 **적법화 대상일 수 있다**는 표시까지다. 위법이라고 "
             "판정하지 않는다 — 유예·특례는 이 프로그램이 모른다.",
-            "번식사(교배·임신·분만·후보)는 법정 밀도 기준이 자돈~비육 것과 "
-            "달라 밀도를 내지 않는다. 없는 기준을 갖다 붙이지 않는다.",
+            f"법정 면적의 정본은 {ld.SOURCE} 이고 `legal_density` 가 "
+            "들고 있다. 사육방식이 갈리는 용도(종부대기돈·후보돈)는 방식을 "
+            "받아야 값이 정해지고, 조문에 없는 방식은 지어내지 않는다.",
+            "군사 전환의 신규·기존 농가 적용 시기는 별표에 없어 확인하지 "
+            "못했다 — 시기를 단정해 말하지 않는다.",
         ],
     }
 
@@ -173,6 +190,10 @@ def _demo() -> dict:
             {"name": "2동", "stage": "임신사", "rooms": 2, "per": 90,
              "housing": "group", "area_m2": 130.0,
              "head": 170, "permit_area_m2": 200.0, "nonpermit_area_m2": 60.0},
+            # 교배사는 사육방식이 값을 가른다 — 스톨 1.4 vs 군사 2.6
+            {"name": "6동", "stage": "교배사", "rooms": 1, "per": 60,
+             "housing": "group", "area_m2": 100.0,
+             "head": 55, "permit_area_m2": 100.0, "nonpermit_area_m2": 0.0},
             # 사육수가 자리보다 많다 — 위험
             {"name": "5동", "stage": "자돈사", "rooms": 6, "per": 66,
              "housing": "group", "area_m2": 24.0,

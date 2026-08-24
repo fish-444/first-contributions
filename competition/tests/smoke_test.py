@@ -4393,15 +4393,20 @@ def test_farm_scale_and_formula() -> None:
     assert "적법화 대상일 수 있다" in non
     assert "위법" not in non and "불법" not in non
 
-    # 4) 번식사에는 법정 밀도를 지어내지 않는다 — 자돈사만 나온다
-    stages = {d["동"] for d in r["density"]}
-    assert stages == {"5동"}                       # 교배사·임신사는 기준 없음
-    d5 = r["density"][0]
+    # 4) 번식사도 법정 밀도를 판정한다 — 예전엔 "기준 없다"며 통째로 비웠다
+    dens = {d["동"]: d for d in r["density"]}
+    assert {"1동", "2동", "5동", "6동"} <= set(dens)
+    for st in ("교배사", "임신사", "분만사", "후보사"):
+        assert st in fs.DENSITY_STAGE, f"{st} 가 조문 대응에서 빠졌다"
+    d5 = dens["5동"]
     assert d5["기준"] == "허가면적" and d5["overcrowded"]
-    assert "교배사" not in fs.DENSITY_STAGE and "임신사" not in fs.DENSITY_STAGE
-    # 밀도는 growth_flow 를 그대로 부른다 — 재구현 금지
+    # 자돈사 기준은 조문의 20kg 분기 중 **엄한 쪽**(후기 0.3)이다
     import growth_flow as gf
-    assert d5["required_m2"] == gf.density_check(1, 1.0, "이유자돈")["required_m2"]
+    import legal_density as ld
+    assert d5["required_m2"] == ld.TABLE["새끼돼지_후기"] == 0.3
+    # 면적 숫자를 모듈마다 따로 적지 않는다 — growth_flow 도 같은 표를 본다
+    assert gf.density_check(1, 1.0, "이유자돈")["required_m2"] == d5["required_m2"]
+    assert gf.density_check(1, 1.0, "비육돈")["required_m2"] == ld.TABLE["비육돈"]
 
     # 5) 공식 — 비운 입력은 채우지 않고 이름으로 답한다
     out = pf.compute(pf._demo())
@@ -4480,6 +4485,79 @@ def test_improve_path() -> None:
     assert steps[0]["PSY 여지"] >= steps[-1]["PSY 여지"]
     assert "재발" in steps[0]["무엇을"]
     assert "민감도" in with_barn["note_order"]     # 효과 순서가 아니라고 말한다
+
+
+def test_legal_density() -> None:
+    """법정 면적 — **조문표를 한 칸 밀려 읽지 않았는가.**
+
+    「축산법 시행령」[별표 1] 돼지 표는 2차 정리본에서 열이 밀려 "임신돈
+    1.4/2.6, 후보돈 0.2" 로 도는 오독이 흔하다. 원문 PDF 의 셀 x좌표로
+    확정한 값을 여기 고정한다. 지키는 것 다섯: (1) 조문값 그대로인가,
+    (2) 사육방식이 갈리는 항목만 방식을 요구하는가, (3) 조문에 없는
+    방식 값을 지어내지 않는가, (4) 번식사 밀도가 실제로 판정되는가
+    (예전엔 '기준이 없다'며 통째로 비웠다), (5) 화면과 모듈이 같은 표를
+    쓰는가.
+    """
+    import re
+
+    import farm_scale as fs
+    import legal_density as ld
+
+    # 1) 조문값 — 오독본과 갈리는 자리를 콕 집어 고정한다
+    assert ld.TABLE["웅돈"] == 6.0
+    assert ld.TABLE["임신돈"] == 1.4          # 단일값 — 군사 기준 없음
+    assert ld.TABLE["분만돈"] == 3.9
+    assert ld.TABLE["종부대기돈"] == {"stall": 1.4, "group": 2.6}
+    assert ld.TABLE["후보돈"] == {"group": 2.3}
+    assert ld.TABLE["새끼돼지_초기"] == 0.2 and ld.TABLE["새끼돼지_후기"] == 0.3
+    assert ld.TABLE["육성돈"] == 0.45 and ld.TABLE["비육돈"] == 0.8
+    # 오독본의 두 값이 그대로 들어와 있지 않은가
+    assert ld.TABLE["임신돈"] != {"stall": 1.4, "group": 2.6}
+    assert ld.TABLE["후보돈"] != 0.2
+    assert "2025. 3. 25" in ld.SOURCE and "별표 1" in ld.SOURCE
+
+    # 2)+3) 방식이 갈리는 항목만 방식을 묻고, 없는 방식은 지어내지 않는다
+    assert ld.required_m2("분만돈")["value"] == 3.9         # 방식 무관
+    assert ld.required_m2("분만돈", "crate")["value"] == 3.9
+    r = ld.required_m2("종부대기돈")
+    assert r["value"] is None and "사육방식마다" in r["why"]
+    assert ld.required_m2("종부대기돈", "stall")["value"] == 1.4
+    assert ld.required_m2("종부대기돈", "group")["value"] == 2.6
+    r = ld.required_m2("후보돈", "stall")                    # 조문에 없다
+    assert r["value"] is None and "지어내지 않는다" in r["why"]
+    assert ld.required_m2("없는단계")["value"] is None
+
+    # 교배사→종부대기돈 대응은 **우리 해석**이라 밝힌다
+    assert ld.for_barn("교배사", "group")["interpreted"]
+    assert "interpreted" not in ld.for_barn("임신사")
+    # 분만사는 젖뗀 마릿수 기준이라는 조문 비고를 달고 다닌다
+    assert "젖 뗀" in ld.for_barn("분만사")["note"]
+
+    # 4) 번식사 밀도가 실제로 판정된다 — 예전 결함의 회귀 방지
+    dens = {d["동"]: d for d in fs.reconcile(fs._demo())["density"]}
+    assert "2동" in dens, "임신사 밀도가 판정되지 않았다(예전 결함 재발)"
+    assert dens["2동"]["required_m2"] == 1.4 and dens["2동"]["overcrowded"]
+    assert dens["2동"]["law_stage"] == "임신돈"
+    # 같은 교배사라도 사육방식이 기준을 가른다
+    assert dens["1동"]["required_m2"] == 1.4       # 스톨
+    assert dens["6동"]["required_m2"] == 2.6       # 군사
+    assert all("별표 1" in d.get("source", "") for d in dens.values())
+    # 방식을 모르면 판정하지 않고 이유를 낸다
+    unk = fs.barn_density({"name": "X", "stage": "후보사", "housing": "stall",
+                           "head": 10, "permit_area_m2": 50.0})
+    assert unk["regulated"] is False and "지어내지 않는다" in unk["why"]
+
+    # 5) 화면이 같은 표를 쓴다 — 숫자를 따로 적지 않았는가
+    html = open(os.path.join(ROOT, "dashboard", "farm_setup.html"),
+                encoding="utf-8").read()
+    assert ld.SOURCE in html, "화면이 출처를 제 문구로 다시 적었다"
+    assert "종부대기돈" in html and "legalNeed" in html
+    # 조문이 가르지 않는 용도까지 방식을 요구하면 분만틀이 빠진다 — 그 회귀
+    import json as _json
+    m = re.search(r'"by_housing":\s*(\{.*?\})\s*,\s*"source"', html, re.S)
+    assert m, "화면에 by_housing 주입이 없다"
+    by_h = _json.loads(m.group(1))
+    assert set(by_h) == {"교배사", "후보사"}, by_h
 
 
 def test_vision_contract() -> None:
@@ -5789,7 +5867,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

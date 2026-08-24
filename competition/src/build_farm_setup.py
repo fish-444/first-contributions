@@ -59,7 +59,8 @@ SEASON = os.path.join(ROOT, "data", "farm_monthly_panel.json")
 # 여기서 새 낱말을 만들면 등록 화면과 코드가 갈라진다.
 import farm_registry as fr                                    # noqa: E402
 import batch_flow as bf                                       # noqa: E402
-import growth_flow as gf                                      # noqa: E402
+import growth_flow as gf
+import legal_density as ld                                      # noqa: E402
 import repro_calendar as rc                                   # noqa: E402
 import farm_economics as fe                                   # noqa: E402
 
@@ -225,7 +226,19 @@ def build() -> str:
                    "margin": fe.margin_per_pig()["margin"],
                    "mort": {b: gf.MORTALITY[n]
                             for n, _a0, _a1, _w0, _w1, b, a in gf.STAGES if a}},
-           "cycle_base": d["gestation"] + d["lactation"] + d["wean_to_service"]}
+           "cycle_base": d["gestation"] + d["lactation"] + d["wean_to_service"],
+           # 법정 면적의 정본은 legal_density(축산법 시행령 별표1)다.
+           # 화면이 숫자를 따로 적으면 개정 때 한쪽만 낡는다.
+           "legal": {"table": {st: ld.for_barn(st) for st in fr.BARN_STAGES},
+                     # **조문이 실제로 사육방식으로 가르는 용도만** 넣는다.
+                     # 전부 넣으면 분만사(3.9 단일값)까지 방식을 요구해서
+                     # 분만틀·일반 돈방이 "기준 없음" 으로 빠진다.
+                     "by_housing": {
+                         st: dict(ld.TABLE[law])
+                         for st, law in ld.BARN_TO_LAW.items()
+                         if isinstance(ld.TABLE.get(law), dict)},
+                     "source": ld.SOURCE, "amended": ld.AMENDED,
+                     "interpreted": sorted(ld.INTERPRETED)}}
 
     stage_desc = "".join(
         f'<div class="bnrow"><b>{s}</b><span class="cnt">{fr.BARN_STAGES[s]}</span></div>'
@@ -518,9 +531,26 @@ function opts(list, sel) {{
   }}).join("");
 }}
 
-// 법정 두당면적 — growth_flow.STAGES 에서 온다. 번식사는 시행령에 두당
-// 면적 기준이 없어 판정하지 않는다(빈칸으로 둔다).
-const LEGAL = Object.fromEntries(CFG.down.map(s => [s.stage, s.area]));
+// 법정 두당면적 — **「축산법 시행령」[별표 1] 조문표**가 정본이고
+// legal_density 에서 주입된다. 예전에는 자돈~비육만 보고 "번식사는 기준이
+// 없다" 고 적었는데 틀렸다: 조문에 임신돈 1.4 · 분만돈 3.9 · 종부대기돈
+// 1.4(스톨)/2.6(군사) · 후보돈 2.3(군사) 이 있다.
+const LEGAL_ONE = Object.fromEntries(
+  Object.entries(CFG.legal.table).map(([k, v]) => [k, v.value]));
+const LEGAL_BY_HOUSING = CFG.legal.by_housing;
+function legalNeed(b) {{
+  // 사육방식이 값을 가르는 용도(교배사·후보사)는 방식을 봐야 정해진다.
+  const byH = LEGAL_BY_HOUSING[b.stage] || {{}};
+  if (Object.keys(byH).length) {{
+    return byH[b.housing] !== undefined
+      ? {{need: byH[b.housing], why: null}}
+      : {{need: null,
+          why: `조문에 이 사육방식의 기준이 없습니다 (${{Object.entries(byH)
+                 .map(([h, v]) => (h === "stall" ? "스톨" : "군사") + " " + v)
+                 .join(" · ")}})`}};
+  }}
+  return {{need: LEGAL_ONE[b.stage] ?? null, why: null}};
+}}
 
 // 시뮬레이터 방 소요 — 하위 단계마다 방을 따로 쓴다.
 // 자돈사는 전기·후기로 나뉘어 46일 한 구간으로 잡을 때보다 방이 더 든다.
@@ -533,7 +563,8 @@ function simRooms(iv, wash) {{
 }}
 
 function density(b) {{
-  const need = LEGAL[b.stage];
+  const {{need, why}} = legalNeed(b);
+  if (why) return {{tag: "skip", txt: why}};
   if (!need) return {{tag: "", txt: "—"}};
   if (!b.area) return {{tag: "skip", txt: "면적 미입력"}};
   const per = b.area / Math.max(1, b.per);
