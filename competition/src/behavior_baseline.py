@@ -51,6 +51,8 @@ import os
 import sys
 from dataclasses import dataclass, field
 
+import math
+
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -85,6 +87,9 @@ HEAD_EXTRA = {
 # 0 으로 채우면 추적기가 꺼진 창이 z≈-7 로 계산돼 허위 질병 경보가
 # 난다 — 리뷰가 실행으로 확인한 결함이라 여기 선을 긋는다.
 CHANNEL_KEYS = ("activity_px", "resp_bpm")
+# 창의 **분모**. 구성비와 나란히 실려 오지만 클래스가 아니라서 기준선을
+# 만들 때도 편차를 낼 때도 빠진다. 밑줄로 시작하는 키는 전부 메타로 본다.
+COUNT_KEY = "_n_used"
 
 MIN_WINDOWS = 12          # 기준선을 만들 최소 창 수 — 미달이면 만들지 않는다
 RATE_BAND = (0.005, 0.05)  # 목표 경보율 대역. 컷은 여기서 역산한다
@@ -112,6 +117,7 @@ class Baseline:
     spread: dict = field(default_factory=dict)   # {class: IQR/1.349}
     cuts: dict = field(default_factory=dict)     # {head: 경보 컷 z}
     n_windows: int = 0
+    n_typical: int | None = None   # 이력 창의 median 유효 검출 수 — 분모의 기준
 
     @property
     def formed(self) -> bool:
@@ -159,9 +165,11 @@ def fit(history: list, key: str, classes: tuple | None = None) -> Baseline:
     if classes is None:
         seen: set = set()
         for h in history:
-            seen |= set(h)
+            seen |= {k for k in h if not k.startswith("_")}
         classes = tuple(sorted(seen))
-    b = Baseline(key=key, classes=tuple(classes), n_windows=len(history))
+    ns = [int(h[COUNT_KEY]) for h in history if h.get(COUNT_KEY)]
+    b = Baseline(key=key, classes=tuple(classes), n_windows=len(history),
+                 n_typical=int(np.median(ns)) if ns else None)
     if not b.formed:
         return b
     for c in b.classes:
@@ -202,8 +210,46 @@ def _calibrate_cut(scores: np.ndarray, band: tuple = RATE_BAND) -> float | None:
     return best
 
 
+def measurable(baseline: Baseline, probs: dict, n_used: int | None,
+               head: str) -> str | None:
+    """이 창의 분모로 이 헤드를 **잴 수 있는가.** 못 재면 이유를 낸다.
+
+    구성비는 유한한 검출에서 나온 비율이라 오차가 있다. 창이 평소
+    (`n_typical`, 이력 창의 중앙값)보다 얇을 때 **늘어나는** 표본 분산이
+    그 방 기준선 산포(IQR/1.349)를 넘으면, 그 창은 기준선과 대볼 해상도가
+    없다 — 편차 z 는 그래도 숫자가 나오지만 그건 표본 잡음을 잰 것이다.
+
+    **문턱을 지어내지 않았다** — 하한이 방마다 자기 산포·자기 평소 두께에서
+    나온다. 검출 300개인 창과 3개인 창을 같은 무게로 넣던 것이 이 층의
+    구멍이었고, 미측정 채널을 0 으로 채워 z≈−7.4 를 만들던 결함과 같은
+    계열이다.
+    """
+    if n_used is None or baseline.n_typical is None:
+        return None                     # 분모를 모르면 검사하지 않는다
+    if n_used <= 0:
+        return "유효 검출 0개 — 이 창은 구성비 자체가 없다"
+    ntyp = baseline.n_typical
+    if n_used >= ntyp:
+        return None                     # 평소만큼 두꺼우면 물어볼 것이 없다
+    for c in HEAD_SIGNS[head]:
+        sd = baseline.spread.get(c)
+        p = baseline.center.get(c)
+        if sd is None or p is None:
+            continue
+        # **기준선의 p 에서 잰다.** 이 창의 p 로 재면 구성비가 옮겨 간 창
+        # (=신호가 있는 창)일수록 SE 가 커져서, 잡으려던 것과 정반대로
+        # 진짜 이탈을 먼저 막는다. 처음 짤 때 그렇게 짰다가 시연에서
+        # 평시 두께(300개) 창까지 막히는 걸 보고 고쳤다.
+        extra = max(p * (1.0 - p), 0.0) * (1.0 / n_used - 1.0 / ntyp)
+        if extra > sd * sd:
+            return (f"유효 검출 {n_used}개 — 평소 {ntyp}개보다 얇아서 못 "
+                    f"잰다. {c} 에서 늘어난 표본 잡음 {math.sqrt(extra):.3f} "
+                    f"가 이 방 기준선 산포 {sd:.3f} 를 넘는다")
+    return None
+
+
 def assess(baseline: Baseline, probs: dict, recent: list | None = None,
-           heads: tuple | None = None) -> dict:
+           heads: tuple | None = None, n_used: int | None = None) -> dict:
     """현재 창 하나를 기준선에 대본다.
 
     `recent` 는 직전 창들의 구성비(질병처럼 연속을 요구하는 헤드용).
@@ -226,6 +272,9 @@ def assess(baseline: Baseline, probs: dict, recent: list | None = None,
         if heads is not None and head not in heads:
             continue
         score = baseline.head_score(probs, head)
+        unmeasurable = measurable(baseline, probs, n_used, head)
+        if unmeasurable:
+            score = None                # 못 재는 창은 점수를 내지 않는다
         cut = baseline.cuts.get(head)
         need = SUSTAIN[head]
         streak = 1 if (cut is not None and score is not None
@@ -243,8 +292,10 @@ def assess(baseline: Baseline, probs: dict, recent: list | None = None,
                          and score >= cut),
             "alert": bool(cut is not None and streak >= need),
             "sustain": need, "streak": streak,
+            "n_used": n_used,
             "why": (None if (cut is not None and score is not None) else
-                    ("기준선 어휘에 이 헤드의 신호 행동이 없다 — 경보 불가"
+                    (unmeasurable if unmeasurable else
+                     "기준선 어휘에 이 헤드의 신호 행동이 없다 — 경보 불가"
                      if score is None else
                      "이력 산포가 없어 컷을 못 만든다 — 경보 불가")),
         }
@@ -262,6 +313,8 @@ def summarize(folded: list) -> dict:
         o = r["obs"] if isinstance(r, dict) else r
         key = f"{o.barn}/{o.pen}"
         entry = dict(o.probs)
+        if isinstance(r, dict) and r.get("n_used") is not None:
+            entry[COUNT_KEY] = int(r["n_used"])   # 분모 — 클래스가 아니다
         # 채널은 구성비(합 1)가 아니라 **따로 온 신호**라 키를 나란히 얹는다.
         # 편차(z)는 무차원이라 스케일이 달라도 섞인다. 0/None 은 "안 쟀다"다.
         if getattr(o, "activity_px", 0.0):
@@ -282,9 +335,21 @@ def main() -> int:
         tot = sum(raw.values())
         return {k: v / tot for k, v in raw.items()}
 
-    # 평시 3주(하루 2창) — 잡음만
-    hist = [window(0.60 + rng.normal(0, .03), 0.25 + rng.normal(0, .03),
-                   0.10 + rng.normal(0, .02)) for _ in range(42)]
+    # 평시 3주(하루 2창) — 잡음만. **창마다 유한한 검출에서 뽑는다.**
+    # 예전 시연은 구성비를 바로 만들어서 표본 잡음이 0 이었고, 그러면
+    # 기준선 산포가 실제보다 좁게 나와 어떤 창이 '못 잴 만큼 얇은지'를
+    # 물어볼 수가 없다. 현장의 창은 늘 유한한 검출에서 나온다.
+    N_TYPICAL = 300
+
+    def sample(probs, n):
+        c = rng.multinomial(n, [probs[k] for k in classes])
+        out = {k: v / n for k, v in zip(classes, c)}
+        out[COUNT_KEY] = n
+        return out
+
+    hist = [sample(window(0.60 + rng.normal(0, .03), 0.25 + rng.normal(0, .03),
+                          0.10 + rng.normal(0, .02)), N_TYPICAL)
+            for _ in range(42)]
     b = fit(hist, "3동/2방", classes)
 
     print("=" * 72)

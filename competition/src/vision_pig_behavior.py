@@ -60,7 +60,7 @@ HOLDOUT_NOTE = ("bbox mAP 0.205 · 처음 보는 200장(AI Hub 622 ts06). "
 
 def fold(dets_by_time: list, camera_id: str, barn: str, pen: str,
          model: str, activity_px: float = 0.0,
-         resp_bpm: float | None = None) -> list:
+         resp_bpm: float | None = None, min_score: float | None = None) -> list:
     """프레임별 검출 → 시간창 하나의 `BehaviorObs` (방 단위).
 
     `dets_by_time` 은 `[(iso시각, [Detection, ...]), ...]`.
@@ -73,18 +73,28 @@ def fold(dets_by_time: list, camera_id: str, barn: str, pen: str,
       헤드가 근거 없는 수를 먹는다.
     - 분포는 점수 가중 구성비다. "이 시간창에 이 방의 행동이 어떻게
       구성돼 있었나"이지 개체 하나의 상태가 아니다.
+    - **분모를 같이 낸다.** 검출 3개인 창과 300개인 창의 구성비가 같은
+      무게로 기준선에 들어가면 안 된다. `n_used` 가 그 분모이고, 뒷단
+      (`behavior_baseline`)이 이 수로 "못 잰 창"을 가른다.
+    - `min_score` 는 **거절 옵션**이다. 준 값 미만인 검출은 구성비에서
+      빼고 `n_low` 로 센다. **기본값은 없다** — 문턱을 여기서 지어내지
+      않는다. 보정된 하한을 가진 호출자만 넘긴다.
     """
     if not dets_by_time:
         return []
     t0, t1 = dets_by_time[0][0], dets_by_time[-1][0]
     weight: dict = defaultdict(float)
-    n_all = n_used = 0
+    n_all = n_used = n_low = 0
     for _t, dets in dets_by_time:
         for d in dets:
             n_all += 1
-            if d.label in RELIABLE_CLASSES:
-                weight[d.label] += float(d.score)
-                n_used += 1
+            if d.label not in RELIABLE_CLASSES:
+                continue
+            if min_score is not None and float(d.score) < min_score:
+                n_low += 1                  # 거절 — 세되 구성비에 안 넣는다
+                continue
+            weight[d.label] += float(d.score)
+            n_used += 1
     tot = sum(weight.values())
     probs = ({k: round(v / tot, 4) for k, v in weight.items()} if tot else {})
     obs = vc.BehaviorObs(camera_id=camera_id, barn=barn, pen=pen,
@@ -94,7 +104,10 @@ def fold(dets_by_time: list, camera_id: str, barn: str, pen: str,
                          model=model)
     # BehaviorObs 는 frozen dataclass 라 부가정보는 따로 낸다
     return [{"obs": obs, "n_detections": n_all, "n_used": n_used,
-             "n_dropped": n_all - n_used}]
+             "n_dropped": n_all - n_used, "n_low": n_low,
+             # 분류된 비율. 이걸 안 내면 "구성비는 나왔는데 대부분 버렸다"를
+             # 읽는 쪽이 알 수 없다.
+             "coverage": round(n_used / n_all, 4) if n_all else 0.0}]
 
 
 class PigBehaviorModel:

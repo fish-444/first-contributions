@@ -3190,6 +3190,85 @@ def test_setup_screen_matches_module() -> None:
         assert not errs, errs
 
 
+def test_window_denominator_gate() -> None:
+    """분모 없는 구성비 — **검출 3개짜리 창이 300개짜리와 같은 무게인가.**
+
+    구성비만 보고 분모를 안 보면, 추적기가 거의 못 잡은 창이 평시 창과
+    나란히 기준선에 들어가고 그 위에서 경보가 난다. 미측정 채널을 0 으로
+    채워 z≈−7.4 를 만들던 결함과 같은 계열이다.
+
+    지키는 것 다섯: (1) fold 가 분모와 커버리지를 내는가, (2) 거절 옵션이
+    낮은 확신을 실제로 빼는가, (3) 문턱을 지어내지 않았는가(방마다 자기
+    이력에서 나오는가), (4) **게이트가 창의 구성비에 좌우되지 않는가** —
+    이게 핵심이다. 이 창의 p 로 오차를 재면 이탈이 큰 창일수록 먼저
+    막혀서 잡으려던 것과 정반대가 된다. (5) 평소 두께면 통과하는가.
+    """
+    import numpy as np
+
+    import behavior_baseline as bb
+    import vision_pig_behavior as vpb
+    from pig_behavior.predictor import Detection
+
+    # 1)+2) fold — 분모·커버리지, 그리고 거절 옵션
+    dets = [Detection(label="Resting", score=0.9, bbox=(0, 0, 1, 1)),
+            Detection(label="Walking", score=0.2, bbox=(0, 0, 1, 1)),
+            Detection(label="Scrubbing", score=0.9, bbox=(0, 0, 1, 1))]
+    r = vpb.fold([("t0", dets)], "cam", "3동", "2방", model="t")[0]
+    assert r["n_used"] == 2 and r["n_dropped"] == 1      # 계약 밖은 원래 뺀다
+    assert r["coverage"] == round(2 / 3, 4) and r["n_low"] == 0
+    r2 = vpb.fold([("t0", dets)], "cam", "3동", "2방", model="t",
+                  min_score=0.5)[0]
+    assert r2["n_used"] == 1 and r2["n_low"] == 1, "거절 옵션이 안 걸렀다"
+    assert "Walking" not in r2["obs"].probs
+
+    # 기준선 — 유한한 검출에서 뽑은 창들로 만든다(실제가 그렇다)
+    rng = np.random.default_rng(7)
+    cl = ("Searching", "Resting", "Walking", "Eating")
+
+    def win(rest, eat, walk, n):
+        raw = {"Resting": rest, "Eating": eat, "Walking": walk,
+               "Searching": max(0.0, 1 - rest - eat - walk)}
+        tot = sum(raw.values())
+        p = [raw[k] / tot for k in cl]
+        d = {k: v / n for k, v in zip(cl, rng.multinomial(n, p))}
+        d[bb.COUNT_KEY] = n
+        return d
+
+    hist = [win(0.60 + rng.normal(0, .03), 0.25 + rng.normal(0, .03),
+                0.10 + rng.normal(0, .02), 300) for _ in range(42)]
+    b = bb.fit(hist, "3동/2방", cl)
+    assert b.n_typical == 300
+    assert bb.COUNT_KEY not in b.classes, "분모가 클래스로 새어 들어갔다"
+
+    quiet = {k: v for k, v in win(0.61, 0.24, 0.10, 300).items()
+             if k != bb.COUNT_KEY}
+    suspect = {k: v for k, v in win(0.40, 0.14, 0.30, 300).items()
+               if k != bb.COUNT_KEY}
+
+    # 3) 문턱은 방의 자기 이력에서 나온다 — 상수로 박혀 있지 않다
+    src = open(os.path.join(ROOT, "src", "behavior_baseline.py"),
+               encoding="utf-8").read()
+    assert "n_typical" in src and "지어내지" in src
+
+    # 4) **게이트는 분모만 본다** — 같은 분모면 평시든 의심이든 같은 판정
+    for n in (300, 60):
+        wq = bb.measurable(b, quiet, n, "estrus")
+        ws = bb.measurable(b, suspect, n, "estrus")
+        assert (wq is None) == (ws is None), (
+            f"n={n} 에서 게이트가 구성비에 좌우된다 — 이탈이 큰 창을 "
+            f"먼저 막는다 (평시 {wq!r} vs 의심 {ws!r})")
+
+    # 5) 평소 두께면 통과하고 경보가 산다 · 얇으면 점수를 안 낸다
+    ok = bb.assess(b, suspect, heads=("estrus",), n_used=300)["heads"]["estrus"]
+    assert ok["score"] is not None and ok["alert"], ok
+    thin = bb.assess(b, suspect, heads=("estrus",), n_used=15)["heads"]["estrus"]
+    assert thin["score"] is None and not thin["alert"]
+    assert "얇아서 못 잰다" in thin["why"] and thin["n_used"] == 15
+    # 분모를 안 넘긴 옛 호출은 예전대로 — 검사를 조용히 켜지 않는다
+    old = bb.assess(b, suspect, heads=("estrus",))["heads"]["estrus"]
+    assert old["score"] is not None
+
+
 def test_behavior_vocab_merge() -> None:
     """어휘 축소 — **병합표가 등록한 그대로인가.**
 
@@ -4054,8 +4133,11 @@ def test_behavior_baseline() -> None:
                      "c", "동", "방", model="t", activity_px=7.5, resp_bpm=41.0)
     ent = bb.summarize([fr])["동/방"][0]
     assert ent["activity_px"] == 7.5 and ent["resp_bpm"] == 41.0
+    # 분모(_n_used)도 구성비가 아니다 — 밑줄 키는 전부 메타다
+    assert ent[bb.COUNT_KEY] == 1
     assert abs(sum(v for k, v in ent.items()
-                   if k not in ("activity_px", "resp_bpm")) - 1.0) < 1e-6
+                   if k not in ("activity_px", "resp_bpm")
+                   and not k.startswith("_")) - 1.0) < 1e-6
 
     # 한계 신고 고정 — 등가중임을, 판정이 아니라 의심임을 응답이 스스로 말한다
     assert "등가중" in a1["weights"] and a1["grade"] == "계산"
@@ -6061,7 +6143,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
