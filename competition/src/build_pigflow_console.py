@@ -124,7 +124,7 @@ def gantt_svg(sim, houses, days=126, width=900) -> str:
         p.append(f'<line x1="{x:.1f}" y1="{top - 6}" x2="{x:.1f}" '
                  f'y2="{h - 22}" stroke="var(--border)" stroke-width="1"/>'
                  f'<text x="{x + 3:.1f}" y="{top - 10}" class="tk">'
-                 f'{d:%-m월}</text>')
+                 f'{d.month}월</text>')
         d = nxt
     y = top
     for r in rooms:

@@ -2170,8 +2170,19 @@ def test_kaggle_notebooks() -> None:
     ptxt = "".join("".join(c["source"]) for c in post["cells"])
     # **밟기 쉬운 함정 둘이 실제로 막혀 있는가.**
     assert "drop_duplicates" in ptxt, "train1/train2 중복 제거가 없다"
-    assert "flip" not in ptxt.lower() and "hflip" not in ptxt.lower(), \
-        "좌우 뒤집기 증강 — 좌횡와를 뒤집으면 라벨이 바뀐다"
+    # 뒤집기는 **금지가 아니라 짝 조건**이다(등록 3 의 B). 그냥 뒤집으면
+    # 좌횡와가 우횡와가 되어 정답이 거짓이 되지만, 뒤집은 표본의 좌↔우
+    # 라벨을 같이 바꾸면 올바른 증강이다. 그래서 검사할 것은 "뒤집기가
+    # 없는가" 가 아니라 **"뒤집기에 라벨 교환이 붙어 있는가"** 다.
+    if "flip" in ptxt.lower():
+        assert "swap=(LEFT, RIGHT)" in ptxt, \
+            "좌우 뒤집기에 좌↔우 라벨 교환이 짝지어져 있지 않다"
+        assert "torch.flip" in ptxt and "isL, isR" in ptxt, \
+            "라벨 교환이 실제 코드로 구현돼 있지 않다"
+        # cls3 는 좌/우가 둘 다 '횡와' 로 접혀 교환의 영향을 받지 않아야 한다
+        assert ('"Lateral_lying_left": "lying"' in ptxt
+                and '"Lateral_lying_right": "lying"' in ptxt), \
+            "TO3 가 좌/우를 같은 '횡와' 로 접지 않는다 — 교환이 cls3 를 흔든다"
     assert str(bkn.CEILING) in ptxt, "원리적 상한이 노트북에 없다"
     # 상한·MIN_FOLD 가 다른 곳과 어긋나면 안 된다
     import train_posture_cnn as tpc
@@ -5841,13 +5852,48 @@ def test_pigflow_package() -> None:
         failed[:3])
 
 
+def test_bio_baseline_thresholds() -> None:
+    """평균 0 기준표의 문턱이 살아 있는가 — 죽은 문턱을 커밋으로 막는다.
+
+    전 필드에 3σ 를 일괄로 물렸을 때 back_temp 는 0건(발화 불가),
+    latent_heat 는 10.2%(알림 과다)로 문턱이 죽어 있었다. 필드마다 z 를
+    조정하도록 고쳤으므로, 어느 필드든 FLAG_BAND 밖으로 나가면 실패시킨다.
+    """
+    import bio_baseline_71763 as bb
+    import parse_aihub
+    import tempfile
+    tmp = tempfile.mkdtemp()
+    parse_aihub.generate_synthetic_71763(tmp, n=4000)
+    clips = parse_aihub.aggregate_71763_clips(parse_aihub.parse_71763(tmp))
+    clips = clips[clips["modality"] == "호흡량"]
+    assert len(clips) >= 30, f"합성 호흡량 클립 부족: {len(clips)}"
+
+    b = bb.build_baseline(clips)
+    assert not b.empty, "기준표가 비었다"
+    lo, hi = bb.FLAG_BAND
+    dead = b[b["usable"] != "쓸만함"]
+    assert dead.empty, (
+        "문턱이 죽은 필드: "
+        + ", ".join(f"{r.field}({r.flagged_pct}%, {r.usable})"
+                    for r in dead.itertuples()))
+    assert (b["flagged_pct"].between(lo, hi)).all(), b[
+        ["field", "z", "flagged_pct"]].to_string()
+
+    # 분산분해는 제곱합으로 갈라야 두 열의 합이 100 이 된다.
+    v = bb.variance_split(clips)
+    if not v.empty:
+        tot = v["within_pct"] + v["between_pct"]
+        assert (tot.sub(100).abs() <= 1).all(), v.to_string()
+
+
 def rc_date(x):
     import repro_calendar as rc
     return rc._d(x)
 
 
 def main() -> int:
-    tests = [test_dependencies_import, test_aihub_client_no_key,
+    tests = [test_bio_baseline_thresholds,
+             test_dependencies_import, test_aihub_client_no_key,
              test_pipeline_runs, test_aihub_parsers,
              test_pipeline_gilt_integration, test_estrus_onset_and_dashboard,
              test_edinburgh_parser, test_posture_eval_mapping,
