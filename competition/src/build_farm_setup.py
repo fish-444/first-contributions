@@ -61,6 +61,7 @@ import farm_registry as fr                                    # noqa: E402
 import batch_flow as bf                                       # noqa: E402
 import growth_flow as gf
 import legal_density as ld                                      # noqa: E402
+import farm_scale as fsc                                        # noqa: E402
 import repro_calendar as rc                                   # noqa: E402
 import farm_economics as fe                                   # noqa: E402
 
@@ -238,7 +239,12 @@ def build() -> str:
                          for st, law in ld.BARN_TO_LAW.items()
                          if isinstance(ld.TABLE.get(law), dict)},
                      "source": ld.SOURCE, "amended": ld.AMENDED,
-                     "interpreted": sorted(ld.INTERPRETED)}}
+                     "interpreted": sorted(ld.INTERPRETED)},
+           # 행정 등록 칸 — 검산 식은 farm_scale 이 정본이다. 허용 오차를
+           # 화면이 따로 적으면 한쪽만 바뀐다(통로·벽 두께로 늘 조금 어긋나
+           # 이 값이 검사의 민감도를 정한다).
+           "admin": {"area_tol": fsc.AREA_TOL,
+                     "fields": fsc.NATIONAL_FIELDS}}
 
     stage_desc = "".join(
         f'<div class="bnrow"><b>{s}</b><span class="cnt">{fr.BARN_STAGES[s]}</span></div>'
@@ -349,6 +355,9 @@ color:var(--accent);text-decoration:none}}
     <input id="f_sows" type="number" min="1" max="20000" value="300"><div class="hint" id="h_sows"></div></div>
   <div><label>후보돈 <span class="u">두 · 모르면 비움</span></label>
     <input id="f_gilts" type="number" min="0" max="5000" placeholder=""><div class="hint"></div></div>
+  <div><label>총사육수 <span class="u">두 · 모돈 포함 전 두수</span></label>
+    <input id="f_total" type="number" min="0" max="200000" placeholder="모르면 비움">
+    <div class="hint" id="h_total">상시모돈과 <b>다른 수</b>입니다 — 자돈·육성·비육·웅돈까지 셉니다</div></div>
   <div><label>농장 형태</label>
     <select id="f_site">{_opts([(v, t) for v, t, _ in SITE_TYPES])}</select>
     <div class="hint" id="h_site"></div></div>
@@ -393,6 +402,31 @@ color:var(--accent);text-decoration:none}}
 구간과 1:1 입니다.</div>
 <div style="margin-top:8px">{stage_desc}</div>
 </div>
+
+<h2>4. 행정 등록 — 국가 스키마에 맞춰 적는 칸</h2>
+<div class="h2d">위 표는 <b>운영 단위</b>(방 수·방당 자리·방당 면적)이고, 이 표는
+<b>행정 단위</b>(동 전체의 사육수·허가면적)입니다. 둘 다 있어야 검산이 됩니다 —
+운영표는 “이 방이 좁은가”, 이 표는 “<b>허가받은 면적에 이만큼 넣어도 되는가</b>”를
+묻습니다. 칸 이름은 농림축산식품부 축사 사육시설내역정보(데이터번호 15151091)와
+1:1 입니다.</div>
+<div class="card">
+<table><thead><tr><th>동 이름</th><th>용도</th>
+<th>사육수<span class="u"> BRD_CO</span></th>
+<th>허가면적<span class="u"> ㎡ · STKRS_PRMISN_AR</span></th>
+<th>무허가면적<span class="u"> ㎡ · STKRS_NRT_AR</span></th>
+<th>두당 면적<span class="u"> 허가 기준</span></th></tr></thead>
+<tbody id="admin"></tbody></table>
+<div class="note"><b>비워도 됩니다</b> — 비운 칸은 검사하지 않습니다.
+사육수를 자리 수에서, 허가면적을 방당 면적에서 되돌려 채우지 않습니다.
+역산한 값은 정의상 기준에 딱 맞아서 <b>어떤 농장도 안 걸립니다.</b></div>
+<div class="note" style="margin-top:6px">무허가면적이 있으면 <b>적법화 대상일
+수 있다</b>는 표시까지만 합니다 — 위법이라고 판정하지 않습니다. 유예·특례는
+이 프로그램이 모릅니다. 법정 면적은 <code>legal_density</code>
+(「축산법 시행령」[별표 1])가 정본이고 검산은 <code>farm_scale.reconcile</code>
+과 같은 식입니다.</div>
+<div id="admin_checks"></div>
+</div>
+
 <div id="cap"></div>
 <div id="top"></div>
 <div id="checks"></div>
@@ -400,7 +434,7 @@ color:var(--accent);text-decoration:none}}
 <div class="h2d" style="margin:4px 0 8px">등록한 사육 방식에서 따라 나옵니다.</div>
 <div id="routes"></div></div>
 
-<h2>4. 성적 — 아는 것만</h2>
+<h2>5. 성적 — 아는 것만</h2>
 <div class="h2d"><b>비운 칸은 중앙값으로 채우지 않고 진단에서 뺍니다.</b>
 중앙값을 넣으면 그 항목의 격차가 늘 0 으로 찍힙니다 — 실제로 겪은 버그입니다.</div>
 <div class="card"><div class="grid" id="perf"></div>
@@ -413,7 +447,7 @@ color:var(--accent);text-decoration:none}}
 생산량 상한 계산과 JSON 내보내기에만 씁니다. 명령줄에는 넣지 않습니다.</div>
 </div>
 
-<h2>5. 여름 손실 — 우리 규모로</h2>
+<h2>6. 여름 손실 — 우리 규모로</h2>
 <div class="h2d">국내 67농장 실측에서 여름 교배분 분만율이 겨울보다
 <b>중앙 +2.7%p</b> 떨어집니다. 그런데 <b>농장마다 갈립니다</b>(하위10% −4.4 ~
 상위10% +13.0%p). 아래 두 칸을 알면 우리 농장이 어느 쪽인지 나옵니다.</div>
@@ -427,14 +461,14 @@ color:var(--accent);text-decoration:none}}
 </div></div>
 <div id="season"></div>
 
-<h2>6. 즉시 검산</h2>
+<h2>7. 즉시 검산</h2>
 <div class="h2d">위 값으로 바로 나오는 것들. 새 산식이 아니라
 <code>batch_flow.plan</code> 과 같은 식입니다.</div>
 <div class="card"><div class="kpis" id="kpis"></div>
 <div class="note" id="cyc"></div></div>
 <div id="pos"></div>
 
-<h2>7. 내보내기</h2>
+<h2>8. 내보내기</h2>
 <div class="h2d">복사해서 그대로 돌리면 이 농장 기준으로 전체 화면이 다시 계산됩니다.</div>
 <div class="card">
 <label>명령줄</label><textarea id="out_cmd" readonly style="min-height:64px"></textarea>
@@ -601,6 +635,94 @@ function drawBarns() {{
 }}
 
 function num(id) {{ const v = parseFloat($(id).value); return isFinite(v) ? v : null; }}
+
+// ── 행정 등록 — 국가 스키마(BRD_CO·STKRS_PRMISN_AR·STKRS_NRT_AR) ────────
+//
+// 운영표와 **다른 질문**이라 표를 나눴다. 여기 검산은 `farm_scale.reconcile`
+// 과 같은 식이고, 스모크 테스트가 이 화면의 출력과 모듈 출력을 대조한다 —
+// 갈라지면 테스트가 깨진다.
+//
+// 비운 칸은 **검사하지 않는다.** 사육수를 자리 수에서, 허가면적을 방당
+// 면적에서 되돌려 채우면 정의상 늘 통과라 검산이 아니게 된다.
+const AREA_TOL = CFG.admin.area_tol;
+
+function adminDensity(b) {{
+  // 허가면적 기준 밀도 — 운영표의 방당 면적 기준과 **다른 검사**다.
+  if (!(b.head > 0) || !(b.permit > 0)) return {{tag: "", txt: "—"}};
+  const {{need, why}} = legalNeed(b);
+  if (why) return {{tag: "skip", txt: why}};
+  if (!need) return {{tag: "", txt: "—"}};
+  const per = b.permit / Math.max(1, b.head);
+  const ok = per >= need - 1e-9;
+  return {{tag: ok ? "ok" : "err",
+          txt: `${{per.toFixed(3)}}㎡ / 기준 ${{need}}`,
+          over: ok ? 0 : b.head - Math.floor(b.permit / need)}};
+}}
+
+function adminChecks() {{
+  const out = [];
+  const total = num("#f_total"), sows = num("#f_sows");
+  for (const b of barns) {{
+    const slots = (b.rooms || 0) * (b.per || 0);
+    if (b.head > 0 && slots && b.head > slots)
+      out.push({{lv: "위험", txt: `${{b.name}} 사육수 ${{b.head.toLocaleString()}}두 &gt; ` +
+        `자리 ${{slots.toLocaleString()}}개 — 방 수·방당 자리를 다시 볼 것`}});
+    if (b.nonpermit > 0)
+      out.push({{lv: "주의", txt: `${{b.name}} 무허가면적 ${{b.nonpermit}}㎡ — ` +
+        `적법화 대상일 수 있습니다(유예·특례는 이 프로그램이 모릅니다)`}});
+    const opA = (b.area || 0) * (b.rooms || 0), admA = (b.permit || 0) + (b.nonpermit || 0);
+    if (opA && admA && Math.abs(opA - admA) / Math.max(opA, admA) > AREA_TOL)
+      out.push({{lv: "주의", txt: `${{b.name}} 면적이 어긋납니다 — 운영표 ${{opA}}㎡ ` +
+        `(방 ${{b.rooms}}개×${{b.area}}) vs 행정 ${{admA}}㎡`}});
+  }}
+  const heads = barns.filter(b => b.head > 0);
+  const headSum = heads.reduce((s, b) => s + b.head, 0);
+  if (heads.length && total !== null && headSum !== total)
+    out.push({{lv: "주의", txt: `동별 사육수 합 ${{headSum.toLocaleString()}}두 ` +
+      `≠ 총사육수 ${{total.toLocaleString()}}두 — 어느 쪽이 낡았는지 확인할 것`}});
+  if (sows !== null && total !== null && sows > total)
+    out.push({{lv: "위험", txt: `상시모돈 ${{sows.toLocaleString()}}두 &gt; 총사육수 ` +
+      `${{total.toLocaleString()}}두 — 총사육수는 모돈을 포함한 전 두수입니다`}});
+  if (heads.length && heads.length < barns.length)
+    out.push({{lv: "주의", txt: `사육수를 적은 동이 ${{heads.length}}/${{barns.length}} ` +
+      `— 합계가 농장 전체가 아닙니다`}});
+  return out;
+}}
+
+function drawAdmin() {{
+  const tb = $("#admin"); tb.innerHTML = "";
+  barns.forEach((b, i) => {{
+    const dn = adminDensity(b);
+    const tr = el("tr");
+    tr.innerHTML =
+      `<td><b>${{b.name}}</b></td><td>${{b.stage}}</td>` +
+      `<td><input data-i="${{i}}" data-k="head" type="number" min="0" max="99999" value="${{b.head ?? ""}}" placeholder="비움" style="width:80px"></td>` +
+      `<td><input data-i="${{i}}" data-k="permit" type="number" min="0" step="0.1" value="${{b.permit ?? ""}}" placeholder="비움" style="width:88px"></td>` +
+      `<td><input data-i="${{i}}" data-k="nonpermit" type="number" min="0" step="0.1" value="${{b.nonpermit ?? ""}}" placeholder="비움" style="width:88px"></td>` +
+      `<td>${{dn.tag ? `<span class="tag ${{dn.tag}}">${{dn.txt}}</span>` : dn.txt}}` +
+      `${{dn.over ? `<div class="hint err">초과 ${{dn.over}}두</div>` : ""}}</td>`;
+    tb.appendChild(tr);
+  }});
+  if (!barns.length) {{
+    const tr = el("tr");
+    tr.innerHTML = '<td colspan="6" style="color:var(--muted);font-size:.82rem">' +
+      '위에서 동을 먼저 등록하면 여기에 같은 동이 나옵니다.</td>';
+    tb.appendChild(tr);
+  }}
+  drawAdminChecks();
+}}
+
+// 검산은 표와 **따로 그린다.** 총사육수·상시모돈은 행정표 밖의 칸이라
+// 표를 다시 그릴 일이 없는데, 같이 묶어 두면 그 두 칸을 고쳐도 검산이
+// 낡은 채로 남는다.
+function drawAdminChecks() {{
+  const ck = adminChecks();
+  $("#admin_checks").innerHTML = ck.length
+    ? `<div class="note" style="margin-top:10px">` + ck.map(c =>
+        `<div style="color:var(--${{c.lv === "위험" ? "bad" : "warn"}})">` +
+        `🔔 [${{c.lv}}] ${{c.txt}}</div>`).join("") + `</div>`
+    : "";
+}}
 
 // ── 역산: 지어 놓은 방 → 넣을 수 있는 개체 수 ─────────────────────────
 //
@@ -1284,6 +1406,7 @@ function render() {{
     "python competition/src/run_farm.py " + args.join(" ") + "\\n" +
     `python competition/src/batch_flow.py   # 간격 ${{p.iv}}일 · 배치 ${{p.nb.toFixed(1)}}개\\n` +
     "python competition/src/farm_gap.py --sows " + Math.round(p.sows);
+  drawAdminChecks();
   $("#out_json").value = JSON.stringify(snapshot(), null, 1);
   save();
 }}
@@ -1298,6 +1421,8 @@ function snapshot() {{
     direction: $("#f_dir").value,
     name: $("#f_name").value || null,
     n_sows: num("#f_sows"), n_gilts: num("#f_gilts"),
+    // 상시모돈과 **다른 수**다. farm_scale.reconcile 이 읽는 이름이다.
+    n_head_total: num("#f_total"),
     site_type: $("#f_site").value,
     interval_days: parseFloat($("#f_interval").value),
     lactation_days: num("#f_lact"), pre_farrow_days: num("#f_pre"),
@@ -1308,6 +1433,11 @@ function snapshot() {{
       const o = {{name: b.name, stage: b.stage, rooms: b.rooms, per: b.per,
                  housing: b.housing, area: b.area ?? null}};
       if (b.area) o.area_m2 = b.area;
+      // 행정 칸은 **적은 것만** 싣는다. null 을 넣으면 farm_scale 이
+      // '적었는데 0' 으로 읽어 안 적은 동까지 검사에 걸린다.
+      if (b.head != null) o.head = b.head;
+      if (b.permit != null) o.permit_area_m2 = b.permit;
+      if (b.nonpermit != null) o.nonpermit_area_m2 = b.nonpermit;
       return o;
     }}),
     performance: perf,
@@ -1338,8 +1468,12 @@ function load() {{
   if (s.lactation_days) $("#f_lact").value = s.lactation_days;
   if (s.pre_farrow_days != null) $("#f_pre").value = s.pre_farrow_days;
   if (s.washout_days != null) $("#f_wash").value = s.washout_days;
+  if (s.n_head_total != null) $("#f_total").value = s.n_head_total;
   barns = (s.barns || []).map(b => ({{
-    ...b, area: (b.area ?? b.area_m2) || null}}));
+    ...b, area: (b.area ?? b.area_m2) || null,
+    head: b.head ?? null,
+    permit: b.permit ?? b.permit_area_m2 ?? null,
+    nonpermit: b.nonpermit ?? b.nonpermit_area_m2 ?? null}}));
   for (const f of CFG.perf) {{
     const v = (s.performance || {{}})[f.key];
     if (v != null) $("#p_" + f.key).value = v;
@@ -1359,47 +1493,57 @@ $("#perf").innerHTML = CFG.perf.map(f =>
   `<div class="hint" id="h_${{f.key}}"></div></div>`).join("");
 $("#f_interval").value = "21";
 
+// 칸 하나를 고쳐 쓰는 자리는 **여기 하나뿐이다.** 예전에는 input 과 change
+// 가 각자 썼는데, change 는 숫자 칸을 원시 문자열로 덮어써서 blur 한 번에
+// "60" 이 숫자 60 을 밀어냈다 — 행정 칸이 JSON 에 안 실리던 원인이다.
+function setBarnField(i, k, raw) {{
+  if (k === "rooms" || k === "per") barns[i][k] = Math.max(1, +raw || 1);
+  // 면적·사육수·허가면적은 **비움을 살려 둔다.** 0 으로 바꾸면 '미입력' 과
+  // '0' 을 구별할 수 없어져, 안 적은 농장이 전부 걸리거나 전부 통과한다.
+  else if (k === "area" || k === "head" || k === "permit" || k === "nonpermit")
+    barns[i][k] = raw === "" ? null : Math.max(0, +raw || 0);
+  else barns[i][k] = raw;
+}}
 document.addEventListener("input", e => {{
   const t = e.target;
   if (t.dataset && t.dataset.k !== undefined) {{
     const i = +t.dataset.i, k = t.dataset.k;
-    if (k === "rooms" || k === "per") barns[i][k] = Math.max(1, +t.value || 1);
-    // 면적은 **비움을 살려 둔다.** 0 으로 바꾸면 '면적 미입력' 과 '0㎡' 를
-    // 구별할 수 없어져, 안 적은 농장이 전부 밀사로 찍힌다.
-    else if (k === "area") barns[i][k] = t.value === "" ? null : Math.max(0, +t.value || 0);
-    else barns[i][k] = t.value;
+    setBarnField(i, k, t.value);
     if (k !== "name") {{
       // 표를 다시 그리면 커서가 날아간다 — 같은 칸으로 되돌려 준다.
       const pos = t.selectionStart;
-      drawBarns();
+      drawBarns(); drawAdmin();
       const back = document.querySelector(`[data-i="${{i}}"][data-k="${{k}}"]`);
       if (back) {{
         back.focus();
         try {{ back.setSelectionRange(pos, pos); }} catch (e) {{}}
       }}
-    }}
+    }} else drawAdmin();      // 동 이름은 행정표에도 그대로 나온다
   }}
   render();
 }});
 document.addEventListener("change", e => {{
   const t = e.target;
-  if (t.dataset && t.dataset.k !== undefined) {{
-    barns[+t.dataset.i][t.dataset.k] = t.value;
-    drawBarns();
+  // 드롭다운만 여기서 받는다. 숫자 칸은 input 이 이미 처리했고, 여기서
+  // 다시 쓰면 원시 문자열로 덮어쓴다.
+  if (t.tagName === "SELECT" && t.dataset && t.dataset.k !== undefined) {{
+    setBarnField(+t.dataset.i, t.dataset.k, t.value);
+    drawBarns(); drawAdmin();
   }}
   render();
 }});
 document.addEventListener("click", e => {{
   const del = e.target.dataset ? e.target.dataset.del : null;
-  if (del !== null && del !== undefined) {{ barns.splice(+del, 1); drawBarns(); render(); }}
+  if (del !== null && del !== undefined) {{ barns.splice(+del, 1); drawBarns(); drawAdmin(); render(); }}
 }});
 $("#add").onclick = () => {{
   barns.push({{name: (barns.length + 1) + "동", stage: STAGES[0], rooms: 1,
-               per: 20, area: null, housing: HOUSING[0][0]}});
-  drawBarns(); render();
+               per: 20, area: null, housing: HOUSING[0][0],
+               head: null, permit: null, nonpermit: null}});
+  drawBarns(); drawAdmin(); render();
 }};
 $("#preset").onclick = () => {{
-  barns = preset(num("#f_sows") || 300); drawBarns(); render();
+  barns = preset(num("#f_sows") || 300); drawBarns(); drawAdmin(); render();
 }};
 $("#reset").onclick = () => {{
   try {{ localStorage.removeItem(KEY); }} catch (e) {{}}
@@ -1416,6 +1560,7 @@ $("#copy_json").onclick = e => copyOf("#out_json", e.target);
 
 if (!load()) barns = preset(300);
 drawBarns();
+drawAdmin();
 render();
 </script></body></html>
 """

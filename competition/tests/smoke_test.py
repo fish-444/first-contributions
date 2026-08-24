@@ -3190,6 +3190,92 @@ def test_setup_screen_matches_module() -> None:
         assert not errs, errs
 
 
+def test_admin_screen_matches_farm_scale() -> None:
+    """행정 등록 표가 `farm_scale.reconcile` 과 **같은 답을 내는가.**
+
+    운영표(방당 면적)와 행정표(허가면적)는 다른 질문이라 화면을 나눴는데,
+    나누면 갈릴 자리도 둘이 된다. 그래서 화면이 내보낸 JSON 을 그대로
+    모듈에 먹여 대조한다 — 화면에 '과밀 58두'가 떴으면 모듈도 58두여야 한다.
+
+    지키는 것 넷: (1) 총사육수를 상시모돈과 **다른 칸**으로 받는가,
+    (2) 숫자 칸이 숫자로 실리는가(예전에 change 리스너가 원시 문자열로
+    덮어써서 행정 입력이 JSON 에 안 실렸다), (3) 비운 칸을 되돌려 채우지
+    않는가, (4) 허가면적 기준 밀도가 모듈과 일치하는가.
+    """
+    import json
+
+    import build_farm_setup as bfs
+    import farm_scale as fs
+
+    html = bfs.build()
+    assert 'id="f_total"' in html, "총사육수 칸이 없다 — 상시모돈과 같은 칸이면 안 된다"
+    assert "drawAdmin" in html and 'id="admin"' in html
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("      (playwright 없음 — JS 대조는 건너뜀)")
+        return
+    exe = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+    if not os.path.exists(exe):
+        print("      (chromium 없음 — JS 대조는 건너뜀)")
+        return
+
+    path = os.path.join(ROOT, "dashboard", "farm_setup.html")
+    open(path, "w", encoding="utf-8").write(html)
+    with sync_playwright() as pw:
+        br = pw.chromium.launch(executable_path=exe)
+        pg = br.new_page()
+        errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto("file://" + path)
+        # 교배사(스톨 1.4) 과밀 · 임신사(1.4) 적정 · 무허가면적 있는 동
+        pg.evaluate("""() => {
+            barns = [
+              {name:"1동", stage:"교배사", rooms:1, per:72, area:100,
+               housing:"stall", head:200, permit:200, nonpermit:30},
+              {name:"2동", stage:"임신사", rooms:2, per:82, area:130,
+               housing:"group", head:100, permit:260, nonpermit:null},
+              {name:"3동", stage:"분만사", rooms:2, per:36, area:150,
+               housing:"crate", head:null, permit:null, nonpermit:null},
+            ];
+            document.querySelector("#f_total").value = "3000";
+            drawBarns(); drawAdmin(); render();
+        }""")
+        snap = json.loads(pg.eval_on_selector("#out_json", "e => e.value"))
+        cells = pg.eval_on_selector_all(
+            "#admin tr", "rs => rs.map(r => r.cells[5].innerText)")
+        checks_txt = pg.eval_on_selector("#admin_checks", "e => e.innerText")
+        br.close()
+    assert not errs, errs
+
+    # (1)(2) 두 수를 갈라 받고, 숫자로 싣는다
+    assert snap["n_head_total"] == 3000 and snap["n_sows"] != 3000
+    b0 = snap["barns"][0]
+    assert b0["head"] == 200 and isinstance(b0["head"], int)
+    assert b0["permit_area_m2"] == 200 and b0["nonpermit_area_m2"] == 30
+    # (3) 비운 칸은 아예 싣지 않는다 — null 이면 모듈이 '0 으로 적었다'로 읽는다
+    assert "head" not in snap["barns"][2]
+    assert "permit_area_m2" not in snap["barns"][2]
+    assert "nonpermit_area_m2" not in snap["barns"][1]
+
+    # (4) 화면 ↔ 모듈. 내보낸 JSON 을 그대로 먹인다
+    r = fs.reconcile(snap)
+    dens = {d["동"]: d for d in r["density"]}
+    assert set(dens) == {"1동", "2동"}, dens          # 3동은 비웠으니 판정 없음
+    assert dens["1동"]["required_m2"] == 1.4 and dens["1동"]["overcrowded"]
+    assert dens["2동"]["required_m2"] == 1.4 and not dens["2동"]["overcrowded"]
+    # 초과 두수가 화면과 모듈에서 같아야 한다
+    assert f"초과 {dens['1동']['excess']}두" in cells[0], (cells[0], dens["1동"])
+    assert f"{dens['1동']['per_head_m2']:.3f}" in cells[0]
+    assert "—" in cells[2]                            # 비운 동은 판정하지 않는다
+    # 검산 문구도 같은 사실을 말한다
+    mod = " ".join(c["내용"] for c in r["checks"])
+    for token in ("무허가면적", "동별 사육수 합"):
+        assert token in checks_txt and token in mod, token
+    assert "위법" not in checks_txt and "불법" not in checks_txt
+
+
 def test_setup_json_actually_runs() -> None:
     """등록 화면이 내보낸 JSON 이 **실제로 돌아가는가**.
 
@@ -5913,7 +5999,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
