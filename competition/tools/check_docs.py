@@ -38,7 +38,10 @@ DOCS = [os.path.join(COMP, "README.md"),
         os.path.join(COMP, "docs", "PILLARS.md"),
         # 보고서 작성 팩 — 채팅에 통째로 올려 쓰는 파일이라 낡으면 그대로
         # 제출본에 들어간다. 여기가 가장 위험하다.
-        os.path.join(COMP, "docs", "REPORT_PACK.md")]
+        os.path.join(COMP, "docs", "REPORT_PACK.md"),
+        # 보고서 입력 자료 — 같은 이유로 감시한다. 이쪽은 "무엇을 주는가 ·
+        # 무엇을 했는가 · 무엇으로 했는가" 세 축으로 다시 묶은 판이다.
+        os.path.join(COMP, "docs", "REPORT_INPUT.md")]
 
 
 # -- 실제값 수집 -----------------------------------------------------------
@@ -110,7 +113,15 @@ def check_counts(report: list) -> None:
         if not os.path.exists(path):
             continue
         t = open(path, encoding="utf-8").read()
+        # 강조 표시를 걷어내고 센다. `모듈 **75개**` 처럼 굵게 쓰면 `\s*` 가
+        # `**` 를 못 넘어 검사에서 빠져나갔다 — 실제로 REPORT_PACK 의 규모
+        # 한 줄이 모듈 75 · 테스트 91 로 낡은 채 통과하고 있었다. 별을 같은
+        # 길이의 공백으로 바꿔 **줄·열 위치를 그대로 둔 채** 본다.
+        t = re.sub(r"\*+", lambda mo: " " * len(mo.group(0)), t)
         name = os.path.basename(path)
+        # "쓰면 안 되는 수치" 절의 옛 개수는 **주장이 아니라 금지 목록**이다.
+        # 여기까지 고치라고 하면 금지 목록이 현재값을 금지하게 된다.
+        skip = blacklist_lines(t)
         # 뷰 수는 **대시보드 문맥에서만** 센다. "뷰 8개 중 2개만 held-out" 은
         # 카메라 뷰 얘기라서 그냥 잡으면 오탐이다(실제로 두 건 났다).
         for pat, key, label, need in (
@@ -126,6 +137,8 @@ def check_counts(report: list) -> None:
                 le = t.find("\n", mobj.end())
                 line_txt = t[ls:le if le > 0 else len(t)]
                 if need and need not in line_txt:
+                    continue
+                if t[:mobj.start()].count("\n") + 1 in skip:
                     continue
                 got = int(mobj.group(1))
                 if got != a[key]:
