@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+requests
+# 아래는 '로컬 방식'(내 컴퓨터에서 .pt 로 직접 탐지)일 때만 필요.
+# 로보플로우 방식이나 데모 방식만 쓸 거면 설치 안 해도 됩니다(용량 큼).
+ultralytics
