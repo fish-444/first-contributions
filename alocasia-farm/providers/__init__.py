@@ -19,30 +19,50 @@ from PIL import Image
 CONFIDENCE = float(os.environ.get("CONFIDENCE", "25"))        # 0~100
 
 
-def clean_api_key(raw: str) -> Tuple[str, List[str]]:
-    """환경변수로 들어온 키를 다듬고, 사람이 읽을 경고를 함께 돌려준다.
+def clean_api_key(raw: str) -> str:
+    """환경변수로 들어온 키에서 따옴표·공백을 걷어내고 돌려준다.
 
     윈도우 배치 파일에서 키를 넣다가 걸리는 함정이 늘 같다. 파워셸 습관대로
     `set ROBOFLOW_API_KEY="abcd..."` 라고 쓰면 **따옴표까지 키 값이 된다**.
     복사·붙여넣기하면 줄 끝 공백도 자주 딸려온다. 둘 다 401 로만 돌아와서
     키가 죽은 줄 알고 새로 발급받게 되는데, 실제로는 글자 두 개 문제다.
-    그래서 조용히 걷어내고, 대신 무엇을 걷어냈는지 알려 준다.
+    그래서 조용히 걷어낸다.
+
+    무엇을 걷어냈는지 알리는 일은 api_key_warnings() 가 따로 한다. 원래는
+    (키, 경고목록) 을 한 번에 돌려줬는데, 그러면 경고를 찍는 쪽이 '키가 섞여
+    있을 수 있는 값' 을 print 하는 모양이 된다 — 코드 스캐닝이 정확히 그 줄을
+    비밀값 평문 로깅으로 잡았다(py/clear-text-logging-sensitive-data). 경고
+    문구에는 키가 한 글자도 안 들어가므로, 애초에 키와 다른 경로로 내보낸다.
     """
-    warnings: List[str] = []
     key = (raw or "").strip()
-    if key != (raw or ""):
-        warnings.append("키 앞뒤의 공백을 떼고 씁니다. farm_env.bat 에서도 지워 주세요.")
     for q in ('"', "'"):
         if len(key) >= 2 and key.startswith(q) and key.endswith(q):
             key = key[1:-1].strip()
-            warnings.append(f"키를 감싼 {q} 를 떼고 씁니다 — 배치 파일에서는 "
-                            f"따옴표까지 키 값이 됩니다. farm_env.bat 에서도 지워 주세요.")
+    return key
+
+
+def api_key_warnings(raw: str) -> List[str]:
+    """키 모양을 보고 사람이 읽을 경고만 돌려준다 — 키 자체는 담지 않는다.
+
+    돌려주는 문구는 전부 고정 문장이다. 키에서 흘러 들어오는 건 '길이가 줄었나',
+    'rf_ 로 시작하나' 같은 판정 결과뿐이라 로그에 비밀값이 새지 않는다.
+    """
+    raw = raw or ""
+    trimmed = raw.strip()
+    key = clean_api_key(raw)
+
+    warnings: List[str] = []
+    if trimmed != raw:
+        warnings.append("키 앞뒤의 공백을 떼고 씁니다. farm_env.bat 에서도 지워 주세요.")
+    if len(key) < len(trimmed):                   # 감싼 따옴표를 벗겼다
+        warnings.append("키를 감싼 따옴표를 떼고 씁니다 — 배치 파일에서는 "
+                        "따옴표까지 키 값이 됩니다. farm_env.bat 에서도 지워 주세요.")
     if key.startswith("rf_"):
         warnings.append("rf_ 로 시작하는 키는 공개(publishable) 키라 막힙니다. "
                         "Private API Key 를 넣으세요.")
     if any(c.isspace() for c in key):
         warnings.append("키 중간에 공백이 있습니다 — 붙여넣다 잘린 것 같습니다.")
-    return key, warnings
+    return warnings
 
 
 class Detector(Protocol):
@@ -61,21 +81,28 @@ def select() -> Tuple[Detector, Detector]:
     둘이 같은 객체면 위쪽 코드가 추론을 한 번만 돌려 크레딧을 아낀다.
     우선순위: 로보플로우 워크플로 → 로보플로우 모델 → 로컬 .pt → 데모
     """
-    api_key, key_warnings = clean_api_key(os.environ.get("ROBOFLOW_API_KEY", ""))
-    for w in key_warnings:
+    raw_key = os.environ.get("ROBOFLOW_API_KEY", "")
+    api_key = clean_api_key(raw_key)
+    for w in api_key_warnings(raw_key):
         print(f"[키 경고] {w}")
     workspace = os.environ.get("ROBOFLOW_WORKSPACE", "")
     workflow_id = os.environ.get("ROBOFLOW_WORKFLOW_ID", "")
     workflow_url = os.environ.get("ROBOFLOW_WORKFLOW_URL", "")
     model_path = os.environ.get("MODEL_PATH", "yolov8n.pt")
 
-    # 앱이 실제로 어떤 키를 들고 있는지 앞 4자리만 찍는다. 키를 고쳤는데도 401 이
-    # 계속 날 때, 파일을 고쳤지만 앱이 못 읽고 있는 건지(예: 예제 파일을 고쳤거나
-    # 서버를 안 껐다 켬) 아니면 키 자체가 틀린 건지 이 한 줄로 갈린다.
-    # 로보플로우 대시보드도 키를 같은 방식(앞 4자리)으로 표시한다.
+    # 앱이 키를 들고 있는지, 그 키가 온전한 모양인지만 찍는다.
+    #
+    # 원래는 앞 4자리를 찍어 대시보드 값과 눈으로 맞춰 보게 했다. 로보플로우
+    # 대시보드도 같은 방식으로 표시하니 편했지만, 그건 비밀값의 일부를 그대로
+    # 로그에 남기는 것이고 콘솔 출력은 캡처·붙여넣기로 쉽게 밖으로 나간다.
+    # 그래서 앞자리는 지웠다 — 되살리지 말 것.
+    #
+    # 길이만으로도 실제로 겪었던 경우는 다 갈린다: 따옴표가 값에 섞이면 2자
+    # 늘고, 붙여넣다 잘리면 짧아진다. '파일은 고쳤는데 앱까지 안 왔다' 쪽은
+    # main.py 의 _report_env_file() 이 따로 짚어 준다.
     if api_key:
-        print(f"[키] {api_key[:4]}… ({len(api_key)}자)  ← 로보플로우 대시보드의 "
-              f"키 앞자리와 같은지 확인하세요")
+        print(f"[키] 있음 ({len(api_key)}자) — 401 이 계속 나면 farm_env.bat 의 "
+              f"키를 로보플로우 대시보드 값과 다시 비교해 보세요")
     else:
         print("[키] 없음 — farm_env.bat 의 ROBOFLOW_API_KEY 가 비어 있습니다 "
               "(farm_env.example.bat 이 아니라 farm_env.bat 입니다)")

@@ -125,8 +125,12 @@ def _report_env_file() -> None:
         print(f"[설정] farm_env.bat 에 키가 비어 있습니다 — {env_file}")
         print("[설정]   set ROBOFLOW_API_KEY=... 줄에 Private API Key 를 넣으세요.")
     else:
-        # 여기가 핵심 — 파일엔 있는데 앱까지 안 왔다
-        print(f"[설정] farm_env.bat 에는 키가 있는데({in_file[:4]}…) 앱까지 오지 않았습니다.")
+        # 여기가 핵심 — 파일엔 있는데 앱까지 안 왔다.
+        # 키 앞자리는 찍지 않는다. 어느 쪽 문제인지 가리는 데는 '파일엔 값이
+        # 있다'는 사실만으로 충분하고, 비밀값을 콘솔에 남길 이유가 없다
+        # (providers/__init__.py 의 같은 판단과 맞춰 둔 것).
+        print(f"[설정] farm_env.bat 에는 키가 {len(in_file)}자 들어 있는데 "
+              f"앱까지 오지 않았습니다.")
         print(f"[설정]   파일: {env_file}")
         print("[설정]   ROBOFLOW_API_KEY 가 빈 값으로 환경에 이미 있으면 파일 값이 무시됩니다.")
         print("[설정]   그 창을 닫고 새로 여신 뒤 다시 켜 보세요.")
