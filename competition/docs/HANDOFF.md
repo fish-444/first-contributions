@@ -10,7 +10,7 @@
 **한 줄**: 발정을 놓치면 번식이 무너진다. 그런데 번식만 잡아도 농장은 안 산다 —
 발정 탐지에서 출하까지 한 줄로 잇는다.
 
-**규모**: 모듈 79개 · 대시보드 뷰 24개 · 테스트 94개 · 외부 연결 0
+**규모**: 모듈 80개 · 대시보드 뷰 24개 · 테스트 95개 · 외부 연결 0
 
 ---
 
@@ -73,7 +73,7 @@ AI Hub · 케글 키가 이전 대화 기록에 노출됐다. **커밋 이력 �
 ## 1. 지금 상태
 
 ```bash
-python competition/tests/smoke_test.py      # 94/94 통과
+python competition/tests/smoke_test.py      # 95/95 통과
 python competition/tools/check_docs.py      # 불일치 0
 git status                                  # clean
 ```
