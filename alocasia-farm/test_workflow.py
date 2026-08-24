@@ -132,42 +132,42 @@ def test_url_candidates():
 # ── API 키 다듬기 ────────────────────────────────────────────────────────
 # 401 의 대부분은 키가 죽어서가 아니라 따옴표·공백이 값에 섞여서다.
 #
-# 키를 다듬는 쪽(clean_api_key)과 사람에게 알리는 쪽(api_key_warnings)은 일부러
+# 키를 다듬는 쪽(clean_api_key)과 사람에게 알리는 쪽(paste_warnings)은 일부러
 # 갈라 놓았다. 한 함수가 (키, 경고) 를 함께 돌려주면 경고를 찍는 코드가 키를
 # 찍는 코드와 구별되지 않는다 — 코드 스캐닝이 그 줄을 비밀값 평문 로깅으로
 # 잡았고, 그 지적이 맞았다.
-from providers import api_key_warnings, clean_api_key
+from providers import clean_api_key, paste_warnings
 
 
 def test_batch_style_quotes_are_stripped_from_the_key():
     """배치 파일에서 set X="k" 라고 쓰면 따옴표까지 값이 된다 — 걷어내고 알려 준다."""
     assert clean_api_key('"abcdsecret"') == "abcdsecret"
-    warns = api_key_warnings('"abcdsecret"')
+    warns = paste_warnings('"abcdsecret"')
     assert len(warns) == 1 and "따옴표" in warns[0], warns
 
 
 def test_surrounding_whitespace_is_stripped():
     assert clean_api_key("  abcdsecret\n") == "abcdsecret"
-    warns = api_key_warnings("  abcdsecret\n")
+    warns = paste_warnings("  abcdsecret\n")
     assert warns and "공백" in warns[0], warns
 
 
 def test_publishable_key_is_flagged():
     """rf_ 로 시작하는 공개키는 워크플로에서 막힌다 — 미리 알려 준다."""
     assert clean_api_key("rf_workspaceid_example000000000") == "rf_workspaceid_example000000000"
-    warns = api_key_warnings("rf_workspaceid_example000000000")
+    warns = paste_warnings("rf_workspaceid_example000000000")
     assert any("공개" in w for w in warns), warns
 
 
 def test_a_clean_key_produces_no_noise():
     assert clean_api_key("abcdsecret") == "abcdsecret"
-    assert api_key_warnings("abcdsecret") == []
+    assert paste_warnings("abcdsecret") == []
 
 
 def test_missing_key_is_not_an_error():
     """키를 아예 안 넣은 건 데모 모드로 가는 정상 경로다 — 경고를 뿌리지 않는다."""
-    assert clean_api_key("") == "" and api_key_warnings("") == []
-    assert clean_api_key(None) == "" and api_key_warnings(None) == []
+    assert clean_api_key("") == "" and paste_warnings("") == []
+    assert clean_api_key(None) == "" and paste_warnings(None) == []
 
 
 def test_no_warning_ever_carries_the_key_itself():
@@ -179,7 +179,7 @@ def test_no_warning_ever_carries_the_key_itself():
     """
     secret = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"
     for raw in (f'"{secret}"', f"  {secret}\n", f"rf_{secret}", f"{secret[:8]} {secret[8:]}"):
-        for w in api_key_warnings(raw):
+        for w in paste_warnings(raw):
             assert secret not in w, w
             assert secret[:4] not in w, w          # 앞자리만 흘리는 것도 안 된다
 
