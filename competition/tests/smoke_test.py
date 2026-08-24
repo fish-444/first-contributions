@@ -3190,6 +3190,68 @@ def test_setup_screen_matches_module() -> None:
         assert not errs, errs
 
 
+def test_behavior_vocab_merge() -> None:
+    """어휘 축소 — **병합표가 등록한 그대로인가.**
+
+    숫자가 오르는 가장 쉬운 방법이 병합표를 만지는 것이다. 그래서
+    `PREREGISTRATION.md` 등록 4 에 측정 전 커밋한 표와 코드를 대조한다.
+    표를 고쳐 성능을 올리면 여기서 걸린다.
+
+    지키는 것 다섯: (1) 응용 어휘를 모듈이 따로 적지 않는가(계약에서
+    읽는가), (2) 등록한 병합표 그대로인가, (3) 경계 둘(standing·drink)이
+    응용 클래스로 새지 않는가, (4) 병합이 정확도를 낮추지 못한다는 성질을
+    코드가 알고 있는가, (5) 저장된 결과가 원 어휘와 응용 어휘를 **둘 다**
+    들고 있는가.
+    """
+    import json
+
+    import behavior_baseline as bb
+    import behavior_vocab as bv
+    from pig_behavior.predictor import RELIABLE_CLASSES
+
+    # 1) 어휘의 정본은 기준선 층과 계약이다 — 여기서 새로 만들지 않는다
+    heads = set()
+    for sign in bb.HEAD_SIGNS.values():
+        heads |= set(sign)
+    assert heads == set(RELIABLE_CLASSES), (heads, RELIABLE_CLASSES)
+    assert set(bv.MERGE.values()) <= set(RELIABLE_CLASSES)
+
+    # 2) 등록 문서의 병합표와 코드가 같은가
+    reg = open(os.path.join(ROOT, "docs", "PREREGISTRATION.md"),
+               encoding="utf-8").read()
+    assert "등록 4" in reg and "병합표" in reg
+    for raw, app in bv.MERGE.items():
+        assert raw in reg, f"등록 문서에 없는 병합: {raw}"
+    for expect in ("lying", "sleep", "sitting", "walk", "run", "eat",
+                   "investigating"):
+        assert expect in bv.MERGE, f"등록한 병합이 코드에서 빠졌다: {expect}"
+    assert bv.MERGE["run"] == "Walking" and bv.MERGE["sleep"] == "Resting"
+
+    # 3) 경계 둘 — 근거를 적고 뺀 것이라 몰래 들어오면 안 된다
+    assert bv.app_vocab("standing") == bv.OTHER, "standing 이 Resting 으로 샜다"
+    assert bv.app_vocab("drink") == bv.OTHER, "drink 가 Eating 으로 샜다"
+    assert bv.app_vocab("fight") == bv.OTHER
+
+    # 4) 병합은 정확도를 **구조적으로 낮출 수 없다** — 화면·문서가 이 성질을
+    #    모르면 +차이를 개선으로 읽는다
+    src = open(os.path.join(ROOT, "src", "behavior_vocab.py"),
+               encoding="utf-8").read()
+    assert "구조적으로" in src and "개선의 증거가 아니다" in src
+
+    # 5) 저장된 결과는 두 어휘를 다 들고 있어야 한다 — 갈아치우면 숨긴 것이다
+    p = os.path.join(ROOT, "data", "behavior_vocab.json")
+    if not os.path.exists(p):
+        print("      (behavior_vocab.json 없음 — 실행 결과 대조는 건너뜀)")
+        return
+    r = json.load(open(p, encoding="utf-8"))
+    for k in ("raw", "app", "raw_baseline", "app_baseline"):
+        assert k in r, k
+    assert r["app"]["acc"] >= r["raw"]["acc"], "병합이 정확도를 낮췄다 — 불가능"
+    # 어휘를 줄이면 기준선도 오르는 함정 — 안 올랐다는 사실을 고정한다
+    assert r["app_baseline"]["acc"] == r["raw_baseline"]["acc"]
+    assert r["merge"] == bv.MERGE, "저장된 결과가 지금 병합표와 다르다"
+
+
 def test_admin_screen_matches_farm_scale() -> None:
     """행정 등록 표가 `farm_scale.reconcile` 과 **같은 답을 내는가.**
 
@@ -5999,7 +6061,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
