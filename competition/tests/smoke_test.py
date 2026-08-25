@@ -3269,6 +3269,70 @@ def test_window_denominator_gate() -> None:
     assert old["score"] is not None
 
 
+def test_env_scale() -> None:
+    """환경 −1~1 스케일 — **센서 오프셋이 편차 눈금에 안 새는가.**
+
+    이 모듈의 존재 이유가 "돈사마다 센서가 달라 절대값 비교가 안 된다"이므로,
+    지키는 것의 첫째는 **한 돈사 센서에 상수 오프셋을 통째로 더해도 scaled
+    가 안 변한다**는 것이다. 나머지: (2) ±1 이 자기 경보 경계다 — |scaled|
+    ≥1 비율이 경보율 대역(0.5~5%)에 든다, (3) 기준선 미형성이면 NaN 이지
+    0 이 아니다, (4) 지침 위반인데 편차 평소면 센서 점검 주석이 붙는다,
+    (5) 지침 대역을 여기서 다시 적지 않는다(barn_env_control 이 정본).
+    """
+    import numpy as np
+    import pandas as pd
+
+    import behavior_baseline as bb
+    import env_scale as es
+
+    rng = np.random.default_rng(3)
+    n = 60
+    df = pd.DataFrame({
+        "chamber": [1] * n + [2] * n,
+        "pig_class": ["porker"] * (2 * n),          # 비육돈: 적온 16~21℃
+        # 1번은 대역(16~21) **안에 갇힌** 분포라야 한다 — 정규분포 꼬리가
+        # 대역을 벗어나면 모듈이 옳게 '위험'을 붙여서 테스트가 제 재료에
+        # 걸려 넘어진다(실제로 한 번 그랬다).
+        "temp_c": np.r_[rng.uniform(17.0, 20.0, n),  # 1번: 지침 안
+                        rng.uniform(29.0, 31.0, n)],  # 2번: 센서가 +12 치우침
+        "nh3_ppm": rng.normal(8, 1.5, 2 * n),
+    })
+    d = es.run(df)
+
+    # 1) 오프셋 불변 — 1번 챔버에 +5℃ 를 통째로 더해도 scaled 동일
+    df2 = df.copy()
+    df2.loc[df2.chamber == 1, "temp_c"] += 5.0
+    d2 = es.run(df2)
+    a = d.loc[d.chamber == 1, "temp_c_scaled"].to_numpy()
+    b = d2.loc[d2.chamber == 1, "temp_c_scaled"].to_numpy()
+    assert np.allclose(a, b, atol=1e-9, equal_nan=True), \
+        "상수 센서 오프셋이 편차 눈금을 바꿨다 — 절대값이 새고 있다"
+
+    # 2) ±1 = 자기 경보 경계 — 초과 비율이 경보율 대역 안
+    sc = d["temp_c_scaled"].dropna()
+    rate = float((sc.abs() >= 1.0).mean())
+    assert bb.RATE_BAND[0] <= rate <= bb.RATE_BAND[1] + 1e-9, rate
+
+    # 3) 이력 부족 → NaN (0 으로 채우면 '평소 그대로'라는 근거 없는 주장)
+    tiny = es.run(df.head(4))
+    assert tiny["temp_c_scaled"].isna().all()
+
+    # 4) 2번 챔버: 지침 위반(30℃ vs 16~21)인데 자기 편차는 평소 → 센서 점검
+    f2 = d.loc[d.chamber == 2, "temp_c_flag"]
+    assert (f2.str.contains("센서 치우침")).mean() > 0.9, \
+        f2.value_counts().to_dict()
+    # 1번 챔버는 지침 안 — 위험 표시가 없어야 한다
+    f1 = d.loc[d.chamber == 1, "temp_c_flag"]
+    assert not f1.str.startswith("위험").any()
+
+    # 5) 지침 상수를 재선언하지 않는다 — 정본은 barn_env_control
+    src = open(os.path.join(ROOT, "src", "env_scale.py"),
+               encoding="utf-8").read()
+    for lit in ("16.0, 21.0", "15.0   # ppm", "TEMP_GUIDE = {"):
+        assert lit not in src, f"지침 상수가 복제됐다: {lit}"
+    assert "bec.TEMP_GUIDE" in src and "bec.NH3_LIMIT" in src
+
+
 def test_71763_batch_parser() -> None:
     """배치 파서 — **병렬·재개가 단일판과 같은 답을 내는가.**
 
@@ -6183,7 +6247,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_env_scale, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
