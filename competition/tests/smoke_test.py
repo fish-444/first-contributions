@@ -3269,6 +3269,41 @@ def test_window_denominator_gate() -> None:
     assert old["score"] is not None
 
 
+def test_manual_generated() -> None:
+    """전체 설명서 — **손으로 적힌 목록이 아니라 코드에서 나온 것인가.**
+
+    109개를 손으로 적으면 다음 커밋에 낡는다. 지키는 것 넷: (1) 저장된
+    MANUAL.md 가 지금 생성 결과와 같다(생성을 잊지 않았는가), (2) src 의
+    모든 모듈이 실려 있다 — 새 모듈이 설명서 밖에 조용히 남지 않는가,
+    (3) 묶음에 안 든 모듈이 없다, (4) 설명이 docstring 에서 온다(모듈
+    docstring 을 바꾸면 설명서도 바뀐다).
+    """
+    import glob
+    import importlib
+
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    bm = importlib.import_module("build_manual")
+
+    text = bm.build()
+    path = os.path.join(ROOT, "docs", "MANUAL.md")
+    assert os.path.exists(path), "MANUAL.md 가 없다 — build_manual 을 돌릴 것"
+    saved = open(path, encoding="utf-8").read()
+    assert saved == text, ("MANUAL.md 가 낡았다 — "
+                           "python competition/tools/build_manual.py")
+
+    # 2)+3) 모든 모듈이 실려 있고, 미분류가 없다
+    for f in glob.glob(os.path.join(ROOT, "src", "*.py")):
+        name = os.path.basename(f)[:-3]
+        assert f"`{name}`" in text, f"설명서에 없는 모듈: {name}"
+        assert bm.group_of(name), f"묶음에 안 든 모듈: {name}"
+    assert "## ⚠ 미분류" not in text
+
+    # 4) 설명은 docstring 에서 온다 — 한 모듈로 확인
+    first = bm.summary(os.path.join(ROOT, "src", "legal_density.py"))[0]
+    assert first and first in text
+    assert "축산법" in first, first
+
+
 def test_env_scale() -> None:
     """환경 −1~1 스케일 — **센서 오프셋이 편차 눈금에 안 새는가.**
 
@@ -6260,7 +6295,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_env_scale, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_manual_generated, test_env_scale, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
