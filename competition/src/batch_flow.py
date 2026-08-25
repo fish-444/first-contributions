@@ -420,7 +420,10 @@ def capacity_from_rooms(barns: list, interval_days: float,
 # 복당 이유두수만은 **방이 다시 깎는다.** 자돈사 396자리에 분만틀 36개면
 # 복당 11.0두까지고, 12.0 을 그냥 상한으로 쓰면 방이 넘치는 생산량을 "낼 수
 # 있다" 고 말하게 된다 — 지어 놓은 것을 무시한 수다.
-CEILING = {"fill": 1.0, "weaned": WEANED_PER_CRATE, "survival": GROW_SURVIVAL}
+# **생산** 상한이다(자세 상한 `train_posture_cnn.POSTURE_CEILING` 과
+# 뜻도 자료형도 다르다 — 저쪽은 스칼라, 이쪽은 항등식 항별 dict).
+PRODUCTION_CEILING = {"fill": 1.0, "weaned": WEANED_PER_CRATE,
+                      "survival": GROW_SURVIVAL}
 
 
 def throughput(cap: dict, farrow_rate: float | None = None,
@@ -456,15 +459,15 @@ def throughput(cap: dict, farrow_rate: float | None = None,
 
     # 복당 이유두수 상한은 **설계 목표와 방 중 작은 쪽**이다
     room_cap = cap.get("weaned_ceiling")
-    top_weaned = (min(CEILING["weaned"], float(room_cap))
-                  if room_cap else CEILING["weaned"])
-    room_bound = bool(room_cap) and float(room_cap) < CEILING["weaned"]
+    top_weaned = (min(PRODUCTION_CEILING["weaned"], float(room_cap))
+                  if room_cap else PRODUCTION_CEILING["weaned"])
+    room_bound = bool(room_cap) and float(room_cap) < PRODUCTION_CEILING["weaned"]
 
     def out(f, w, s):
         return crates * f * w * s * per_year
 
     now = out(fill, wl, gs)
-    top = out(CEILING["fill"], top_weaned, CEILING["survival"])
+    top = out(PRODUCTION_CEILING["fill"], top_weaned, PRODUCTION_CEILING["survival"])
 
     # 상한까지 가는 길 셋. **하나씩만** 올린다 — 합치지 않는다.
     ways = [
@@ -472,17 +475,17 @@ def throughput(cap: dict, farrow_rate: float | None = None,
          "now": round(fill * 100, 1), "target": 100.0,
          "how": f"분만율 {fr * 100:.1f}% → {FARROW_RATE_P10 * 100:.0f}% "
                 f"(설계 기준). 발정 탐지·적기 교배",
-         "gain": out(CEILING["fill"], wl, gs) - now},
+         "gain": out(PRODUCTION_CEILING["fill"], wl, gs) - now},
         {"key": "weaned", "name": "복당 이유두수", "unit": "두",
          "now": round(wl, 1), "target": round(top_weaned, 1),
          "how": ("포유 폐사 감소 · 포유능력 · 양자보내기"
                  + (f" — 방이 {top_weaned:.1f}두에서 막는다"
-                    f"(목표 {CEILING['weaned']:.0f}두)" if room_bound else "")),
+                    f"(목표 {PRODUCTION_CEILING['weaned']:.0f}두)" if room_bound else "")),
          "gain": out(fill, top_weaned, gs) - now},
         {"key": "survival", "name": "이유후 육성률", "unit": "%",
-         "now": round(gs * 100, 1), "target": CEILING["survival"] * 100,
+         "now": round(gs * 100, 1), "target": PRODUCTION_CEILING["survival"] * 100,
          "how": "AIAO · 밀도 · 환경 — 자돈사 이행항체 최저점 구간",
-         "gain": out(fill, wl, CEILING["survival"]) - now},
+         "gain": out(fill, wl, PRODUCTION_CEILING["survival"]) - now},
     ]
     for w in ways:
         w["gain"] = int(round(max(0.0, w["gain"])))
@@ -929,7 +932,7 @@ def main() -> int:
     print(f"  지금 {tp['now_year']:,}두/년 — 상한의 {tp['achieved']:.0%} "
           f"· 남은 몫 {tp['gap_year']:,}두")
     if tp["weaned_room_bound"]:
-        print(f"  ※ 복당 이유두수 상한이 목표 {CEILING['weaned']:.0f}두가 아니라 "
+        print(f"  ※ 복당 이유두수 상한이 목표 {PRODUCTION_CEILING['weaned']:.0f}두가 아니라 "
               f"{tp['top_weaned']}두다 — **방이 먼저 막는다**")
     for w in sorted(tp["ways"], key=lambda x: -x["gain"]):
         print(f"    {w['name']:<12}{w['now']}{w['unit']} → "

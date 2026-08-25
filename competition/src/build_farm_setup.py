@@ -220,7 +220,7 @@ def build() -> str:
                    "washdown": bf.WASHDOWN, "move_in": bf.MOVE_IN,
                    "down_days": bf.DOWNSTREAM_DAYS,
                    "grow_survival": bf.GROW_SURVIVAL,
-                   "ceiling": bf.CEILING,
+                   "ceiling": bf.PRODUCTION_CEILING,
                    # 한 두를 더 냈을 때 남는 돈. **총원가가 아니라 한계 이익**
                    # 이다 — 돈사·모돈·인력이 이미 있는 상태에서 빈 틀을
                    # 채우는 것이라 노무비·감가상각은 안 늘어난다.

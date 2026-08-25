@@ -28,7 +28,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 OUTDIR = os.path.join(ROOT, "notebooks")
 
-CEILING = 0.861
+import sys
+
+sys.path.insert(0, HERE)
+from train_posture_cnn import POSTURE_CEILING  # noqa: E402
+# ⚠ 이 파일은 **노트북 소스를 생성**한다. `{POSTURE_CEILING}` 처럼
+# 보간되는 자리와, 생성될 노트북 **안에서 실행될** 코드가 한 파일에
+# 섞여 있다. 노트북 안의 지역 변수는 이름이 `CEILING` 인 채로 두어야
+# 한다 — 이름을 바꾸면 노트북이 미정의 이름으로 죽는다(실제로 한 번
+# 그렇게 바꿨다가 생성물 diff 로 잡았다).
+
 MIN_FOLD = 150
 POSTURE_INPUT = "/kaggle/input/multi-view-pig-posture-recognition"
 EDIN_INPUT = "/kaggle/input/edinburgh-pig-behaviour-annotated"
@@ -181,9 +190,9 @@ def posture_nb() -> dict:
 > 않지만 23,450장으로 밑바닥부터 배우는 셈이라 성능이 크게 떨어진다.
 > 셀 출력에 `사전학습 가중치 못 받음 → scratch` 가 찍히면 그 상태다.
 
-## 목표가 아닌 것부터 — {CEILING} 은 겨냥이 아니다
+## 목표가 아닌 것부터 — {POSTURE_CEILING} 은 겨냥이 아니다
 
-{CEILING} 은 "좌/우 횡와는 bbox 기하로 원리상 구분 불가" 라는 **폐기된
+{POSTURE_CEILING} 은 "좌/우 횡와는 bbox 기하로 원리상 구분 불가" 라는 **폐기된
 전제** 위에서 나온 5클래스 상한이다. 지난 판이 그 전제를 스스로 물렀다:
 좌우한정 정확도가 **0.699**(동전 0.5)라 픽셀에는 방향 정보가 있고,
 cls5 는 **0.557** 로 상한에서 한참 아래라 **상한이 병목이 아니다.**
@@ -237,7 +246,7 @@ if not os.path.exists(os.path.join(IN, "train1.csv")):
 print("입력:", IN)
 print(" ", sorted(os.listdir(IN))[:8])
 # 등록 3 의 A — 96 → 160. 그 밖(PAD)은 그대로.
-CEILING, MIN_FOLD, CROP, PAD = {CEILING}, {MIN_FOLD}, 160, 0.12
+CEILING, MIN_FOLD, CROP, PAD = {POSTURE_CEILING}, {MIN_FOLD}, 160, 0.12
 SEEDS = (0, 1, 2)          # 등록 3 — 시드 SD 안쪽 개선은 승리로 치지 않는다
 EPOCHS, ARCH = 25, "resnet34"    # 등록 3 의 D · C
 

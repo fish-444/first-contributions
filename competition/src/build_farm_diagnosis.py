@@ -28,6 +28,8 @@ ROOT = os.path.dirname(HERE)                      # .../competition
 sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 
+import psy_priority as pp  # noqa: E402
+
 OUT = os.path.join(ROOT, "dashboard", "farm_diagnosis.html")
 PANEL_JSON = os.path.join(ROOT, "data", "farm_panel.json")
 MONTHLY_JSON = os.path.join(ROOT, "data", "farm_monthly.json")
@@ -37,7 +39,9 @@ PRIORITY_JSON = os.path.join(ROOT, "data", "psy_priority.json")
 # 예시 농장 — 실측 하위권 근처로 잡아 격차가 보이게 한다. **실제 농장이
 # 아니다.** 사용자가 자기 값을 넣으면 이 자리가 그 농장으로 바뀐다.
 DEMO_FARM = {"npd": 62.0, "weaned": 10.0, "farrowing_rate": 74.0}
-DEMO_SOWS = 300
+# 시연 기본 규모. **정본은 `psy_priority.DEMO_SOWS` 다** — 화면마다
+# 다른 두수를 보이면 같은 농장을 보는 것처럼 읽히지 않는다.
+DEMO_SOWS = pp.DEMO_SOWS
 
 MONTHS = list(range(1, 13))
 C_INK, C_ACC, C_BAD, C_GOOD, C_WARN = "#0b0b0b", "#2a78d6", "#d03b3b", "#1baf7a", "#e8a33d"
@@ -177,7 +181,6 @@ def collect() -> dict:
     monthly = json.load(open(MONTHLY_JSON, encoding="utf-8"))
     panel_month = json.load(open(MONTHLY_PANEL_JSON, encoding="utf-8"))
     # 우선순위표는 **계산하지 않고 읽는다.** 이 파일은 렌더링만 한다.
-    import psy_priority as pp
     prio = (json.load(open(PRIORITY_JSON, encoding="utf-8"))
             if os.path.exists(PRIORITY_JSON)
             else pp.build(dict(DEMO_FARM), DEMO_SOWS))

@@ -2183,10 +2183,11 @@ def test_kaggle_notebooks() -> None:
         assert ('"Lateral_lying_left": "lying"' in ptxt
                 and '"Lateral_lying_right": "lying"' in ptxt), \
             "TO3 가 좌/우를 같은 '횡와' 로 접지 않는다 — 교환이 cls3 를 흔든다"
-    assert str(bkn.CEILING) in ptxt, "원리적 상한이 노트북에 없다"
+    assert str(bkn.POSTURE_CEILING) in ptxt, "원리적 상한이 노트북에 없다"
     # 상한·MIN_FOLD 가 다른 곳과 어긋나면 안 된다
     import train_posture_cnn as tpc
-    assert bkn.CEILING == tpc.CEILING == 0.861
+    # 자세 상한은 train_posture_cnn 이 정본 — 노트북 빌더가 복제하지 않는다
+    assert bkn.POSTURE_CEILING is tpc.POSTURE_CEILING == 0.861
     assert bkn.MIN_FOLD == tpc.MIN_FOLD
 
     # 인라인 규약이 ml_core 와 같은 판정을 내는가 — 갈리면 비교가 무의미하다
@@ -3061,7 +3062,7 @@ def test_throughput_ceiling() -> None:
         f = dict(r["factors"])
         f[w["key"]] = (1.0 if w["key"] == "fill"
                        else (r["top_weaned"] if w["key"] == "weaned"
-                             else bf.CEILING["survival"]))
+                             else bf.PRODUCTION_CEILING["survival"]))
         alone = (r["crates"] * f["fill"] * f["weaned"] * f["survival"]
                  * per_year)
         assert abs((alone - r["now_year"]) - w["gain"]) < 1, (w, alone)
@@ -3078,7 +3079,7 @@ def test_throughput_ceiling() -> None:
                                               weaned_per_crate=11.0))
     assert w2["ceiling_year"] > t["ceiling_year"], (w2, t)
     # 다만 설계 목표 12두를 넘지는 않는다 — 방이 넉넉해도 돼지가 더 낳지 않는다
-    assert w2["top_weaned"] == bf.CEILING["weaned"], w2["top_weaned"]
+    assert w2["top_weaned"] == bf.PRODUCTION_CEILING["weaned"], w2["top_weaned"]
 
     # 8) 원/년은 **한계 이익**이어야 한다. 총원가로 재면 개선의 값이 작게 나온다
     m = fe.margin_per_pig()
@@ -3267,6 +3268,57 @@ def test_window_denominator_gate() -> None:
     # 분모를 안 넘긴 옛 호출은 예전대로 — 검사를 조용히 켜지 않는다
     old = bb.assess(b, suspect, heads=("estrus",))["heads"]["estrus"]
     assert old["score"] is not None
+
+
+def test_constants_have_one_home() -> None:
+    """도메인 상수 — **정본이 하나인가, 이름이 뜻마다 다른가.**
+
+    상수 690개를 훑어 남은 구멍 셋을 메운 뒤의 회귀 방지다. 값이 같아서
+    지금은 아무 증상이 없지만, 정본이 바뀔 때 한쪽만 낡는 것이 문제다 —
+    `herd_cycle` 불일치(지침 낙관 4.3%)가 정확히 그 구조였다.
+
+    지키는 것 넷: (1) 임신기간은 `breeding_timing` 하나에서 온다,
+    (2) 계절 정의·임신 개월은 `farm_monthly` 하나에서 온다(주석이 아니라
+    import 로), (3) 시연 규모는 한 곳에서 온다, (4) 뜻이 다른 상수가 같은
+    이름을 쓰지 않는다 — `CEILING`(자세 스칼라 vs 생산 dict)과
+    `STAGES`(사육단계·번식상태·축사용도)가 그랬다.
+    """
+    import batch_flow as bf
+    import breeding_timing as bt
+    import build_farm_diagnosis as bfd
+    import build_kaggle_notebooks as bkn
+    import build_season_interval as bsi
+    import farm_gap as fg
+    import farm_monthly as fm
+    import farm_monthly_panel as fmp
+    import growth_flow as gf
+    import herd_board as hb
+    import psy_priority as pp
+    import synth_farm as sf
+    import train_posture_cnn as tpc
+
+    # 1) 임신기간 — 값이 같은 것으로는 부족하다. **같은 정본에서 와야** 한다
+    assert fg.GESTATION == float(bt.GESTATION) == 115.0
+    src = open(os.path.join(ROOT, "src", "farm_gap.py"), encoding="utf-8").read()
+    assert "bt.GESTATION" in src, "farm_gap 이 임신기간을 독립 정의로 되돌렸다"
+
+    # 2) 계절 정의 — 같은 객체라야 갈릴 수 없다
+    assert fmp.SUMMER is fm.SUMMER and fmp.WINTER is fm.WINTER
+    assert sf.SUMMER is fm.SUMMER and sf.WINTER is fm.WINTER
+    assert fmp.GESTATION_MONTHS == fm.GESTATION_MONTHS == 4
+
+    # 3) 시연 규모
+    assert bfd.DEMO_SOWS == bsi.DEMO_SOWS == pp.DEMO_SOWS == 300
+
+    # 4) 이름이 뜻을 가른다 — 자세 상한(스칼라) vs 생산 상한(dict)
+    assert bkn.POSTURE_CEILING is tpc.POSTURE_CEILING == 0.861
+    assert isinstance(bf.PRODUCTION_CEILING, dict)
+    for mod in (bf, tpc, bkn):
+        assert not hasattr(mod, "CEILING"), f"{mod.__name__} 에 CEILING 이 살아났다"
+    # 사육단계 / 번식상태 / 축사용도 — 셋이 같은 이름을 쓰지 않는다
+    assert isinstance(gf.STAGES, list) and isinstance(hb.REPRO_STATES, list)
+    assert not hasattr(hb, "STAGES"), "herd_board 에 STAGES 가 되살아났다"
+    assert gf.STAGES[0][0] == "포유자돈" and hb.REPRO_STATES[0] == "후보"
 
 
 def test_manual_generated() -> None:
@@ -6295,7 +6347,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_manual_generated, test_env_scale, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_constants_have_one_home, test_manual_generated, test_env_scale, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

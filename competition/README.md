@@ -311,7 +311,7 @@ bash competition/build_all.sh          # 전체 뷰 + 허브 생성
 | **무너지는 경로를 짚는다** | 여름에 이유두수·재귀율은 그대로인데 임신사고가 1차 재발 쪽으로 +8.0%p 기운다. 임신사고의 66.9% 가 재발이고, 겨냥할 시점은 사양이 아니라 **교배 후 착상기(7~21일)** | `barn_environment.py` |
 | **무센서 개체 식별** | 기존 CCTV 만. 영상 Re-ID 로 트랙 단편화 −46%, GT ID 일관성 0.77 | `reid.py` |
 | **평가 투명성** | 개체·뷰 분리 검증, 보정곡선(Brier 0.174), 자세 LOVO 0.684 ± 0.028 | `build_eval_report.py` |
-| **재현성** | 테스트 101개 · 자체완결 대시보드 24뷰 · 외부 연결 없이 실행 | `tests/smoke_test.py` |
+| **재현성** | 테스트 102개 · 자체완결 대시보드 24뷰 · 외부 연결 없이 실행 | `tests/smoke_test.py` |
 
 ### 다루지 않는 영역 — 여기서 기대하면 안 되는 것
 
@@ -393,7 +393,7 @@ competition/
 
 ```bash
 pip install -r competition/requirements.txt
-python competition/tests/smoke_test.py        # 101/101 통과 확인
+python competition/tests/smoke_test.py        # 102/102 통과 확인
 
 # ★ 전체 시뮬레이션 — 모돈 두수 하나로 설계·흐름·성적진단·손익까지
 python competition/src/run_farm.py --sows 300

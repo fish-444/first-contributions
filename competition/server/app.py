@@ -71,7 +71,7 @@ def health() -> dict:
             "sow_turnover": bf.SOW_TURNOVER,
             "weaned_per_crate": bf.WEANED_PER_CRATE,
             "grow_survival": bf.GROW_SURVIVAL,
-            "ceiling": bf.CEILING,
+            "ceiling": bf.PRODUCTION_CEILING,
             "downstream_days": bf.DOWNSTREAM_DAYS,
             "margin_per_pig": fe.margin_per_pig()["margin"],
         },

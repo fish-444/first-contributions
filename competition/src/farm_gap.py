@@ -32,6 +32,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
+import breeding_timing as bt  # noqa: E402
+
 STATS = os.path.join(ROOT, "competition", "data", "korean_farm_stats.json")
 
 # 이 지표들만 PSY 항등식에 직접 들어간다. 나머지(분만율·재귀발정)는 NPD 를
@@ -48,7 +50,11 @@ KO = {"weaned": "이유두수(복당)", "npd": "비생산일수(연간)",
       "psy": "PSY", "turnover": "모돈회전율"}
 # 값이 클수록 좋은 지표 / 작을수록 좋은 지표
 HIGHER_BETTER = {"weaned", "farrowing_rate", "psy", "turnover"}
-GESTATION = 115.0     # 실측 중앙. 농장이 못 바꾸는 상수다.
+# 농장이 못 바꾸는 상수다. **여기서 다시 적지 않는다** — 정본은
+# `breeding_timing.GESTATION` 이고, 여기만 독립 정의로 두면 정본이 바뀔 때
+# 이 모듈만 옛 값으로 남는다. `herd_cycle` 불일치(지침 낙관 4.3%)를 만든
+# 구조가 정확히 그것이었다.
+GESTATION = float(bt.GESTATION)
 
 
 def load_stats(path: str | None = None) -> dict:

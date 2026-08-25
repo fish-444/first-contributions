@@ -46,7 +46,9 @@ sys.path.insert(0, HERE)
 CROP = 64                      # 크롭 한 변(px). CPU 4스레드에 맞춘 크기.
 CACHE = os.path.join(ROOT, "data", "posture_crops_img.npz")
 OUT_JSON = os.path.join(ROOT, "data", "posture_cnn.json")
-CEILING = 0.861                # bbox 기하의 원리적 상한 — 넘어야 의미가 있다
+# **자세** 상한이다. 생산 상한(batch_flow) 과 이름이 같으면
+# `from x import ...` 한 줄에 조용히 잘못 물린다 — 그래서 가른다.
+POSTURE_CEILING = 0.861        # bbox 기하의 원리적 상한 — 넘어야 의미가 있다
 MIN_FOLD = 150                 # posture_crossview 와 같은 기준
 PAD = 0.12                     # bbox 주변 여유. 머리 끝이 잘리면 방향이 사라진다
 
@@ -217,7 +219,7 @@ def run(epochs: int = 8, quick: bool = False) -> dict:
         "crop_px": CROP, "epochs": epochs, "folds": len(views),
         "cnn_cls5": mc.weighted(rows5), "cnn_cls3": mc.weighted(rows3),
         "left_right_binary": mc.weighted(lr_rows),
-        "ceiling_bbox": CEILING, "seconds": round(time.time() - t0),
+        "ceiling_bbox": POSTURE_CEILING, "seconds": round(time.time() - t0),
     }
     # 기준선 — ml_core 로 같은 폴드 규약에서 낸다
     out["baseline_cls5"] = mc.majority_baseline(full, "cls", "view", MIN_FOLD)

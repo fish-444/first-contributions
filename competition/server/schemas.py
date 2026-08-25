@@ -15,13 +15,13 @@ from pydantic import BaseModel, Field
 # 만들면 서버가 받아 준 값을 도메인 모듈이 거절한다.
 import farm_registry as fr  # noqa: E402
 
-STAGES = tuple(fr.BARN_STAGES)
+BARN_STAGES = tuple(fr.BARN_STAGES)   # 별칭 이름도 원본과 같게 둔다
 HOUSINGS = tuple(fr.HOUSING)
 
 
 class Barn(BaseModel):
     name: str = Field(..., max_length=40)
-    stage: str = Field(..., description=f"축사 용도 — {', '.join(STAGES)}")
+    stage: str = Field(..., description=f"축사 용도 — {', '.join(BARN_STAGES)}")
     rooms: int = Field(..., ge=1, le=99)
     per: int = Field(..., ge=1, le=9999, description="방당 자리(분만사는 분만틀 수)")
     housing: str = "group"
