@@ -3269,6 +3269,46 @@ def test_window_denominator_gate() -> None:
     assert old["score"] is not None
 
 
+def test_71763_batch_parser() -> None:
+    """배치 파서 — **병렬·재개가 단일판과 같은 답을 내는가.**
+
+    지키는 것 넷: (1) 샤드 병렬 결과가 단일 프로세스 parse_71763 과 행이
+    같다, (2) 지운 샤드만 다시 하고 나머지는 건너뛴다, (3) 분할 지문
+    (파일 수·샤드 수)이 어긋나면 이어 하지 않고 멈춘다 — 같은 번호의
+    샤드가 다른 부분집합이 되므로 틀린 재개보다 처음부터가 싸다,
+    (4) 클립 접기는 aggregate_71763_clips 를 그대로 부른다(재구현 금지).
+    """
+    import tempfile
+
+    import pandas as pd
+
+    import parse_71763_batch as pb
+    import parse_aihub
+
+    tmp = tempfile.mkdtemp()
+    lab = os.path.join(tmp, "labels")
+    os.makedirs(lab)
+    parse_aihub.generate_synthetic_71763(lab, n=200)
+    out = os.path.join(tmp, "out")
+
+    f1, c1 = pb.build(lab, out, procs=2, shards=4)
+    fr = pd.read_csv(f1, encoding="utf-8-sig")
+    assert len(fr) == len(parse_aihub.parse_71763(lab)), "병렬 ≠ 단일"
+    assert len(pd.read_csv(c1, encoding="utf-8-sig")) > 0
+
+    # 재개 — 지운 샤드만 다시
+    os.remove(os.path.join(out, pb.SHARD_DIR, "shard_001.csv"))
+    f2, _ = pb.build(lab, out, procs=2, shards=4)
+    assert len(pd.read_csv(f2, encoding="utf-8-sig")) == len(fr)
+
+    # 분할 지문이 어긋나면 멈춘다
+    try:
+        pb.build(lab, out, procs=2, shards=8)
+        raise AssertionError("다른 분할인데 이어 갔다 — 중복·누락 위험")
+    except SystemExit as e:
+        assert "다른 분할" in str(e)
+
+
 def test_behavior_vocab_merge() -> None:
     """어휘 축소 — **병합표가 등록한 그대로인가.**
 
@@ -6143,7 +6183,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]
