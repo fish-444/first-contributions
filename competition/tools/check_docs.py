@@ -41,7 +41,9 @@ DOCS = [os.path.join(COMP, "README.md"),
         os.path.join(COMP, "docs", "REPORT_PACK.md"),
         # 보고서 입력 자료 — 같은 이유로 감시한다. 이쪽은 "무엇을 주는가 ·
         # 무엇을 했는가 · 무엇으로 했는가" 세 축으로 다시 묶은 판이다.
-        os.path.join(COMP, "docs", "REPORT_INPUT.md")]
+        os.path.join(COMP, "docs", "REPORT_INPUT.md"),
+        # 요약본 — 한 장짜리라 더 잘 퍼 날라진다. 그만큼 더 잘 낡는다.
+        os.path.join(COMP, "docs", "SUMMARY.md")]
 # MANUAL.md 는 **여기 안 넣는다.** 생성된 모듈 색인이라 본문 주장을 담지
 # 않는데, 이 목록에 넣으면 "재발 66.9% 를 인용해야 한다" 같은 내용 검사가
 # 색인에까지 걸린다. 신선도는 `test_manual_generated` 가 지킨다 — 저장된
