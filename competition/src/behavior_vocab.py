@@ -79,6 +79,10 @@ def run(df: pd.DataFrame | None = None) -> dict:
     if df is None:
         df = pd.read_csv(DATA)
     df = tfeat.add_temporal(beh.add_motion(df))
+    # 라벨 없는 행을 먼저 뺀다. 안 빼면 아래 `where(...)` 가 NaN 을 실재
+    # 클래스 'other' 로 만들어, 정본 파이프라인(model_edinburgh_behavior)과
+    # 갈린다 — 지금 CSV 엔 NaN 이 0 건이라 증상이 없지만 재파싱하면 갈린다.
+    df = df[df["behavior"].notna()]
     vc = df["behavior"].value_counts()
     keep = set(vc[vc >= beh.MIN_COUNT].index)
     df["behavior"] = df["behavior"].where(df["behavior"].isin(keep), "other")

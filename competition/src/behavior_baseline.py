@@ -210,7 +210,7 @@ def _calibrate_cut(scores: np.ndarray, band: tuple = RATE_BAND) -> float | None:
     return best
 
 
-def measurable(baseline: Baseline, probs: dict, n_used: int | None,
+def measurable(baseline: Baseline, n_used: int | None,
                head: str) -> str | None:
     """이 창의 분모로 이 헤드를 **잴 수 있는가.** 못 재면 이유를 낸다.
 
@@ -223,6 +223,10 @@ def measurable(baseline: Baseline, probs: dict, n_used: int | None,
     나온다. 검출 300개인 창과 3개인 창을 같은 무게로 넣던 것이 이 층의
     구멍이었고, 미측정 채널을 0 으로 채워 z≈−7.4 를 만들던 결함과 같은
     계열이다.
+
+    창의 구성비(`probs`)를 **받지 않는다.** 인자로 두면 다음 사람이 "이 창의
+    분포가 판정에 들어가는구나" 로 읽는데, 그게 바로 처음에 잘못 짰던
+    방식이다 — 시그니처가 계약을 말하게 둔다.
     """
     if n_used is None or baseline.n_typical is None:
         return None                     # 분모를 모르면 검사하지 않는다
@@ -272,7 +276,7 @@ def assess(baseline: Baseline, probs: dict, recent: list | None = None,
         if heads is not None and head not in heads:
             continue
         score = baseline.head_score(probs, head)
-        unmeasurable = measurable(baseline, probs, n_used, head)
+        unmeasurable = measurable(baseline, n_used, head)
         if unmeasurable:
             score = None                # 못 재는 창은 점수를 내지 않는다
         cut = baseline.cuts.get(head)
@@ -281,6 +285,12 @@ def assess(baseline: Baseline, probs: dict, recent: list | None = None,
                        and score >= cut) else 0
         if streak and need > 1 and recent:
             for h in reversed(recent[-(need - 1):]):
+                # **직전 창도 같은 게이트를 지난다.** 현재 창만 막으면
+                # 얇은 직전 창이 표본 잡음으로 컷을 넘어 streak 을 채우고,
+                # 막으려던 허위 경보가 뒷문으로 들어온다. `summarize()` 가
+                # 창마다 COUNT_KEY 를 실어 주므로 분모는 여기 이미 있다.
+                if measurable(baseline, h.get(COUNT_KEY), head):
+                    break               # 못 잰 창은 연속을 잇지 못한다
                 s = baseline.head_score(h, head)
                 if s is not None and s >= cut:
                     streak += 1

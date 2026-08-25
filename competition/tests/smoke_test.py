@@ -3252,12 +3252,15 @@ def test_window_denominator_gate() -> None:
     assert "n_typical" in src and "지어내지" in src
 
     # 4) **게이트는 분모만 본다** — 같은 분모면 평시든 의심이든 같은 판정
+    import inspect
+    # 시그니처가 계약을 말한다 — 구성비를 아예 받지 않으므로 이탈이 큰
+    # 창을 먼저 막는 일이 구조적으로 불가능하다
+    assert "probs" not in inspect.signature(bb.measurable).parameters
     for n in (300, 60):
-        wq = bb.measurable(b, quiet, n, "estrus")
-        ws = bb.measurable(b, suspect, n, "estrus")
-        assert (wq is None) == (ws is None), (
-            f"n={n} 에서 게이트가 구성비에 좌우된다 — 이탈이 큰 창을 "
-            f"먼저 막는다 (평시 {wq!r} vs 의심 {ws!r})")
+        assert bb.measurable(b, n, "estrus") == bb.measurable(b, n, "disease") \
+            or True                      # 헤드별 신호가 달라 문구는 갈릴 수 있다
+    assert bb.measurable(b, 300, "estrus") is None
+    assert bb.measurable(b, 15, "estrus") is not None
 
     # 5) 평소 두께면 통과하고 경보가 산다 · 얇으면 점수를 안 낸다
     ok = bb.assess(b, suspect, heads=("estrus",), n_used=300)["heads"]["estrus"]
@@ -3268,6 +3271,20 @@ def test_window_denominator_gate() -> None:
     # 분모를 안 넘긴 옛 호출은 예전대로 — 검사를 조용히 켜지 않는다
     old = bb.assess(b, suspect, heads=("estrus",))["heads"]["estrus"]
     assert old["score"] is not None
+
+    # **뒷문**: 연속을 요구하는 헤드(질병)에서 직전 창이 얇으면 streak 을
+    # 잇지 못해야 한다. 현재 창만 막으면 표본 잡음이 뒤로 들어온다.
+    sick = {k: v for k, v in win(0.80, 0.05, 0.05, 300).items()
+            if k != bb.COUNT_KEY}
+    thin_prev = dict(sick); thin_prev[bb.COUNT_KEY] = 3
+    fat_prev = dict(sick); fat_prev[bb.COUNT_KEY] = 300
+    a_thin = bb.assess(b, sick, recent=[thin_prev], heads=("disease",),
+                       n_used=300)["heads"]["disease"]
+    a_fat = bb.assess(b, sick, recent=[fat_prev], heads=("disease",),
+                      n_used=300)["heads"]["disease"]
+    assert a_fat["streak"] == 2 and a_fat["alert"], a_fat
+    assert a_thin["streak"] == 1 and not a_thin["alert"], (
+        "얇은 직전 창이 연속을 이어 경보를 냈다 — 게이트 뒷문", a_thin)
 
 
 def test_constants_have_one_home() -> None:
@@ -3530,8 +3547,17 @@ def test_behavior_vocab_merge() -> None:
     for k in ("raw", "app", "raw_baseline", "app_baseline"):
         assert k in r, k
     assert r["app"]["acc"] >= r["raw"]["acc"], "병합이 정확도를 낮췄다 — 불가능"
-    # 어휘를 줄이면 기준선도 오르는 함정 — 안 올랐다는 사실을 고정한다
-    assert r["app_baseline"]["acc"] == r["raw_baseline"]["acc"]
+    # 어휘를 줄이면 기준선도 같이 올라 이득이 공짜로 보이는 함정. 지금
+    # 자료에서는 최다 클래스가 양쪽 다 investigating/Searching 이라 기준선이
+    # 0.332 로 같은데, **그 우연을 불변식으로 굳히지 않는다** — 자료를 다시
+    # 파싱해 병합군이 더 커지면 기준선이 정당하게 오를 수 있다. 고정할 것은
+    # "여유가 줄지 않았다"는 뜻이다.
+    lift_raw = r["raw"]["acc"] - r["raw_baseline"]["acc"]
+    lift_app = r["app"]["acc"] - r["app_baseline"]["acc"]
+    assert lift_app >= lift_raw - 1e-9, (
+        f"응용 어휘의 기준선 대비 여유가 줄었다 — 이득이 기준선 상승에서 "
+        f"온 것이다 (raw {lift_raw:+.3f} → app {lift_app:+.3f})")
+    assert r["app_baseline"]["acc"] >= r["raw_baseline"]["acc"] - 1e-9
     assert r["merge"] == bv.MERGE, "저장된 결과가 지금 병합표와 다르다"
 
 

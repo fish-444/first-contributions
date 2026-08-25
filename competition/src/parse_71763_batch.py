@@ -103,14 +103,25 @@ def parse_frames(label_dir: str, out_dir: str, procs: int = DEFAULT_PROCS,
     fp = {"n_paths": len(paths), "shards": shards,
           "first": paths[0], "last": paths[-1]}
     if os.path.exists(manifest):
-        prev = json.load(open(manifest, encoding="utf-8"))
+        try:
+            prev = json.load(open(manifest, encoding="utf-8"))
+        except json.JSONDecodeError:    # 쓰다 죽은 반쪽 — 무엇을 지울지 말해 준다
+            raise SystemExit(
+                "샤드 분할 지문(%s)이 깨져 있다 — 어느 분할의 샤드인지 알 수 "
+                "없어 이어 할 수 없다. %s 를 지우고 다시 실행할 것"
+                % (manifest, shard_dir)) from None
         if prev != fp:
             raise SystemExit(
                 "샤드가 다른 분할로 만들어져 있다 — 이어 하면 중복·누락이 "
                 "섞인다.\n  이전: %s\n  지금: %s\n  %s 를 지우고 다시 "
                 "실행할 것" % (prev, fp, shard_dir))
     else:
-        json.dump(fp, open(manifest, "w", encoding="utf-8"))
+        # 샤드와 같은 규율로 쓴다. 예전엔 여기만 바로 썼는데, 이 모듈이
+        # 존재하는 이유가 "쓰다 죽는다"라서 반쪽 manifest 가 남으면 이후
+        # 모든 재개가 JSONDecodeError 로 죽는다 — 안내도 없이.
+        with open(manifest + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(fp, fh)
+        os.replace(manifest + ".tmp", manifest)
     if verbose:
         print("파일 %d개 · 목록 %.0fs" % (len(paths), time.time() - t0),
               flush=True)
@@ -164,28 +175,24 @@ def build(label_dir: str, out_dir: str, procs: int = DEFAULT_PROCS,
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
+    # 손으로 파싱하다 `--procs` 를 값 없이 주면 int(None) 으로 죽었다.
+    # argparse 가 저장소 관례이고 그런 오류를 공짜로 알려 준다.
+    import argparse
+    ap = argparse.ArgumentParser(description="71763 라벨 → 프레임·클립 CSV")
+    ap.add_argument("label_dir", nargs="?")
+    ap.add_argument("--out")
+    ap.add_argument("--procs", type=int, default=DEFAULT_PROCS)
+    ap.add_argument("--shards", type=int, default=DEFAULT_SHARDS)
+    ap.add_argument("--clean", action="store_true",
+                    help="프레임·클립 CSV 가 둘 다 나온 뒤에만 샤드를 지운다")
+    a = ap.parse_args(sys.argv[1:] if argv is None else argv)
 
-    def _opt(name, default=None):
-        if name in args:
-            i = args.index(name)
-            v = args[i + 1] if i + 1 < len(args) else None
-            del args[i:i + 2]
-            return v
-        return default
-
-    clean = "--clean" in args
-    if clean:
-        args.remove("--clean")
-    out_dir = _opt("--out")
-    procs = int(_opt("--procs", DEFAULT_PROCS))
-    shards = int(_opt("--shards", DEFAULT_SHARDS))
-
-    label_dir = args[0] if args else None
+    label_dir, clean = a.label_dir, a.clean
+    procs, shards = a.procs, a.shards
     if not (label_dir and os.path.isdir(label_dir)):
         print(__doc__.split("실행:")[1].strip())
         return 1
-    out_dir = out_dir or os.path.dirname(os.path.abspath(label_dir))
+    out_dir = a.out or os.path.dirname(os.path.abspath(label_dir))
 
     frames_csv, clips_csv = build(label_dir, out_dir, procs, shards)
     if clean:

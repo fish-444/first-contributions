@@ -44,6 +44,9 @@
   돈다. 아래 `span_note` 가 이 상황을 스스로 찍는다.
 - pig_class → 지침 단계 대응은 **체중 기준 우리 해석**이다(조문·지침에
   같은 낱말이 없다). 출력이 그 사실을 달고 다닌다.
+- **부채**: `run()` 의 표시 루프가 행 단위다(단계마다 대역이 달라 그렇게
+  짰다). 클립 수천 건에서는 문제가 없지만 농장 로그 수백만 행이 오면
+  단계별 벡터화가 필요하다 — 동결 앞이라 지금 바꾸지 않는다.
 
 실행:
     python competition/src/env_scale.py --clips <출력>/clips_71763.csv
@@ -80,7 +83,7 @@ STAGE_MAP = {
 }
 
 
-def span_note(values: pd.Series, stage: str, gsensor: str,
+def span_note(values: pd.Series, stages: pd.Series, gsensor: str,
               guide: dict) -> str | None:
     """이력 폭이 **지침 대역보다 좁으면** 실농장 센서가 아니라고 말한다.
 
@@ -94,21 +97,37 @@ def span_note(values: pd.Series, stage: str, gsensor: str,
     뜻이라, 이 비교에는 발명한 상수가 없다.
 
     71763 이 정확히 이 경우다: temp_c 폭 2.6℃ < 적온 대역 폭 5℃.
+
+    **단계별로 갈라 잰다.** 한 그룹에 여러 성장단계가 섞이면 단계마다
+    설정 온도가 달라 폭이 그 차이만큼 부풀고, 각 단계 안에서는 센서가
+    거의 안 움직였는데도 경고가 안 나온다 — 잡으려던 것을 놓친다.
+    대역도 단계마다 다르므로 어차피 같이 갈라야 맞다.
     """
-    if gsensor not in ("temp_c", "rh_pct") or not isinstance(stage, str):
-        return None
-    x = pd.to_numeric(values, errors="coerce").dropna()
-    if len(x) < 2:
+    if gsensor not in ("temp_c", "rh_pct"):
         return None
     band = guide["temp"] if gsensor == "temp_c" else guide["rh"]
-    lo, hi = band.get(stage, band["임신돈·웅돈"])
-    span, width = float(x.max() - x.min()), float(hi - lo)
-    if span >= width:
-        return None
     unit = "℃" if gsensor == "temp_c" else "%"
-    return (f"이력 폭 {span:.1f}{unit} < 지침 대역 폭 {width:.1f}{unit} — "
-            "통제 환경이거나 센서가 굳었다. 이 산포로 잡은 문턱을 농장에 "
-            "옮기지 말 것")
+    x = pd.to_numeric(values, errors="coerce")
+    worst = None
+    for stage, idx in stages.dropna().groupby(stages.dropna()).groups.items():
+        if not isinstance(stage, str):
+            continue
+        v = x.reindex(idx).dropna()
+        if len(v) < 2:
+            continue
+        lo, hi = band.get(stage, band["임신돈·웅돈"])
+        span, width = float(v.max() - v.min()), float(hi - lo)
+        if span >= width:
+            continue
+        # 여럿이 걸리면 가장 좁은 것을 대표로 — 제일 의심스러운 자리다
+        if worst is None or span < worst[0]:
+            worst = (span, width, stage)
+    if worst is None:
+        return None
+    span, width, stage = worst
+    return (f"{stage} 이력 폭 {span:.1f}{unit} < 지침 대역 폭 "
+            f"{width:.1f}{unit} — 통제 환경이거나 센서가 굳었다. 이 산포로 "
+            "잡은 문턱을 농장에 옮기지 말 것")
 
 
 def scale_key(values: pd.Series) -> dict:
@@ -151,9 +170,7 @@ def run(df: pd.DataFrame, key: str = "chamber") -> pd.DataFrame:
             s = scale_key(g[col])
             d.loc[g.index, col + "_scaled"] = s["scaled"].round(3)
             if gsensor:
-                st = g["_stage"].dropna()
-                note = span_note(g[col], st.iloc[0] if len(st) else None,
-                                 gsensor, guide)
+                note = span_note(g[col], g["_stage"], gsensor, guide)
                 if note:
                     spans[(k, col)] = note
             for i in g.index:
@@ -174,7 +191,9 @@ def run(df: pd.DataFrame, key: str = "chamber") -> pd.DataFrame:
                 elif over_dev:
                     d.at[i, col + "_flag"] = "주의(평소 범위 밖)"
     d.attrs["span_notes"] = spans
-    return d
+    # 내부 헬퍼 열은 내보내지 않는다 — 반환 계약에 없는 열이 CSV 로 새면
+    # 받는 쪽이 구현 세부를 붙들게 된다.
+    return d.drop(columns=["_stage"])
 
 
 def summary(d: pd.DataFrame, key: str = "chamber") -> list:
