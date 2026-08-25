@@ -29,10 +29,19 @@
 
 ## 한계 (미리 적는다)
 
-- 71763 의 온·습·환기는 **4개 챔버의 실험 설계값**이다(설정 조합이 그룹을
-  거의 유일 특정 — AIHUB_71763.md 1-B). 여기서 만든 기준선은 "그 챔버
-  실험 조건의 평소"이지 농장 정상이 아니다. 이 모듈의 값어치는 수치가
-  아니라 **배선**이다 — 농장 센서 로그가 오면 같은 명령이 그대로 돈다.
+- 71763 의 온·습·환기는 **4개 챔버의 실험 설계값**이다. 전수 파싱
+  3,944클립의 실측 분포가 그것을 말한다(71763_PARSE 4절):
+
+        temp_c    24.5 ~ 27.1  (폭 2.6℃)
+        humidity  16.1 ~ 35.8 %
+        nh3_ppm    7.2 ~  9.3
+        ventilation 1.3 ~  2.8
+
+  실농장이면 온도가 계절·주야로 20℃ 이상 흔들리고 습도는 통상 50~80% 다.
+  **여기서 뽑은 σ 로 문턱을 잡아 농장에 옮기면 거의 모든 시점이 이상으로
+  찍힌다** — 챔버 2.6℃ 산포가 분모이기 때문이다. 이 모듈의 값어치는
+  수치가 아니라 **배선**이다: 농장 센서 로그가 오면 같은 명령이 그대로
+  돈다. 아래 `span_note` 가 이 상황을 스스로 찍는다.
 - pig_class → 지침 단계 대응은 **체중 기준 우리 해석**이다(조문·지침에
   같은 낱말이 없다). 출력이 그 사실을 달고 다닌다.
 
@@ -71,6 +80,37 @@ STAGE_MAP = {
 }
 
 
+def span_note(values: pd.Series, stage: str, gsensor: str,
+              guide: dict) -> str | None:
+    """이력 폭이 **지침 대역보다 좁으면** 실농장 센서가 아니라고 말한다.
+
+    한 돈사의 온도 이력 전체가 적온 대역(예: 비육돈 16~21℃, 폭 5℃)보다
+    좁게 움직인다면, 그건 계절도 주야도 없는 곳이다 — 통제 챔버이거나
+    센서가 굳은 것이다. 어느 쪽이든 **그 산포로 잡은 문턱을 농장에 옮기면
+    안 된다.**
+
+    자를 여기서 만들지 않았다. 비교 대상이 지침 대역 폭 그 자체다 —
+    "농장이 정상으로 오갈 수 있다고 지침이 인정한 폭"보다도 안 움직였다는
+    뜻이라, 이 비교에는 발명한 상수가 없다.
+
+    71763 이 정확히 이 경우다: temp_c 폭 2.6℃ < 적온 대역 폭 5℃.
+    """
+    if gsensor not in ("temp_c", "rh_pct") or not isinstance(stage, str):
+        return None
+    x = pd.to_numeric(values, errors="coerce").dropna()
+    if len(x) < 2:
+        return None
+    band = guide["temp"] if gsensor == "temp_c" else guide["rh"]
+    lo, hi = band.get(stage, band["임신돈·웅돈"])
+    span, width = float(x.max() - x.min()), float(hi - lo)
+    if span >= width:
+        return None
+    unit = "℃" if gsensor == "temp_c" else "%"
+    return (f"이력 폭 {span:.1f}{unit} < 지침 대역 폭 {width:.1f}{unit} — "
+            "통제 환경이거나 센서가 굳었다. 이 산포로 잡은 문턱을 농장에 "
+            "옮기지 말 것")
+
+
 def scale_key(values: pd.Series) -> dict:
     """한 돈사·한 센서의 값들 → {center, spread, cut, scaled}.
 
@@ -101,6 +141,7 @@ def run(df: pd.DataFrame, key: str = "chamber") -> pd.DataFrame:
     d["_stage"] = d.get("pig_class", pd.Series(index=d.index)).map(STAGE_MAP)
     guide = {"temp": bec.TEMP_GUIDE, "rh": bec.RH_GUIDE,
              "nh3": bec.NH3_LIMIT, "h2s": bec.H2S_LIMIT}
+    spans: dict = {}
     for col, gsensor in SENSORS.items():
         if col not in d.columns:
             continue
@@ -109,6 +150,12 @@ def run(df: pd.DataFrame, key: str = "chamber") -> pd.DataFrame:
         for k, g in d.groupby(key, dropna=False):
             s = scale_key(g[col])
             d.loc[g.index, col + "_scaled"] = s["scaled"].round(3)
+            if gsensor:
+                st = g["_stage"].dropna()
+                note = span_note(g[col], st.iloc[0] if len(st) else None,
+                                 gsensor, guide)
+                if note:
+                    spans[(k, col)] = note
             for i in g.index:
                 val = pd.to_numeric(g.at[i, col], errors="coerce")
                 if pd.isna(val):
@@ -126,6 +173,7 @@ def run(df: pd.DataFrame, key: str = "chamber") -> pd.DataFrame:
                         else f"위험({state})·센서 치우침·교정 확인")
                 elif over_dev:
                     d.at[i, col + "_flag"] = "주의(평소 범위 밖)"
+    d.attrs["span_notes"] = spans
     return d
 
 
@@ -168,6 +216,8 @@ def main(argv=None) -> int:
                   for c in row if c.endswith("_주의") and row[c]]
         print(f"  {a.key}={row[a.key]}  n={row['n']}  "
               + (" · ".join(parts) if parts else "표시 없음"))
+    for (k, col), note in (d.attrs.get("span_notes") or {}).items():
+        print(f"  ⚠ {a.key}={k} · {col}: {note}")
     print(f"\n  → {out}")
     print("  ⚠ 지침 정본: barn_env_control(TEMP_GUIDE·RH_GUIDE·NH3 15ppm)")
     print("  ⚠ pig_class→단계 대응은 체중 기준 우리 해석이다")

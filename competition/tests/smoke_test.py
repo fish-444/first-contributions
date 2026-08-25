@@ -3325,7 +3325,20 @@ def test_env_scale() -> None:
     f1 = d.loc[d.chamber == 1, "temp_c_flag"]
     assert not f1.str.startswith("위험").any()
 
-    # 5) 지침 상수를 재선언하지 않는다 — 정본은 barn_env_control
+    # 5) 이력 폭이 지침 대역보다 좁으면 "농장 센서가 아니다"라고 말한다.
+    #    71763 실측 분포(temp 24.5~27.1, 폭 2.6℃)를 그대로 넣어 본다 —
+    #    이 데이터로 뽑은 문턱을 농장에 옮기면 거의 전 시점이 이상으로
+    #    찍히므로, 조용히 지나가면 안 되는 자리다.
+    cham = pd.DataFrame({"chamber": ["챔버1"] * n, "pig_class": ["porker"] * n,
+                         "temp_c": rng.uniform(24.5, 27.1, n)})
+    notes = es.run(cham).attrs["span_notes"]
+    assert notes and "옮기지 말 것" in list(notes.values())[0], notes
+    # 계절·주야가 있는 실농장은 걸리지 않는다
+    farm = pd.DataFrame({"chamber": ["농장A"] * n, "pig_class": ["porker"] * n,
+                         "temp_c": rng.uniform(8.0, 30.0, n)})
+    assert not es.run(farm).attrs["span_notes"]
+
+    # 6) 지침 상수를 재선언하지 않는다 — 정본은 barn_env_control
     src = open(os.path.join(ROOT, "src", "env_scale.py"),
                encoding="utf-8").read()
     for lit in ("16.0, 21.0", "15.0   # ppm", "TEMP_GUIDE = {"):
