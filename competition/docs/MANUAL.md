@@ -5,7 +5,7 @@
 > docstring 에서 뽑는다 — **손으로 고치지 말 것.** 설명을 바꾸려면
 > 모듈의 docstring 을 고친다.
 
-**규모**: 도메인·모델 모듈 83개 · 빌더 26개 (src 109개) · 대시보드 뷰 24개 · 테스트 102개
+**규모**: 도메인·모델 모듈 84개 · 빌더 27개 (src 111개) · 대시보드 뷰 25개 · 테스트 103개
 
 ## 먼저 읽을 것 셋
 
@@ -123,6 +123,7 @@ python competition/src/table_export.py --sheet capacity
 | `behavior_head_train` | 행동 헤드 가중치 학습 — **등가중을 이길 때만** 교체 후보가 된다. | `직접 실행` |
 | `behavior_vocab` | 행동 어휘 축소 — **응용이 쓰는 넷으로 접어서 다시 잰다.** | `직접 실행` |
 | `bio_baseline_71763` | 71763 생체지표 **평균 0 기준표** — 사양관리용 이상치 문턱. | `직접 실행` |
+| `env_anomaly` | 축사 환경(온·습·환기) 이상치 탐지 — 사분위 표시 + 날짜별 추이 + 알림 목록. | `직접 실행` |
 | `env_scale` | 돈사 환경 −1~1 편차 스케일 + 지침 위험 표시 — 71763 클립 CSV 를 먹는다. | `직접 실행` |
 | `vision_pig_behavior` | 업로드된 행동 분할 모델을 `vision_contract` 에 꽂는 어댑터. | `직접 실행` |
 
@@ -138,6 +139,9 @@ python competition/src/behavior_head_train.py     # 합성 시연 (등급 합성
 python competition/src/behavior_vocab.py        # 병합 전/후 재측정
 python competition/src/bio_baseline_71763.py --clips clips.csv
 python competition/src/bio_baseline_71763.py <라벨디렉터리>
+python competition/src/env_anomaly.py <71763_라벨디렉터리>
+python competition/src/env_anomaly.py --clips clips.csv
+python competition/src/env_anomaly.py --synthetic     # 배관 검증용(합성)
 python competition/src/env_scale.py --clips <출력>/clips_71763.csv
 python competition/src/env_scale.py --clips barn_log.csv --key barn
 python competition/src/vision_pig_behavior.py            # 접목 상태 점검
@@ -313,6 +317,7 @@ python competition/src/parse_pig_polygon.py <디렉터리>   # 실데이터 파�
 | `build_dashboard_hub` | 통합 대시보드 허브 — 6개 웹 뷰 + 리포트를 한 랜딩에서 네비게이션. | `직접 실행` |
 | `build_detection_viewer` | 돼지 탐지 뷰어 프론트 — 파일명/축사(pen)/소스로 검색 → 탐지 즉시 표시. | `직접 실행` |
 | `build_edinburgh_dashboard` | Edinburgh 실데이터 → 활동 모니터링 대시보드(HTML). | `직접 실행` |
+| `build_env_anomaly` | 환경 이상치 화면 — 온·습·환기 사분위 밴드 + 날짜별 추이 + 알림 목록. | `직접 실행` |
 | `build_estrus_timeline` | 개체 추적 → 개체별 발정 타임라인 (실영상). | `직접 실행` |
 | `build_eval_report` | 평가 리포트 — 혼동행렬·PR·ROC·보정곡선 (심사 신뢰도). | `직접 실행` |
 | `build_farm_diagnosis` | 실측 진단 대시보드 — 466농장 분포·격차·패널을 화면에 올린다. | `직접 실행` |
@@ -345,6 +350,7 @@ python competition/src/build_dashboard.py <cctv_dir> <mgmt.csv> # 실데이터
 python competition/src/build_dashboard_hub.py
 python competition/src/build_detection_viewer.py [데이터셋경로]
 python competition/src/build_edinburgh_dashboard.py [frames.csv|라벨디렉터리]
+python competition/src/build_env_anomaly.py
 python competition/src/build_estrus_timeline.py [녹화폴더] [color.mp4]
 python competition/src/build_eval_report.py
 python competition/src/build_farm_diagnosis.py

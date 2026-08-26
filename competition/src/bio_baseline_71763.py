@@ -50,6 +50,16 @@ Z_THRESHOLD = 3.0
 FLAG_BAND = (0.5, 5.0)
 #: z 탐색 격자. 2.0 미만은 정상 개체를 너무 많이 부르고, 6.0 초과는 사실상 무발화다.
 Z_GRID = [round(2.0 + 0.1 * i, 1) for i in range(41)]
+#: 분위 문턱에서 한쪽 꼬리로 떼어낼 비율(%). 양쪽이므로 알림률은 2배가 된다.
+#  z 문턱이 전량 데이터에서 전 필드 0건이 된 뒤의 대안이다 — 근거는 모듈 상단.
+TAIL_PCT = 2.5
+#  **왜 0건이었는지는 자료 사고가 아니라 분포의 성질이다.** 균등분포에서는
+#  robust_sd = 1.4826×MAD ≈ 0.37×범위 이고 최대 편차가 0.5×범위 라서
+#  **최대 |z| 가 1.35 를 못 넘는다**(정규분포는 4 를 넘는다). Z_GRID 가
+#  2.0 에서 시작하므로 균등에 가까운 분포는 어떤 z 로도 한 건도 안 걸린다.
+#  71763 의 환경값은 실험 설계 격자라 거의 균등이고, 생체지표도 챔버·성장
+#  단계로 통제돼 꼬리가 얇다. **꼬리가 없으면 잡을 이상도 없다** — 그래서
+#  분위 문턱이 부르는 5% 는 '이상'이 아니라 '이 집단의 끝'이다.
 
 
 def robust_sd(s: pd.Series) -> float:
@@ -121,6 +131,52 @@ def fit_threshold(dev: pd.Series, rsd: float) -> tuple:
         if best is None or score < best[0]:
             best = (score, z, pct)
     return best[1], best[2]
+
+
+def build_baseline_quantile(clips: pd.DataFrame,
+                           fields: list[str] | None = None,
+                           tail_pct: float = TAIL_PCT) -> pd.DataFrame:
+    """분위 문턱 기준표 — 편차 상·하위 `tail_pct`% 를 잘라낸다.
+
+    z 문턱과 결정적으로 다른 점: **문턱이 반드시 잡힌다.** 분포 모양과
+    무관하게 알림률이 2×tail_pct 로 고정되기 때문이다. 전량 데이터에서
+    z 방식이 7개 필드 전부 0건이 된 뒤의 대안이 이것이다.
+
+    대가가 있다. z 문턱은 "산포 대비 몇 배나 벗어났는가"를 물어 정말로
+    이상한 게 없으면 0건을 낸다. 분위 문턱은 정상만 있어도 늘 5% 를 부른다 —
+    **'이상'이 아니라 '이 집단에서 가장 끝'이라는 뜻으로만 읽어야 한다.**
+    그래서 cut_lo/cut_hi 옆에 sd_ratio(문턱이 robust_sd 의 몇 배인가)를 같이
+    낸다. 이 값이 2 보다 한참 작으면 잘라낸 끝값이 산포 안에 있다는 뜻이고,
+    그 필드의 알림은 우선순위를 낮춰야 한다.
+
+    반환 열: field, center, n, robust_sd, cut_lo, cut_hi, sd_ratio,
+             p50, n_flagged, flagged_pct
+    """
+    fields = fields or BIO_FIELDS
+    rows = []
+    for c in fields:
+        if c not in clips.columns:
+            continue
+        g = clips.dropna(subset=[c])
+        if len(g) < 100 or CENTER_BY not in g.columns:
+            continue
+        dev = g.groupby(CENTER_BY)[c].transform(lambda s: s - s.mean())
+        rsd = robust_sd(dev)
+        lo = float(dev.quantile(tail_pct / 100))
+        hi = float(dev.quantile(1 - tail_pct / 100))
+        flag = (dev < lo) | (dev > hi)
+        # 문턱이 산포 대비 어디쯤인가. 작을수록 '끝'일 뿐 '이상'이 아니다.
+        ratio = (min(abs(lo), abs(hi)) / rsd) if rsd else float("nan")
+        rows.append({
+            "field": c, "center": CENTER_BY, "n": len(g),
+            "robust_sd": round(rsd, 3),
+            "cut_lo": round(lo, 2), "cut_hi": round(hi, 2),
+            "sd_ratio": round(ratio, 2),
+            "p50": round(dev.median(), 2),
+            "n_flagged": int(flag.sum()),
+            "flagged_pct": round(float(flag.mean() * 100), 1),
+        })
+    return pd.DataFrame(rows)
 
 
 def variance_split(clips: pd.DataFrame,
@@ -195,8 +251,36 @@ def centers_table(clips: pd.DataFrame,
     return pd.DataFrame(rows)
 
 
+def report_quantile(clips: pd.DataFrame) -> int:
+    """분위 문턱 경로. z 문턱이 전량 데이터에서 죽었을 때 쓰는 대안이다."""
+    b = build_baseline_quantile(clips)
+    print()
+    print("=== 분위 문턱 기준표 (성장단계 중심화 · 상하위 "
+          + str(TAIL_PCT) + "% 절단) ===")
+    print(b.to_string(index=False))
+    # 알림률은 설계상 2×TAIL_PCT 로 고정이다. 볼 것은 문턱이 산포 대비 어디냐다.
+    for _, r in b[b["sd_ratio"] < 2.0].iterrows():
+        print("  ⚠️ " + str(r["field"]) + ": 문턱이 robust_sd 의 "
+              + str(r["sd_ratio"]) + "배뿐 — '이상'이 아니라 "
+              "'이 집단의 끝'으로 읽을 것")
+    os.makedirs("competition/outputs", exist_ok=True)
+    out = "competition/outputs/71763_baseline_quantile.csv"
+    b.to_csv(out, index=False, encoding="utf-8-sig")
+    centers_table(clips).to_csv("competition/outputs/71763_centers.csv",
+                                index=False, encoding="utf-8-sig")
+    print()
+    print("→ " + out + " · competition/outputs/71763_centers.csv")
+    print("주의: 분위 문턱은 정상만 있어도 항상 "
+          + str(2 * TAIL_PCT) + "% 를 부른다. 알림은 '이상'이 아니라")
+    print("      '이 성장단계에서 가장 끝'이라는 뜻이다 — sd_ratio 를 함께 볼 것.")
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
+    quantile = "--quantile" in args
+    if quantile:
+        args.remove("--quantile")
     clips_csv = None
     if "--clips" in args:
         i = args.index("--clips")
@@ -227,6 +311,9 @@ def main() -> int:
     if weak:
         print(f"  ⚠️ 개체내 비중 25% 미만이라 편차가 잡음에 가까운 필드: "
               f"{', '.join(weak)}")
+
+    if quantile:
+        return report_quantile(clips)
 
     b = build_baseline(clips)
     print("\n=== 평균 0 기준표 (성장단계 중심화 · 필드별 z 자동 조정) ===")

@@ -3373,6 +3373,75 @@ def test_manual_generated() -> None:
     assert "축산법" in first, first
 
 
+def test_env_anomaly() -> None:
+    """환경 이상치 — **꼬리가 없으면 없다고 말하는가.**
+
+    이 모듈이 온 경위가 핵심이다: 전량 자료에서 z 문턱이 전 필드 0건이
+    됐고, 원인은 자료 사고가 아니라 분포다. 균등분포는 robust_sd 대비
+    최대 |z| 가 1.35 를 못 넘어 Z_GRID(2.0~)로는 **구조적으로** 한 건도
+    안 걸린다. 71763 환경값은 실험 설계 격자라 거의 균등이다.
+
+    지키는 것 다섯: (1) 그 수학이 실제로 성립하는가, (2) 못 잡으면
+    '문턱무의미'로 **말하는가**(조용히 0건으로 넘어가지 않는가),
+    (3) 분위 대안이 sd_ratio 로 '이상이 아니라 끝'임을 드러내는가,
+    (4) 기준집단을 자료가 고르고 그 사실을 남기는가, (5) 산포 함수를
+    두 벌 두지 않고 bio 것을 부르는가.
+    """
+    import numpy as np
+    import pandas as pd
+
+    import bio_baseline_71763 as bio
+    import env_anomaly as ea
+
+    # 1) 균등분포에서는 z=2.0 을 아무도 못 넘는다 — 분포의 성질이다
+    rng = np.random.default_rng(0)
+    u = pd.Series(rng.uniform(0, 1, 20000))
+    dev = u - u.mean()
+    rsd = bio.robust_sd(dev)
+    assert dev.abs().max() / rsd < 2.0, dev.abs().max() / rsd
+    assert min(bio.Z_GRID) >= 2.0
+    # 정규분포는 반대다 — 문턱이 산다
+    g = pd.Series(rng.normal(0, 1, 20000))
+    gdev = g - g.mean()
+    assert gdev.abs().max() / bio.robust_sd(gdev) > 3.0
+
+    # 2) 못 잡으면 말한다 — 균등 자료를 넣으면 '문턱무의미'
+    n = 400
+    clips = pd.DataFrame({
+        "chamber": ["1"] * (n // 2) + ["2"] * (n // 2),
+        "date": ["240101"] * (n // 2) + ["240201"] * (n // 2),
+        "temp_c": rng.uniform(24.5, 27.1, n),      # 71763 실측 폭 그대로
+    })
+    r = ea.analyze(clips, fields=["temp_c"])
+    f = r["fields"]["temp_c"]
+    assert f["usable"] == "문턱무의미" and f["n_flagged"] == 0, f
+    assert r["n_alerts"] == 0
+    # 사분위는 그래도 낸다 — 수준은 말할 수 있다
+    assert f["n_bins"] == 4 and len(f["by_quartile"]) == 4
+
+    # 3) 분위 대안 — 알림률은 설계상 고정, sd_ratio 가 뜻을 드러낸다
+    bq = bio.build_baseline_quantile(
+        pd.DataFrame({"pig_class": ["porker"] * 400,
+                      "breath_rate": rng.uniform(20, 40, 400)}),
+        fields=["breath_rate"])
+    assert not bq.empty
+    row = bq.iloc[0]
+    assert abs(row["flagged_pct"] - 2 * bio.TAIL_PCT) < 1.5, row["flagged_pct"]
+    assert row["sd_ratio"] < 2.0, "균등인데 문턱이 산포 밖이라고 나왔다"
+
+    # 4) 기준집단을 자료가 고르고 결과에 남긴다
+    assert f["center"] in ("chamber", "month", "전체")
+    assert "center_explains_pct" in f
+
+    # 5) 산포·문턱을 두 벌 두지 않는다
+    src = open(os.path.join(ROOT, "src", "env_anomaly.py"),
+               encoding="utf-8").read()
+    assert "bio.robust_sd" in src and "bio.fit_threshold" in src
+    assert "1.4826" not in src, "MAD 계수를 복제했다"
+    # 이웃 모듈과 무엇이 다른지 적어 뒀는가 — 같은 문제에 답이 둘이면 안 된다
+    assert "env_scale" in src and "barn_env_control" in src
+
+
 def test_env_scale() -> None:
     """환경 −1~1 스케일 — **센서 오프셋이 편차 눈금에 안 새는가.**
 
@@ -6373,7 +6442,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_constants_have_one_home, test_manual_generated, test_env_scale, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_env_anomaly, test_constants_have_one_home, test_manual_generated, test_env_scale, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

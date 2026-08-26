@@ -42,7 +42,7 @@ GROUPS: list = [
         "run_farm", "synth_farm", "table_export",
     ]),
     ("환경·생체 — 지침 층 + 자기 기준선 층", "위험(지침 위반)과 주의(평소와 다름)를 겹으로 본다.", [
-        "barn_env_control", "barn_environment", "env_scale",
+        "barn_env_control", "barn_environment", "env_scale", "env_anomaly",
         "bio_baseline_71763", "behavior_baseline", "behavior_vocab",
         "behavior_head_train", "vision_pig_behavior",
     ]),
