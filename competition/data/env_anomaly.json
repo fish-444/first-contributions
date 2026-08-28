@@ -1,0 +1,1214 @@
+{
+ "fields": {
+  "temp_c": {
+   "label": "온도(℃)",
+   "n": 300,
+   "center": "chamber",
+   "center_explains_pct": 2.9,
+   "mean": 23.79,
+   "robust_sd": 6.229,
+   "z": 2.0,
+   "quartile_cuts": [
+    19.58,
+    24.4,
+    28.0
+   ],
+   "n_bins": 4,
+   "n_flagged": 0,
+   "flagged_pct": 0.0,
+   "usable": "문턱무의미",
+   "by_quartile": [
+    {
+     "q": "Q1",
+     "n": 75,
+     "value_mean": 17.12,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q2",
+     "n": 78,
+     "value_mean": 22.06,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q3",
+     "n": 74,
+     "value_mean": 26.24,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q4",
+     "n": 73,
+     "value_mean": 30.01,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    }
+   ]
+  },
+  "humidity_pct": {
+   "label": "습도(%)",
+   "n": 300,
+   "center": "month",
+   "center_explains_pct": 0.6,
+   "mean": 54.85,
+   "robust_sd": 24.961,
+   "z": 2.0,
+   "quartile_cuts": [
+    36.52,
+    54.9,
+    72.03
+   ],
+   "n_bins": 4,
+   "n_flagged": 0,
+   "flagged_pct": 0.0,
+   "usable": "문턱무의미",
+   "by_quartile": [
+    {
+     "q": "Q1",
+     "n": 75,
+     "value_mean": 28.78,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q2",
+     "n": 75,
+     "value_mean": 47.04,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q3",
+     "n": 75,
+     "value_mean": 63.12,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q4",
+     "n": 75,
+     "value_mean": 80.45,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    }
+   ]
+  },
+  "ventilation": {
+   "label": "환기율",
+   "n": 300,
+   "center": "month",
+   "center_explains_pct": 2.1,
+   "mean": 2.01,
+   "robust_sd": 0.687,
+   "z": 2.0,
+   "quartile_cuts": [
+    1.53,
+    2.09,
+    2.45
+   ],
+   "n_bins": 4,
+   "n_flagged": 0,
+   "flagged_pct": 0.0,
+   "usable": "문턱무의미",
+   "by_quartile": [
+    {
+     "q": "Q1",
+     "n": 75,
+     "value_mean": 1.27,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q2",
+     "n": 75,
+     "value_mean": 1.79,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q3",
+     "n": 76,
+     "value_mean": 2.28,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q4",
+     "n": 74,
+     "value_mean": 2.71,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    }
+   ]
+  },
+  "co2_ppm": {
+   "label": "CO2(ppm)",
+   "n": 300,
+   "center": "month",
+   "center_explains_pct": 0.7,
+   "mean": 1630.51,
+   "robust_sd": 867.477,
+   "z": 2.0,
+   "quartile_cuts": [
+    1003.75,
+    1548.65,
+    2288.2
+   ],
+   "n_bins": 4,
+   "n_flagged": 0,
+   "flagged_pct": 0.0,
+   "usable": "문턱무의미",
+   "by_quartile": [
+    {
+     "q": "Q1",
+     "n": 75,
+     "value_mean": 749.92,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q2",
+     "n": 75,
+     "value_mean": 1259.33,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q3",
+     "n": 75,
+     "value_mean": 1876.87,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q4",
+     "n": 75,
+     "value_mean": 2635.92,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    }
+   ]
+  },
+  "nh3_ppm": {
+   "label": "NH3(ppm)",
+   "n": 300,
+   "center": "chamber",
+   "center_explains_pct": 1.0,
+   "mean": 20.15,
+   "robust_sd": 15.2,
+   "z": 2.0,
+   "quartile_cuts": [
+    9.97,
+    20.4,
+    30.2
+   ],
+   "n_bins": 4,
+   "n_flagged": 0,
+   "flagged_pct": 0.0,
+   "usable": "문턱무의미",
+   "by_quartile": [
+    {
+     "q": "Q1",
+     "n": 75,
+     "value_mean": 5.0,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q2",
+     "n": 75,
+     "value_mean": 14.99,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q3",
+     "n": 76,
+     "value_mean": 25.55,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    },
+    {
+     "q": "Q4",
+     "n": 74,
+     "value_mean": 35.2,
+     "n_flagged": 0,
+     "flagged_pct": 0.0
+    }
+   ]
+  }
+ },
+ "daily": [
+  {
+   "date": "220901",
+   "n": 3,
+   "temp_c": 20.53,
+   "humidity_pct": 59.5,
+   "ventilation": 1.98,
+   "co2_ppm": 1644.23,
+   "nh3_ppm": 24.07
+  },
+  {
+   "date": "220902",
+   "n": 2,
+   "temp_c": 25.9,
+   "humidity_pct": 75.65,
+   "ventilation": 2.58,
+   "co2_ppm": 1661.25,
+   "nh3_ppm": 19.2
+  },
+  {
+   "date": "220903",
+   "n": 3,
+   "temp_c": 28.93,
+   "humidity_pct": 39.6,
+   "ventilation": 1.84,
+   "co2_ppm": 1149.1,
+   "nh3_ppm": 25.87
+  },
+  {
+   "date": "220904",
+   "n": 3,
+   "temp_c": 25.33,
+   "humidity_pct": 62.73,
+   "ventilation": 2.11,
+   "co2_ppm": 1959.17,
+   "nh3_ppm": 17.87
+  },
+  {
+   "date": "220905",
+   "n": 1,
+   "temp_c": 22.1,
+   "humidity_pct": 77.4,
+   "ventilation": 2.12,
+   "co2_ppm": 545.9,
+   "nh3_ppm": 27.4
+  },
+  {
+   "date": "220906",
+   "n": 2,
+   "temp_c": 16.3,
+   "humidity_pct": 40.65,
+   "ventilation": 1.59,
+   "co2_ppm": 1497.65,
+   "nh3_ppm": 34.45
+  },
+  {
+   "date": "220907",
+   "n": 1,
+   "temp_c": 30.1,
+   "humidity_pct": 33.7,
+   "ventilation": 2.77,
+   "co2_ppm": 997.0,
+   "nh3_ppm": 29.4
+  },
+  {
+   "date": "220908",
+   "n": 3,
+   "temp_c": 22.63,
+   "humidity_pct": 57.53,
+   "ventilation": 2.1,
+   "co2_ppm": 1041.0,
+   "nh3_ppm": 23.83
+  },
+  {
+   "date": "220910",
+   "n": 4,
+   "temp_c": 20.95,
+   "humidity_pct": 54.3,
+   "ventilation": 1.9,
+   "co2_ppm": 1830.0,
+   "nh3_ppm": 3.2
+  },
+  {
+   "date": "220911",
+   "n": 6,
+   "temp_c": 21.85,
+   "humidity_pct": 47.12,
+   "ventilation": 2.21,
+   "co2_ppm": 2036.12,
+   "nh3_ppm": 23.27
+  },
+  {
+   "date": "220912",
+   "n": 3,
+   "temp_c": 24.77,
+   "humidity_pct": 42.6,
+   "ventilation": 2.47,
+   "co2_ppm": 1937.9,
+   "nh3_ppm": 24.47
+  },
+  {
+   "date": "220913",
+   "n": 7,
+   "temp_c": 25.26,
+   "humidity_pct": 59.43,
+   "ventilation": 1.93,
+   "co2_ppm": 1296.33,
+   "nh3_ppm": 21.79
+  },
+  {
+   "date": "220914",
+   "n": 4,
+   "temp_c": 21.48,
+   "humidity_pct": 61.0,
+   "ventilation": 2.15,
+   "co2_ppm": 1860.35,
+   "nh3_ppm": 16.23
+  },
+  {
+   "date": "220915",
+   "n": 4,
+   "temp_c": 27.48,
+   "humidity_pct": 59.18,
+   "ventilation": 2.25,
+   "co2_ppm": 1724.18,
+   "nh3_ppm": 19.93
+  },
+  {
+   "date": "220917",
+   "n": 4,
+   "temp_c": 22.75,
+   "humidity_pct": 36.35,
+   "ventilation": 2.14,
+   "co2_ppm": 1202.4,
+   "nh3_ppm": 27.03
+  },
+  {
+   "date": "220918",
+   "n": 4,
+   "temp_c": 24.25,
+   "humidity_pct": 47.85,
+   "ventilation": 1.53,
+   "co2_ppm": 1684.38,
+   "nh3_ppm": 19.27
+  },
+  {
+   "date": "220919",
+   "n": 1,
+   "temp_c": 31.1,
+   "humidity_pct": 64.2,
+   "ventilation": 2.31,
+   "co2_ppm": 1756.2,
+   "nh3_ppm": 11.1
+  },
+  {
+   "date": "220920",
+   "n": 3,
+   "temp_c": 23.4,
+   "humidity_pct": 61.97,
+   "ventilation": 1.96,
+   "co2_ppm": 1586.93,
+   "nh3_ppm": 18.33
+  },
+  {
+   "date": "220921",
+   "n": 3,
+   "temp_c": 25.67,
+   "humidity_pct": 53.33,
+   "ventilation": 2.39,
+   "co2_ppm": 2356.6,
+   "nh3_ppm": 26.5
+  },
+  {
+   "date": "220922",
+   "n": 5,
+   "temp_c": 18.6,
+   "humidity_pct": 61.62,
+   "ventilation": 1.63,
+   "co2_ppm": 1683.98,
+   "nh3_ppm": 24.58
+  },
+  {
+   "date": "220924",
+   "n": 6,
+   "temp_c": 25.43,
+   "humidity_pct": 46.68,
+   "ventilation": 2.18,
+   "co2_ppm": 1444.22,
+   "nh3_ppm": 24.62
+  },
+  {
+   "date": "220925",
+   "n": 1,
+   "temp_c": 18.5,
+   "humidity_pct": 67.9,
+   "ventilation": 2.0,
+   "co2_ppm": 2841.4,
+   "nh3_ppm": 39.8
+  },
+  {
+   "date": "220926",
+   "n": 2,
+   "temp_c": 25.25,
+   "humidity_pct": 35.0,
+   "ventilation": 2.01,
+   "co2_ppm": 2791.75,
+   "nh3_ppm": 20.8
+  },
+  {
+   "date": "220927",
+   "n": 2,
+   "temp_c": 18.75,
+   "humidity_pct": 61.25,
+   "ventilation": 2.13,
+   "co2_ppm": 2345.5,
+   "nh3_ppm": 9.8
+  },
+  {
+   "date": "220928",
+   "n": 2,
+   "temp_c": 26.35,
+   "humidity_pct": 48.9,
+   "ventilation": 2.17,
+   "co2_ppm": 1291.95,
+   "nh3_ppm": 5.55
+  },
+  {
+   "date": "221001",
+   "n": 1,
+   "temp_c": 26.3,
+   "humidity_pct": 78.7,
+   "ventilation": 2.44,
+   "co2_ppm": 773.7,
+   "nh3_ppm": 27.1
+  },
+  {
+   "date": "221002",
+   "n": 4,
+   "temp_c": 25.0,
+   "humidity_pct": 35.4,
+   "ventilation": 1.76,
+   "co2_ppm": 1625.0,
+   "nh3_ppm": 17.82
+  },
+  {
+   "date": "221003",
+   "n": 1,
+   "temp_c": 30.3,
+   "humidity_pct": 49.2,
+   "ventilation": 1.78,
+   "co2_ppm": 452.0,
+   "nh3_ppm": 20.3
+  },
+  {
+   "date": "221004",
+   "n": 5,
+   "temp_c": 21.74,
+   "humidity_pct": 61.56,
+   "ventilation": 1.48,
+   "co2_ppm": 1220.98,
+   "nh3_ppm": 18.86
+  },
+  {
+   "date": "221005",
+   "n": 3,
+   "temp_c": 27.77,
+   "humidity_pct": 46.87,
+   "ventilation": 1.99,
+   "co2_ppm": 2685.97,
+   "nh3_ppm": 21.73
+  },
+  {
+   "date": "221006",
+   "n": 2,
+   "temp_c": 21.6,
+   "humidity_pct": 49.6,
+   "ventilation": 1.49,
+   "co2_ppm": 1019.7,
+   "nh3_ppm": 15.7
+  },
+  {
+   "date": "221007",
+   "n": 2,
+   "temp_c": 27.4,
+   "humidity_pct": 53.9,
+   "ventilation": 1.83,
+   "co2_ppm": 2747.65,
+   "nh3_ppm": 19.0
+  },
+  {
+   "date": "221008",
+   "n": 6,
+   "temp_c": 25.38,
+   "humidity_pct": 47.02,
+   "ventilation": 1.79,
+   "co2_ppm": 1834.77,
+   "nh3_ppm": 29.37
+  },
+  {
+   "date": "221009",
+   "n": 2,
+   "temp_c": 21.0,
+   "humidity_pct": 20.5,
+   "ventilation": 1.42,
+   "co2_ppm": 2765.85,
+   "nh3_ppm": 28.7
+  },
+  {
+   "date": "221010",
+   "n": 3,
+   "temp_c": 19.37,
+   "humidity_pct": 76.3,
+   "ventilation": 2.06,
+   "co2_ppm": 2624.1,
+   "nh3_ppm": 18.63
+  },
+  {
+   "date": "221011",
+   "n": 4,
+   "temp_c": 21.88,
+   "humidity_pct": 47.1,
+   "ventilation": 1.58,
+   "co2_ppm": 1584.08,
+   "nh3_ppm": 22.5
+  },
+  {
+   "date": "221012",
+   "n": 1,
+   "temp_c": 16.3,
+   "humidity_pct": 54.1,
+   "ventilation": 1.39,
+   "co2_ppm": 981.1,
+   "nh3_ppm": 23.4
+  },
+  {
+   "date": "221013",
+   "n": 3,
+   "temp_c": 26.03,
+   "humidity_pct": 65.87,
+   "ventilation": 1.89,
+   "co2_ppm": 1901.8,
+   "nh3_ppm": 18.1
+  },
+  {
+   "date": "221014",
+   "n": 2,
+   "temp_c": 25.4,
+   "humidity_pct": 37.55,
+   "ventilation": 1.46,
+   "co2_ppm": 2026.05,
+   "nh3_ppm": 25.85
+  },
+  {
+   "date": "221015",
+   "n": 2,
+   "temp_c": 21.05,
+   "humidity_pct": 61.75,
+   "ventilation": 1.6,
+   "co2_ppm": 1436.3,
+   "nh3_ppm": 16.0
+  },
+  {
+   "date": "221016",
+   "n": 3,
+   "temp_c": 22.9,
+   "humidity_pct": 62.2,
+   "ventilation": 1.69,
+   "co2_ppm": 1438.13,
+   "nh3_ppm": 7.67
+  },
+  {
+   "date": "221017",
+   "n": 6,
+   "temp_c": 26.05,
+   "humidity_pct": 58.58,
+   "ventilation": 1.98,
+   "co2_ppm": 1269.42,
+   "nh3_ppm": 17.97
+  },
+  {
+   "date": "221018",
+   "n": 4,
+   "temp_c": 21.98,
+   "humidity_pct": 50.85,
+   "ventilation": 1.93,
+   "co2_ppm": 1982.75,
+   "nh3_ppm": 16.7
+  },
+  {
+   "date": "221019",
+   "n": 6,
+   "temp_c": 25.63,
+   "humidity_pct": 52.65,
+   "ventilation": 2.43,
+   "co2_ppm": 1855.68,
+   "nh3_ppm": 14.43
+  },
+  {
+   "date": "221020",
+   "n": 3,
+   "temp_c": 21.63,
+   "humidity_pct": 61.57,
+   "ventilation": 1.87,
+   "co2_ppm": 1380.0,
+   "nh3_ppm": 20.1
+  },
+  {
+   "date": "221021",
+   "n": 2,
+   "temp_c": 24.4,
+   "humidity_pct": 38.85,
+   "ventilation": 2.29,
+   "co2_ppm": 2067.7,
+   "nh3_ppm": 16.55
+  },
+  {
+   "date": "221022",
+   "n": 4,
+   "temp_c": 27.32,
+   "humidity_pct": 51.08,
+   "ventilation": 2.25,
+   "co2_ppm": 1668.3,
+   "nh3_ppm": 14.23
+  },
+  {
+   "date": "221023",
+   "n": 3,
+   "temp_c": 23.77,
+   "humidity_pct": 65.53,
+   "ventilation": 2.02,
+   "co2_ppm": 1379.1,
+   "nh3_ppm": 22.67
+  },
+  {
+   "date": "221024",
+   "n": 2,
+   "temp_c": 24.05,
+   "humidity_pct": 45.95,
+   "ventilation": 2.25,
+   "co2_ppm": 2010.25,
+   "nh3_ppm": 35.3
+  },
+  {
+   "date": "221026",
+   "n": 5,
+   "temp_c": 25.5,
+   "humidity_pct": 59.02,
+   "ventilation": 1.98,
+   "co2_ppm": 1451.0,
+   "nh3_ppm": 16.46
+  },
+  {
+   "date": "221027",
+   "n": 2,
+   "temp_c": 23.55,
+   "humidity_pct": 55.75,
+   "ventilation": 2.08,
+   "co2_ppm": 1564.2,
+   "nh3_ppm": 4.25
+  },
+  {
+   "date": "221028",
+   "n": 2,
+   "temp_c": 21.8,
+   "humidity_pct": 50.55,
+   "ventilation": 1.65,
+   "co2_ppm": 1475.6,
+   "nh3_ppm": 10.95
+  },
+  {
+   "date": "221101",
+   "n": 3,
+   "temp_c": 30.37,
+   "humidity_pct": 43.5,
+   "ventilation": 1.33,
+   "co2_ppm": 1400.63,
+   "nh3_ppm": 27.17
+  },
+  {
+   "date": "221102",
+   "n": 2,
+   "temp_c": 25.0,
+   "humidity_pct": 47.2,
+   "ventilation": 2.58,
+   "co2_ppm": 2856.4,
+   "nh3_ppm": 25.2
+  },
+  {
+   "date": "221103",
+   "n": 2,
+   "temp_c": 25.45,
+   "humidity_pct": 72.35,
+   "ventilation": 1.17,
+   "co2_ppm": 2093.0,
+   "nh3_ppm": 30.3
+  },
+  {
+   "date": "221104",
+   "n": 1,
+   "temp_c": 29.7,
+   "humidity_pct": 60.5,
+   "ventilation": 2.99,
+   "co2_ppm": 1172.9,
+   "nh3_ppm": 18.2
+  },
+  {
+   "date": "221105",
+   "n": 3,
+   "temp_c": 20.43,
+   "humidity_pct": 73.67,
+   "ventilation": 2.19,
+   "co2_ppm": 904.73,
+   "nh3_ppm": 20.27
+  },
+  {
+   "date": "221106",
+   "n": 4,
+   "temp_c": 23.7,
+   "humidity_pct": 47.15,
+   "ventilation": 1.86,
+   "co2_ppm": 1693.58,
+   "nh3_ppm": 18.98
+  },
+  {
+   "date": "221107",
+   "n": 1,
+   "temp_c": 20.6,
+   "humidity_pct": 29.6,
+   "ventilation": 1.56,
+   "co2_ppm": 2031.0,
+   "nh3_ppm": 2.3
+  },
+  {
+   "date": "221108",
+   "n": 1,
+   "temp_c": 18.5,
+   "humidity_pct": 71.9,
+   "ventilation": 2.73,
+   "co2_ppm": 2431.1,
+   "nh3_ppm": 3.1
+  },
+  {
+   "date": "221109",
+   "n": 3,
+   "temp_c": 20.83,
+   "humidity_pct": 51.63,
+   "ventilation": 1.67,
+   "co2_ppm": 1899.6,
+   "nh3_ppm": 18.83
+  },
+  {
+   "date": "221110",
+   "n": 3,
+   "temp_c": 22.03,
+   "humidity_pct": 67.07,
+   "ventilation": 2.51,
+   "co2_ppm": 1819.93,
+   "nh3_ppm": 16.87
+  },
+  {
+   "date": "221111",
+   "n": 3,
+   "temp_c": 24.2,
+   "humidity_pct": 74.3,
+   "ventilation": 2.24,
+   "co2_ppm": 981.0,
+   "nh3_ppm": 25.27
+  },
+  {
+   "date": "221112",
+   "n": 2,
+   "temp_c": 15.9,
+   "humidity_pct": 57.3,
+   "ventilation": 1.85,
+   "co2_ppm": 2659.9,
+   "nh3_ppm": 39.45
+  },
+  {
+   "date": "221113",
+   "n": 1,
+   "temp_c": 30.3,
+   "humidity_pct": 42.7,
+   "ventilation": 1.63,
+   "co2_ppm": 2352.3,
+   "nh3_ppm": 7.8
+  },
+  {
+   "date": "221114",
+   "n": 3,
+   "temp_c": 28.57,
+   "humidity_pct": 68.17,
+   "ventilation": 2.13,
+   "co2_ppm": 1196.67,
+   "nh3_ppm": 18.2
+  },
+  {
+   "date": "221115",
+   "n": 2,
+   "temp_c": 25.35,
+   "humidity_pct": 58.7,
+   "ventilation": 1.42,
+   "co2_ppm": 1188.9,
+   "nh3_ppm": 17.6
+  },
+  {
+   "date": "221116",
+   "n": 3,
+   "temp_c": 21.2,
+   "humidity_pct": 51.73,
+   "ventilation": 2.05,
+   "co2_ppm": 1151.2,
+   "nh3_ppm": 35.03
+  },
+  {
+   "date": "221117",
+   "n": 4,
+   "temp_c": 20.68,
+   "humidity_pct": 34.12,
+   "ventilation": 1.45,
+   "co2_ppm": 1174.72,
+   "nh3_ppm": 12.88
+  },
+  {
+   "date": "221118",
+   "n": 1,
+   "temp_c": 24.6,
+   "humidity_pct": 29.3,
+   "ventilation": 2.51,
+   "co2_ppm": 1643.5,
+   "nh3_ppm": 16.2
+  },
+  {
+   "date": "221119",
+   "n": 3,
+   "temp_c": 20.0,
+   "humidity_pct": 71.67,
+   "ventilation": 2.58,
+   "co2_ppm": 1128.33,
+   "nh3_ppm": 18.7
+  },
+  {
+   "date": "221120",
+   "n": 4,
+   "temp_c": 23.62,
+   "humidity_pct": 48.47,
+   "ventilation": 2.14,
+   "co2_ppm": 1595.88,
+   "nh3_ppm": 19.55
+  },
+  {
+   "date": "221121",
+   "n": 1,
+   "temp_c": 29.1,
+   "humidity_pct": 81.4,
+   "ventilation": 1.48,
+   "co2_ppm": 1181.9,
+   "nh3_ppm": 20.2
+  },
+  {
+   "date": "221122",
+   "n": 1,
+   "temp_c": 17.9,
+   "humidity_pct": 39.4,
+   "ventilation": 1.6,
+   "co2_ppm": 2400.9,
+   "nh3_ppm": 14.6
+  },
+  {
+   "date": "221123",
+   "n": 5,
+   "temp_c": 24.72,
+   "humidity_pct": 58.6,
+   "ventilation": 1.84,
+   "co2_ppm": 1941.62,
+   "nh3_ppm": 21.0
+  },
+  {
+   "date": "221124",
+   "n": 3,
+   "temp_c": 22.8,
+   "humidity_pct": 60.87,
+   "ventilation": 2.44,
+   "co2_ppm": 1337.53,
+   "nh3_ppm": 24.73
+  },
+  {
+   "date": "221126",
+   "n": 4,
+   "temp_c": 24.85,
+   "humidity_pct": 49.68,
+   "ventilation": 1.86,
+   "co2_ppm": 1346.25,
+   "nh3_ppm": 24.2
+  },
+  {
+   "date": "221127",
+   "n": 3,
+   "temp_c": 22.37,
+   "humidity_pct": 59.3,
+   "ventilation": 2.51,
+   "co2_ppm": 1451.17,
+   "nh3_ppm": 5.2
+  },
+  {
+   "date": "221128",
+   "n": 1,
+   "temp_c": 31.1,
+   "humidity_pct": 60.9,
+   "ventilation": 2.86,
+   "co2_ppm": 1744.2,
+   "nh3_ppm": 13.1
+  },
+  {
+   "date": "221201",
+   "n": 2,
+   "temp_c": 22.6,
+   "humidity_pct": 64.3,
+   "ventilation": 1.61,
+   "co2_ppm": 1644.8,
+   "nh3_ppm": 8.45
+  },
+  {
+   "date": "221202",
+   "n": 1,
+   "temp_c": 26.4,
+   "humidity_pct": 82.4,
+   "ventilation": 2.48,
+   "co2_ppm": 806.2,
+   "nh3_ppm": 31.3
+  },
+  {
+   "date": "221203",
+   "n": 2,
+   "temp_c": 21.15,
+   "humidity_pct": 51.4,
+   "ventilation": 1.67,
+   "co2_ppm": 1191.7,
+   "nh3_ppm": 30.1
+  },
+  {
+   "date": "221204",
+   "n": 2,
+   "temp_c": 18.3,
+   "humidity_pct": 58.55,
+   "ventilation": 2.05,
+   "co2_ppm": 2465.4,
+   "nh3_ppm": 20.0
+  },
+  {
+   "date": "221205",
+   "n": 4,
+   "temp_c": 24.15,
+   "humidity_pct": 52.72,
+   "ventilation": 2.34,
+   "co2_ppm": 1663.4,
+   "nh3_ppm": 13.03
+  },
+  {
+   "date": "221206",
+   "n": 4,
+   "temp_c": 23.18,
+   "humidity_pct": 59.07,
+   "ventilation": 2.31,
+   "co2_ppm": 1493.7,
+   "nh3_ppm": 15.65
+  },
+  {
+   "date": "221207",
+   "n": 3,
+   "temp_c": 20.9,
+   "humidity_pct": 32.83,
+   "ventilation": 1.78,
+   "co2_ppm": 2348.43,
+   "nh3_ppm": 21.9
+  },
+  {
+   "date": "221208",
+   "n": 3,
+   "temp_c": 19.73,
+   "humidity_pct": 42.3,
+   "ventilation": 2.19,
+   "co2_ppm": 2206.13,
+   "nh3_ppm": 20.87
+  },
+  {
+   "date": "221209",
+   "n": 2,
+   "temp_c": 28.25,
+   "humidity_pct": 62.4,
+   "ventilation": 1.82,
+   "co2_ppm": 2290.45,
+   "nh3_ppm": 5.9
+  },
+  {
+   "date": "221210",
+   "n": 2,
+   "temp_c": 26.0,
+   "humidity_pct": 45.15,
+   "ventilation": 2.14,
+   "co2_ppm": 976.6,
+   "nh3_ppm": 23.9
+  },
+  {
+   "date": "221211",
+   "n": 3,
+   "temp_c": 25.57,
+   "humidity_pct": 36.5,
+   "ventilation": 1.64,
+   "co2_ppm": 1215.57,
+   "nh3_ppm": 31.9
+  },
+  {
+   "date": "221212",
+   "n": 3,
+   "temp_c": 24.87,
+   "humidity_pct": 78.53,
+   "ventilation": 2.35,
+   "co2_ppm": 1900.1,
+   "nh3_ppm": 21.97
+  },
+  {
+   "date": "221213",
+   "n": 3,
+   "temp_c": 24.47,
+   "humidity_pct": 54.13,
+   "ventilation": 1.93,
+   "co2_ppm": 1269.83,
+   "nh3_ppm": 24.0
+  },
+  {
+   "date": "221214",
+   "n": 3,
+   "temp_c": 26.6,
+   "humidity_pct": 64.17,
+   "ventilation": 1.71,
+   "co2_ppm": 2530.63,
+   "nh3_ppm": 19.8
+  },
+  {
+   "date": "221215",
+   "n": 4,
+   "temp_c": 23.4,
+   "humidity_pct": 64.17,
+   "ventilation": 2.23,
+   "co2_ppm": 867.7,
+   "nh3_ppm": 23.83
+  },
+  {
+   "date": "221216",
+   "n": 4,
+   "temp_c": 25.83,
+   "humidity_pct": 67.2,
+   "ventilation": 2.34,
+   "co2_ppm": 1078.83,
+   "nh3_ppm": 15.55
+  },
+  {
+   "date": "221217",
+   "n": 2,
+   "temp_c": 25.25,
+   "humidity_pct": 62.15,
+   "ventilation": 2.33,
+   "co2_ppm": 1718.85,
+   "nh3_ppm": 32.35
+  },
+  {
+   "date": "221218",
+   "n": 1,
+   "temp_c": 28.0,
+   "humidity_pct": 45.9,
+   "ventilation": 2.96,
+   "co2_ppm": 407.0,
+   "nh3_ppm": 26.7
+  },
+  {
+   "date": "221219",
+   "n": 1,
+   "temp_c": 31.2,
+   "humidity_pct": 80.5,
+   "ventilation": 2.2,
+   "co2_ppm": 2766.3,
+   "nh3_ppm": 13.9
+  },
+  {
+   "date": "221220",
+   "n": 2,
+   "temp_c": 28.85,
+   "humidity_pct": 42.95,
+   "ventilation": 2.07,
+   "co2_ppm": 1577.65,
+   "nh3_ppm": 28.85
+  },
+  {
+   "date": "221221",
+   "n": 1,
+   "temp_c": 22.2,
+   "humidity_pct": 83.0,
+   "ventilation": 1.82,
+   "co2_ppm": 1247.9,
+   "nh3_ppm": 12.8
+  },
+  {
+   "date": "221222",
+   "n": 3,
+   "temp_c": 22.73,
+   "humidity_pct": 45.87,
+   "ventilation": 2.4,
+   "co2_ppm": 1188.27,
+   "nh3_ppm": 19.03
+  },
+  {
+   "date": "221223",
+   "n": 3,
+   "temp_c": 21.1,
+   "humidity_pct": 47.83,
+   "ventilation": 2.5,
+   "co2_ppm": 1264.27,
+   "nh3_ppm": 14.6
+  },
+  {
+   "date": "221224",
+   "n": 2,
+   "temp_c": 28.75,
+   "humidity_pct": 38.85,
+   "ventilation": 2.0,
+   "co2_ppm": 1849.2,
+   "nh3_ppm": 13.45
+  },
+  {
+   "date": "221225",
+   "n": 2,
+   "temp_c": 19.55,
+   "humidity_pct": 68.4,
+   "ventilation": 1.4,
+   "co2_ppm": 1853.25,
+   "nh3_ppm": 4.55
+  },
+  {
+   "date": "221226",
+   "n": 2,
+   "temp_c": 29.2,
+   "humidity_pct": 66.05,
+   "ventilation": 2.29,
+   "co2_ppm": 1128.8,
+   "nh3_ppm": 24.9
+  },
+  {
+   "date": "221227",
+   "n": 4,
+   "temp_c": 23.67,
+   "humidity_pct": 69.4,
+   "ventilation": 2.31,
+   "co2_ppm": 1374.03,
+   "nh3_ppm": 29.43
+  },
+  {
+   "date": "221228",
+   "n": 3,
+   "temp_c": 17.47,
+   "humidity_pct": 55.53,
+   "ventilation": 1.79,
+   "co2_ppm": 1463.93,
+   "nh3_ppm": 18.2
+  }
+ ],
+ "alerts": [],
+ "n_alerts": 0,
+ "n_clips": 300,
+ "note": "발송하지 않는다 — 알림 대상 목록만 낸다. 문턱은 필드마다 다르고(z 열), 편차는 center 집단 안에서 잰 것이다.",
+ "source": "합성(배관 검증용 — 실자료 아님)"
+}

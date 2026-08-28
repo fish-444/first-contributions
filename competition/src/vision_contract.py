@@ -80,6 +80,19 @@ HEAD_HELPS: dict[str, tuple[str, ...]] = {
     "disease": ("Eating", "Drinking", "Lying"),
 }
 
+# 어휘 밖 **독립 채널** — 모델이 분류하는 게 아니라 파이프라인이 따로 잰다.
+# activity_px(추적기, AUC 0.739 실측)는 계약이 처음부터 갖고 있었고,
+# resp(호흡수 — pig_behavior.respiration)가 합류로 들어왔다. 빈호흡은
+# 행동 15종에 없어서 어휘로는 원리적으로 못 여는 질병 신호를, 분만 임박의
+# 호흡 변화까지 생리 경로로 연다. 단 **합성 검증 11/11 뿐, 실제 돼지 영상
+# 실증 0회**다 — 그 등급이 신고에 붙어 다닌다.
+CHANNEL_OPENS: dict[str, tuple[str, ...]] = {
+    "resp": ("disease", "farrowing"),
+}
+CHANNEL_GRADE: dict[str, str] = {
+    "resp": "합성 — 합성 관통 11/11 · 실제 돼지 영상 실증 0회 (실증 대기)",
+}
+
 # 발정 겨냥 시작 — 이유 후 며칠부터 본다. 실측 WEI 중앙(5~7일)보다 앞서
 # 시작해야 이른 발정을 놓치지 않는다.
 ESTRUS_WATCH_FROM = 3
@@ -109,6 +122,9 @@ class BehaviorObs:
     animal_id: str | None = None
     probs: dict[str, float] = field(default_factory=dict)
     activity_px: float = 0.0
+    #: 호흡수(bpm). 모델 어휘가 아니라 별도 측정 채널이다 — 없으면 None.
+    #: 판정하지 않는다: 정상 범위는 품종·일령·기온에 달려 고정 임계가 없다.
+    resp_bpm: float | None = None
     model: str = ""
 
     def top(self) -> tuple[str, float] | None:
@@ -135,11 +151,16 @@ class BehaviorModel(Protocol):
     def predict(self, frames, tracks) -> list: ...
 
 
-def head_support(model: "BehaviorModel") -> dict:
+def head_support(model: "BehaviorModel", channels: tuple = ()) -> dict:
     """이 모델로 어느 헤드가 도는가. **등록 시점에 말해야 한다.**
 
     나중에 조용히 빈 결과를 내면 "경보가 안 뜬다" 와 "볼 수가 없다" 를
     구분할 수 없다.
+
+    `channels` 는 어휘 밖 독립 채널("resp" 등)이다. 어휘 판정(`runs`)은
+    그대로 두고 — 어휘로 막힌 것은 막혔다고 말해야 다음 학습 목록이
+    남는다 — 채널 경로는 `channel_runs`/`channel_why` 로 **따로** 신고한다.
+    등급도 같이 간다: 호흡은 합성 검증뿐이라 실증 전이다.
     """
     have = set(getattr(model, "classes", ()) or ())
     out = {}
@@ -155,9 +176,13 @@ def head_support(model: "BehaviorModel") -> dict:
             why = f"활동량 원신호 + {'·'.join(helps)} 로 보강"
         else:
             why = "활동량 원신호만으로 돈다"
+        ch = [c for c in channels if h in CHANNEL_OPENS.get(c, ())]
         out[h] = {
             "head": h, "kr": HEAD_KR[h],
             "runs": not miss,
+            "channel_runs": bool(ch),
+            "channel_why": (" · ".join(f"{c} 채널({CHANNEL_GRADE[c]})"
+                                       for c in ch) if ch else None),
             "missing": miss,
             "boosted_by": helps,
             "why": why,

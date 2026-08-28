@@ -25,12 +25,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 
 import numpy as np
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, HERE)
+
+import farm_monthly as fm  # noqa: E402
+
 DATA = os.path.join(ROOT, "competition", "data")
 MONTHLY_XLSX = os.path.join(DATA, "farm_monthly.xlsx")
 ANNUAL_XLSX = os.path.join(DATA, "farm_stats.xlsx")
@@ -39,9 +44,13 @@ OUT = os.path.join(DATA, "farm_monthly_panel.json")
 MONTHS = [f"{i}월" for i in range(1, 13)]
 KEY = ["년도", "농장", "데이터구분"]
 TARGET = "분만율"
-GESTATION_MONTHS = 4        # 임신 114일 ≈ 3.75개월 → 반올림 4 (farm_monthly 와 동일)
-SUMMER = (7, 8, 9)          # 교배월 기준
-WINTER = (1, 2, 3)
+# 계절 정의와 임신 개월은 **`farm_monthly` 가 정본이다.** 예전에는 여기
+# 따로 적고 "farm_monthly 와 동일" 이라고 주석을 달았는데, 주석은 실행되지
+# 않는다 — 한쪽만 고치면 계절 분석과 패널이 갈리고 ③′(여름 −2.97%p) 계열
+# 수치가 조용히 어긋난다.
+GESTATION_MONTHS = fm.GESTATION_MONTHS
+SUMMER = fm.SUMMER
+WINTER = fm.WINTER
 RATE_BOUNDS = (20.0, 100.0)  # 분만율(%) 로 물리적으로 가능한 범위
 
 # 주 산출물 성립: 여름·겨울 교배분을 각각 낼 수 있는 농장

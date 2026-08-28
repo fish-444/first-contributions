@@ -41,6 +41,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
+import farm_monthly as fm  # noqa: E402
+
 STATS = os.path.join(ROOT, "competition", "data", "korean_farm_stats.json")
 MONTHLY = os.path.join(ROOT, "competition", "data", "farm_monthly.json")
 
@@ -52,8 +54,10 @@ SOW_HETEROGENEITY = 0.35    # 개체 이질성 — 농장 평균 대비 개체 �
 # 비교해 −2.97%p 를 냈다. 여기서 6월을 넣거나 "나머지 전체"와 비교하면 대비가
 # 달라져 −5.2%p 같은 값이 나오고, 그걸 통과시키면 합성이 실측보다 계절을
 # 과장한 채로 시뮬레이션에 들어간다.
-SUMMER = (7, 8, 9)          # 교배월 기준 하계
-WINTER = (1, 2, 3)          # 대조군 — 실측과 동일
+# 계절 정의는 `farm_monthly` 가 정본이다. 합성 데이터가 실측 분석과 다른
+# 달을 여름으로 잡으면, 합성으로 확인한 것이 실측에서 성립하지 않는다.
+SUMMER = fm.SUMMER          # 교배월 기준 하계
+WINTER = fm.WINTER          # 대조군 — 실측과 동일
 # 재발 유형 구성(월별 실측, 완전 보고분). 나머지 사고는 도태·폐사로 묶는다.
 RETURN_MIX = {"1차": 0.353, "불규칙": 0.199, "2차": 0.117}
 

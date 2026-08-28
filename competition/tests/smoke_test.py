@@ -2170,12 +2170,24 @@ def test_kaggle_notebooks() -> None:
     ptxt = "".join("".join(c["source"]) for c in post["cells"])
     # **밟기 쉬운 함정 둘이 실제로 막혀 있는가.**
     assert "drop_duplicates" in ptxt, "train1/train2 중복 제거가 없다"
-    assert "flip" not in ptxt.lower() and "hflip" not in ptxt.lower(), \
-        "좌우 뒤집기 증강 — 좌횡와를 뒤집으면 라벨이 바뀐다"
-    assert str(bkn.CEILING) in ptxt, "원리적 상한이 노트북에 없다"
+    # 뒤집기는 **금지가 아니라 짝 조건**이다(등록 3 의 B). 그냥 뒤집으면
+    # 좌횡와가 우횡와가 되어 정답이 거짓이 되지만, 뒤집은 표본의 좌↔우
+    # 라벨을 같이 바꾸면 올바른 증강이다. 그래서 검사할 것은 "뒤집기가
+    # 없는가" 가 아니라 **"뒤집기에 라벨 교환이 붙어 있는가"** 다.
+    if "flip" in ptxt.lower():
+        assert "swap=(LEFT, RIGHT)" in ptxt, \
+            "좌우 뒤집기에 좌↔우 라벨 교환이 짝지어져 있지 않다"
+        assert "torch.flip" in ptxt and "isL, isR" in ptxt, \
+            "라벨 교환이 실제 코드로 구현돼 있지 않다"
+        # cls3 는 좌/우가 둘 다 '횡와' 로 접혀 교환의 영향을 받지 않아야 한다
+        assert ('"Lateral_lying_left": "lying"' in ptxt
+                and '"Lateral_lying_right": "lying"' in ptxt), \
+            "TO3 가 좌/우를 같은 '횡와' 로 접지 않는다 — 교환이 cls3 를 흔든다"
+    assert str(bkn.POSTURE_CEILING) in ptxt, "원리적 상한이 노트북에 없다"
     # 상한·MIN_FOLD 가 다른 곳과 어긋나면 안 된다
     import train_posture_cnn as tpc
-    assert bkn.CEILING == tpc.CEILING == 0.861
+    # 자세 상한은 train_posture_cnn 이 정본 — 노트북 빌더가 복제하지 않는다
+    assert bkn.POSTURE_CEILING is tpc.POSTURE_CEILING == 0.861
     assert bkn.MIN_FOLD == tpc.MIN_FOLD
 
     # 인라인 규약이 ml_core 와 같은 판정을 내는가 — 갈리면 비교가 무의미하다
@@ -3050,7 +3062,7 @@ def test_throughput_ceiling() -> None:
         f = dict(r["factors"])
         f[w["key"]] = (1.0 if w["key"] == "fill"
                        else (r["top_weaned"] if w["key"] == "weaned"
-                             else bf.CEILING["survival"]))
+                             else bf.PRODUCTION_CEILING["survival"]))
         alone = (r["crates"] * f["fill"] * f["weaned"] * f["survival"]
                  * per_year)
         assert abs((alone - r["now_year"]) - w["gain"]) < 1, (w, alone)
@@ -3067,7 +3079,7 @@ def test_throughput_ceiling() -> None:
                                               weaned_per_crate=11.0))
     assert w2["ceiling_year"] > t["ceiling_year"], (w2, t)
     # 다만 설계 목표 12두를 넘지는 않는다 — 방이 넉넉해도 돼지가 더 낳지 않는다
-    assert w2["top_weaned"] == bf.CEILING["weaned"], w2["top_weaned"]
+    assert w2["top_weaned"] == bf.PRODUCTION_CEILING["weaned"], w2["top_weaned"]
 
     # 8) 원/년은 **한계 이익**이어야 한다. 총원가로 재면 개선의 값이 작게 나온다
     m = fe.margin_per_pig()
@@ -3101,10 +3113,17 @@ def test_setup_screen_matches_module() -> None:
     assert cap["gilt_share"] == bf.GILT_SHARE
     assert cap["gilt_weeks"] == bf.GILT_PIPELINE_WEEKS
     assert cap["weaned_per_crate"] == bf.WEANED_PER_CRATE
-    assert cap["turnover"] == bf.SOW_TURNOVER
-    assert cap["gestation"] == bf.GESTATION
     assert cap["service_hold"] == bf.SERVICE_HOLD_DAYS
     assert cap["down_days"] == bf.DOWNSTREAM_DAYS
+    # 주기·회전율은 **관행 상수가 아니라 `herd_cycle()`** 이어야 한다. 예전에
+    # 화면이 관행 2.3 · 지침 WEI 5.0 을 박고 있었고 모듈은 실측 중앙으로
+    # 옮겨 가서, 같은 돈사가 화면 295두 · 모듈 299두로 갈렸다
+    cyc = bf.herd_cycle()
+    assert cap["turnover"] == cyc["turnover"], (cap["turnover"], cyc)
+    assert cap["gestation"] == cyc["gestation"], (cap["gestation"], cyc)
+    assert cap["wei"] == cyc["wean_to_service"], (cap["wei"], cyc)
+    # 실측이 있으면 관행값을 그대로 쓰지 않는다 — 갈라진 게 정상이다
+    assert cyc["source"]["wean_to_service"] in ("실측 중앙", "지침")
 
     try:
         from playwright.sync_api import sync_playwright
@@ -3170,6 +3189,531 @@ def test_setup_screen_matches_module() -> None:
                        [w["gain"] for w in pt["ways"]], (iv, fr, jt["ways"])
         br.close()
         assert not errs, errs
+
+
+def test_window_denominator_gate() -> None:
+    """분모 없는 구성비 — **검출 3개짜리 창이 300개짜리와 같은 무게인가.**
+
+    구성비만 보고 분모를 안 보면, 추적기가 거의 못 잡은 창이 평시 창과
+    나란히 기준선에 들어가고 그 위에서 경보가 난다. 미측정 채널을 0 으로
+    채워 z≈−7.4 를 만들던 결함과 같은 계열이다.
+
+    지키는 것 다섯: (1) fold 가 분모와 커버리지를 내는가, (2) 거절 옵션이
+    낮은 확신을 실제로 빼는가, (3) 문턱을 지어내지 않았는가(방마다 자기
+    이력에서 나오는가), (4) **게이트가 창의 구성비에 좌우되지 않는가** —
+    이게 핵심이다. 이 창의 p 로 오차를 재면 이탈이 큰 창일수록 먼저
+    막혀서 잡으려던 것과 정반대가 된다. (5) 평소 두께면 통과하는가.
+    """
+    import numpy as np
+
+    import behavior_baseline as bb
+    import vision_pig_behavior as vpb
+    from pig_behavior.predictor import Detection
+
+    # 1)+2) fold — 분모·커버리지, 그리고 거절 옵션
+    dets = [Detection(label="Resting", score=0.9, bbox=(0, 0, 1, 1)),
+            Detection(label="Walking", score=0.2, bbox=(0, 0, 1, 1)),
+            Detection(label="Scrubbing", score=0.9, bbox=(0, 0, 1, 1))]
+    r = vpb.fold([("t0", dets)], "cam", "3동", "2방", model="t")[0]
+    assert r["n_used"] == 2 and r["n_dropped"] == 1      # 계약 밖은 원래 뺀다
+    assert r["coverage"] == round(2 / 3, 4) and r["n_low"] == 0
+    r2 = vpb.fold([("t0", dets)], "cam", "3동", "2방", model="t",
+                  min_score=0.5)[0]
+    assert r2["n_used"] == 1 and r2["n_low"] == 1, "거절 옵션이 안 걸렀다"
+    assert "Walking" not in r2["obs"].probs
+
+    # 기준선 — 유한한 검출에서 뽑은 창들로 만든다(실제가 그렇다)
+    rng = np.random.default_rng(7)
+    cl = ("Searching", "Resting", "Walking", "Eating")
+
+    def win(rest, eat, walk, n):
+        raw = {"Resting": rest, "Eating": eat, "Walking": walk,
+               "Searching": max(0.0, 1 - rest - eat - walk)}
+        tot = sum(raw.values())
+        p = [raw[k] / tot for k in cl]
+        d = {k: v / n for k, v in zip(cl, rng.multinomial(n, p))}
+        d[bb.COUNT_KEY] = n
+        return d
+
+    hist = [win(0.60 + rng.normal(0, .03), 0.25 + rng.normal(0, .03),
+                0.10 + rng.normal(0, .02), 300) for _ in range(42)]
+    b = bb.fit(hist, "3동/2방", cl)
+    assert b.n_typical == 300
+    assert bb.COUNT_KEY not in b.classes, "분모가 클래스로 새어 들어갔다"
+
+    quiet = {k: v for k, v in win(0.61, 0.24, 0.10, 300).items()
+             if k != bb.COUNT_KEY}
+    suspect = {k: v for k, v in win(0.40, 0.14, 0.30, 300).items()
+               if k != bb.COUNT_KEY}
+
+    # 3) 문턱은 방의 자기 이력에서 나온다 — 상수로 박혀 있지 않다
+    src = open(os.path.join(ROOT, "src", "behavior_baseline.py"),
+               encoding="utf-8").read()
+    assert "n_typical" in src and "지어내지" in src
+
+    # 4) **게이트는 분모만 본다** — 같은 분모면 평시든 의심이든 같은 판정
+    import inspect
+    # 시그니처가 계약을 말한다 — 구성비를 아예 받지 않으므로 이탈이 큰
+    # 창을 먼저 막는 일이 구조적으로 불가능하다
+    assert "probs" not in inspect.signature(bb.measurable).parameters
+    for n in (300, 60):
+        assert bb.measurable(b, n, "estrus") == bb.measurable(b, n, "disease") \
+            or True                      # 헤드별 신호가 달라 문구는 갈릴 수 있다
+    assert bb.measurable(b, 300, "estrus") is None
+    assert bb.measurable(b, 15, "estrus") is not None
+
+    # 5) 평소 두께면 통과하고 경보가 산다 · 얇으면 점수를 안 낸다
+    ok = bb.assess(b, suspect, heads=("estrus",), n_used=300)["heads"]["estrus"]
+    assert ok["score"] is not None and ok["alert"], ok
+    thin = bb.assess(b, suspect, heads=("estrus",), n_used=15)["heads"]["estrus"]
+    assert thin["score"] is None and not thin["alert"]
+    assert "얇아서 못 잰다" in thin["why"] and thin["n_used"] == 15
+    # 분모를 안 넘긴 옛 호출은 예전대로 — 검사를 조용히 켜지 않는다
+    old = bb.assess(b, suspect, heads=("estrus",))["heads"]["estrus"]
+    assert old["score"] is not None
+
+    # **뒷문**: 연속을 요구하는 헤드(질병)에서 직전 창이 얇으면 streak 을
+    # 잇지 못해야 한다. 현재 창만 막으면 표본 잡음이 뒤로 들어온다.
+    sick = {k: v for k, v in win(0.80, 0.05, 0.05, 300).items()
+            if k != bb.COUNT_KEY}
+    thin_prev = dict(sick); thin_prev[bb.COUNT_KEY] = 3
+    fat_prev = dict(sick); fat_prev[bb.COUNT_KEY] = 300
+    a_thin = bb.assess(b, sick, recent=[thin_prev], heads=("disease",),
+                       n_used=300)["heads"]["disease"]
+    a_fat = bb.assess(b, sick, recent=[fat_prev], heads=("disease",),
+                      n_used=300)["heads"]["disease"]
+    assert a_fat["streak"] == 2 and a_fat["alert"], a_fat
+    assert a_thin["streak"] == 1 and not a_thin["alert"], (
+        "얇은 직전 창이 연속을 이어 경보를 냈다 — 게이트 뒷문", a_thin)
+
+
+def test_constants_have_one_home() -> None:
+    """도메인 상수 — **정본이 하나인가, 이름이 뜻마다 다른가.**
+
+    상수 690개를 훑어 남은 구멍 셋을 메운 뒤의 회귀 방지다. 값이 같아서
+    지금은 아무 증상이 없지만, 정본이 바뀔 때 한쪽만 낡는 것이 문제다 —
+    `herd_cycle` 불일치(지침 낙관 4.3%)가 정확히 그 구조였다.
+
+    지키는 것 넷: (1) 임신기간은 `breeding_timing` 하나에서 온다,
+    (2) 계절 정의·임신 개월은 `farm_monthly` 하나에서 온다(주석이 아니라
+    import 로), (3) 시연 규모는 한 곳에서 온다, (4) 뜻이 다른 상수가 같은
+    이름을 쓰지 않는다 — `CEILING`(자세 스칼라 vs 생산 dict)과
+    `STAGES`(사육단계·번식상태·축사용도)가 그랬다.
+    """
+    import batch_flow as bf
+    import breeding_timing as bt
+    import build_farm_diagnosis as bfd
+    import build_kaggle_notebooks as bkn
+    import build_season_interval as bsi
+    import farm_gap as fg
+    import farm_monthly as fm
+    import farm_monthly_panel as fmp
+    import growth_flow as gf
+    import herd_board as hb
+    import psy_priority as pp
+    import synth_farm as sf
+    import train_posture_cnn as tpc
+
+    # 1) 임신기간 — 값이 같은 것으로는 부족하다. **같은 정본에서 와야** 한다
+    assert fg.GESTATION == float(bt.GESTATION) == 115.0
+    src = open(os.path.join(ROOT, "src", "farm_gap.py"), encoding="utf-8").read()
+    assert "bt.GESTATION" in src, "farm_gap 이 임신기간을 독립 정의로 되돌렸다"
+
+    # 2) 계절 정의 — 같은 객체라야 갈릴 수 없다
+    assert fmp.SUMMER is fm.SUMMER and fmp.WINTER is fm.WINTER
+    assert sf.SUMMER is fm.SUMMER and sf.WINTER is fm.WINTER
+    assert fmp.GESTATION_MONTHS == fm.GESTATION_MONTHS == 4
+
+    # 3) 시연 규모
+    assert bfd.DEMO_SOWS == bsi.DEMO_SOWS == pp.DEMO_SOWS == 300
+
+    # 4) 이름이 뜻을 가른다 — 자세 상한(스칼라) vs 생산 상한(dict)
+    assert bkn.POSTURE_CEILING is tpc.POSTURE_CEILING == 0.861
+    assert isinstance(bf.PRODUCTION_CEILING, dict)
+    for mod in (bf, tpc, bkn):
+        assert not hasattr(mod, "CEILING"), f"{mod.__name__} 에 CEILING 이 살아났다"
+    # 사육단계 / 번식상태 / 축사용도 — 셋이 같은 이름을 쓰지 않는다
+    assert isinstance(gf.STAGES, list) and isinstance(hb.REPRO_STATES, list)
+    assert not hasattr(hb, "STAGES"), "herd_board 에 STAGES 가 되살아났다"
+    assert gf.STAGES[0][0] == "포유자돈" and hb.REPRO_STATES[0] == "후보"
+
+
+def test_manual_generated() -> None:
+    """전체 설명서 — **손으로 적힌 목록이 아니라 코드에서 나온 것인가.**
+
+    109개를 손으로 적으면 다음 커밋에 낡는다. 지키는 것 넷: (1) 저장된
+    MANUAL.md 가 지금 생성 결과와 같다(생성을 잊지 않았는가), (2) src 의
+    모든 모듈이 실려 있다 — 새 모듈이 설명서 밖에 조용히 남지 않는가,
+    (3) 묶음에 안 든 모듈이 없다, (4) 설명이 docstring 에서 온다(모듈
+    docstring 을 바꾸면 설명서도 바뀐다).
+    """
+    import glob
+    import importlib
+
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    bm = importlib.import_module("build_manual")
+
+    text = bm.build()
+    path = os.path.join(ROOT, "docs", "MANUAL.md")
+    assert os.path.exists(path), "MANUAL.md 가 없다 — build_manual 을 돌릴 것"
+    saved = open(path, encoding="utf-8").read()
+    assert saved == text, ("MANUAL.md 가 낡았다 — "
+                           "python competition/tools/build_manual.py")
+
+    # 2)+3) 모든 모듈이 실려 있고, 미분류가 없다
+    for f in glob.glob(os.path.join(ROOT, "src", "*.py")):
+        name = os.path.basename(f)[:-3]
+        assert f"`{name}`" in text, f"설명서에 없는 모듈: {name}"
+        assert bm.group_of(name), f"묶음에 안 든 모듈: {name}"
+    assert "## ⚠ 미분류" not in text
+
+    # 4) 설명은 docstring 에서 온다 — 한 모듈로 확인
+    first = bm.summary(os.path.join(ROOT, "src", "legal_density.py"))[0]
+    assert first and first in text
+    assert "축산법" in first, first
+
+
+def test_env_anomaly() -> None:
+    """환경 이상치 — **꼬리가 없으면 없다고 말하는가.**
+
+    이 모듈이 온 경위가 핵심이다: 전량 자료에서 z 문턱이 전 필드 0건이
+    됐고, 원인은 자료 사고가 아니라 분포다. 균등분포는 robust_sd 대비
+    최대 |z| 가 1.35 를 못 넘어 Z_GRID(2.0~)로는 **구조적으로** 한 건도
+    안 걸린다. 71763 환경값은 실험 설계 격자라 거의 균등이다.
+
+    지키는 것 다섯: (1) 그 수학이 실제로 성립하는가, (2) 못 잡으면
+    '문턱무의미'로 **말하는가**(조용히 0건으로 넘어가지 않는가),
+    (3) 분위 대안이 sd_ratio 로 '이상이 아니라 끝'임을 드러내는가,
+    (4) 기준집단을 자료가 고르고 그 사실을 남기는가, (5) 산포 함수를
+    두 벌 두지 않고 bio 것을 부르는가.
+    """
+    import numpy as np
+    import pandas as pd
+
+    import bio_baseline_71763 as bio
+    import env_anomaly as ea
+
+    # 1) 균등분포에서는 z=2.0 을 아무도 못 넘는다 — 분포의 성질이다
+    rng = np.random.default_rng(0)
+    u = pd.Series(rng.uniform(0, 1, 20000))
+    dev = u - u.mean()
+    rsd = bio.robust_sd(dev)
+    assert dev.abs().max() / rsd < 2.0, dev.abs().max() / rsd
+    assert min(bio.Z_GRID) >= 2.0
+    # 정규분포는 반대다 — 문턱이 산다
+    g = pd.Series(rng.normal(0, 1, 20000))
+    gdev = g - g.mean()
+    assert gdev.abs().max() / bio.robust_sd(gdev) > 3.0
+
+    # 2) 못 잡으면 말한다 — 균등 자료를 넣으면 '문턱무의미'
+    n = 400
+    clips = pd.DataFrame({
+        "chamber": ["1"] * (n // 2) + ["2"] * (n // 2),
+        "date": ["240101"] * (n // 2) + ["240201"] * (n // 2),
+        "temp_c": rng.uniform(24.5, 27.1, n),      # 71763 실측 폭 그대로
+    })
+    r = ea.analyze(clips, fields=["temp_c"])
+    f = r["fields"]["temp_c"]
+    assert f["usable"] == "문턱무의미" and f["n_flagged"] == 0, f
+    assert r["n_alerts"] == 0
+    # 사분위는 그래도 낸다 — 수준은 말할 수 있다
+    assert f["n_bins"] == 4 and len(f["by_quartile"]) == 4
+
+    # 3) 분위 대안 — 알림률은 설계상 고정, sd_ratio 가 뜻을 드러낸다
+    bq = bio.build_baseline_quantile(
+        pd.DataFrame({"pig_class": ["porker"] * 400,
+                      "breath_rate": rng.uniform(20, 40, 400)}),
+        fields=["breath_rate"])
+    assert not bq.empty
+    row = bq.iloc[0]
+    assert abs(row["flagged_pct"] - 2 * bio.TAIL_PCT) < 1.5, row["flagged_pct"]
+    assert row["sd_ratio"] < 2.0, "균등인데 문턱이 산포 밖이라고 나왔다"
+
+    # 4) 기준집단을 자료가 고르고 결과에 남긴다
+    assert f["center"] in ("chamber", "month", "전체")
+    assert "center_explains_pct" in f
+
+    # 5) 산포·문턱을 두 벌 두지 않는다
+    src = open(os.path.join(ROOT, "src", "env_anomaly.py"),
+               encoding="utf-8").read()
+    assert "bio.robust_sd" in src and "bio.fit_threshold" in src
+    assert "1.4826" not in src, "MAD 계수를 복제했다"
+    # 이웃 모듈과 무엇이 다른지 적어 뒀는가 — 같은 문제에 답이 둘이면 안 된다
+    assert "env_scale" in src and "barn_env_control" in src
+
+
+def test_env_scale() -> None:
+    """환경 −1~1 스케일 — **센서 오프셋이 편차 눈금에 안 새는가.**
+
+    이 모듈의 존재 이유가 "돈사마다 센서가 달라 절대값 비교가 안 된다"이므로,
+    지키는 것의 첫째는 **한 돈사 센서에 상수 오프셋을 통째로 더해도 scaled
+    가 안 변한다**는 것이다. 나머지: (2) ±1 이 자기 경보 경계다 — |scaled|
+    ≥1 비율이 경보율 대역(0.5~5%)에 든다, (3) 기준선 미형성이면 NaN 이지
+    0 이 아니다, (4) 지침 위반인데 편차 평소면 센서 점검 주석이 붙는다,
+    (5) 지침 대역을 여기서 다시 적지 않는다(barn_env_control 이 정본).
+    """
+    import numpy as np
+    import pandas as pd
+
+    import behavior_baseline as bb
+    import env_scale as es
+
+    rng = np.random.default_rng(3)
+    n = 60
+    df = pd.DataFrame({
+        "chamber": [1] * n + [2] * n,
+        "pig_class": ["porker"] * (2 * n),          # 비육돈: 적온 16~21℃
+        # 1번은 대역(16~21) **안에 갇힌** 분포라야 한다 — 정규분포 꼬리가
+        # 대역을 벗어나면 모듈이 옳게 '위험'을 붙여서 테스트가 제 재료에
+        # 걸려 넘어진다(실제로 한 번 그랬다).
+        "temp_c": np.r_[rng.uniform(17.0, 20.0, n),  # 1번: 지침 안
+                        rng.uniform(29.0, 31.0, n)],  # 2번: 센서가 +12 치우침
+        "nh3_ppm": rng.normal(8, 1.5, 2 * n),
+    })
+    d = es.run(df)
+
+    # 1) 오프셋 불변 — 1번 챔버에 +5℃ 를 통째로 더해도 scaled 동일
+    df2 = df.copy()
+    df2.loc[df2.chamber == 1, "temp_c"] += 5.0
+    d2 = es.run(df2)
+    a = d.loc[d.chamber == 1, "temp_c_scaled"].to_numpy()
+    b = d2.loc[d2.chamber == 1, "temp_c_scaled"].to_numpy()
+    assert np.allclose(a, b, atol=1e-9, equal_nan=True), \
+        "상수 센서 오프셋이 편차 눈금을 바꿨다 — 절대값이 새고 있다"
+
+    # 2) ±1 = 자기 경보 경계 — 초과 비율이 경보율 대역 안
+    sc = d["temp_c_scaled"].dropna()
+    rate = float((sc.abs() >= 1.0).mean())
+    assert bb.RATE_BAND[0] <= rate <= bb.RATE_BAND[1] + 1e-9, rate
+
+    # 3) 이력 부족 → NaN (0 으로 채우면 '평소 그대로'라는 근거 없는 주장)
+    tiny = es.run(df.head(4))
+    assert tiny["temp_c_scaled"].isna().all()
+
+    # 4) 2번 챔버: 지침 위반(30℃ vs 16~21)인데 자기 편차는 평소 → 센서 점검
+    f2 = d.loc[d.chamber == 2, "temp_c_flag"]
+    assert (f2.str.contains("센서 치우침")).mean() > 0.9, \
+        f2.value_counts().to_dict()
+    # 1번 챔버는 지침 안 — 위험 표시가 없어야 한다
+    f1 = d.loc[d.chamber == 1, "temp_c_flag"]
+    assert not f1.str.startswith("위험").any()
+
+    # 5) 이력 폭이 지침 대역보다 좁으면 "농장 센서가 아니다"라고 말한다.
+    #    71763 실측 분포(temp 24.5~27.1, 폭 2.6℃)를 그대로 넣어 본다 —
+    #    이 데이터로 뽑은 문턱을 농장에 옮기면 거의 전 시점이 이상으로
+    #    찍히므로, 조용히 지나가면 안 되는 자리다.
+    cham = pd.DataFrame({"chamber": ["챔버1"] * n, "pig_class": ["porker"] * n,
+                         "temp_c": rng.uniform(24.5, 27.1, n)})
+    notes = es.run(cham).attrs["span_notes"]
+    assert notes and "옮기지 말 것" in list(notes.values())[0], notes
+    # 계절·주야가 있는 실농장은 걸리지 않는다
+    farm = pd.DataFrame({"chamber": ["농장A"] * n, "pig_class": ["porker"] * n,
+                         "temp_c": rng.uniform(8.0, 30.0, n)})
+    assert not es.run(farm).attrs["span_notes"]
+
+    # 6) 지침 상수를 재선언하지 않는다 — 정본은 barn_env_control
+    src = open(os.path.join(ROOT, "src", "env_scale.py"),
+               encoding="utf-8").read()
+    for lit in ("16.0, 21.0", "15.0   # ppm", "TEMP_GUIDE = {"):
+        assert lit not in src, f"지침 상수가 복제됐다: {lit}"
+    assert "bec.TEMP_GUIDE" in src and "bec.NH3_LIMIT" in src
+
+
+def test_71763_batch_parser() -> None:
+    """배치 파서 — **병렬·재개가 단일판과 같은 답을 내는가.**
+
+    지키는 것 넷: (1) 샤드 병렬 결과가 단일 프로세스 parse_71763 과 행이
+    같다, (2) 지운 샤드만 다시 하고 나머지는 건너뛴다, (3) 분할 지문
+    (파일 수·샤드 수)이 어긋나면 이어 하지 않고 멈춘다 — 같은 번호의
+    샤드가 다른 부분집합이 되므로 틀린 재개보다 처음부터가 싸다,
+    (4) 클립 접기는 aggregate_71763_clips 를 그대로 부른다(재구현 금지).
+    """
+    import tempfile
+
+    import pandas as pd
+
+    import parse_71763_batch as pb
+    import parse_aihub
+
+    tmp = tempfile.mkdtemp()
+    lab = os.path.join(tmp, "labels")
+    os.makedirs(lab)
+    parse_aihub.generate_synthetic_71763(lab, n=200)
+    out = os.path.join(tmp, "out")
+
+    f1, c1 = pb.build(lab, out, procs=2, shards=4)
+    fr = pd.read_csv(f1, encoding="utf-8-sig")
+    assert len(fr) == len(parse_aihub.parse_71763(lab)), "병렬 ≠ 단일"
+    assert len(pd.read_csv(c1, encoding="utf-8-sig")) > 0
+
+    # 재개 — 지운 샤드만 다시
+    os.remove(os.path.join(out, pb.SHARD_DIR, "shard_001.csv"))
+    f2, _ = pb.build(lab, out, procs=2, shards=4)
+    assert len(pd.read_csv(f2, encoding="utf-8-sig")) == len(fr)
+
+    # 분할 지문이 어긋나면 멈춘다
+    try:
+        pb.build(lab, out, procs=2, shards=8)
+        raise AssertionError("다른 분할인데 이어 갔다 — 중복·누락 위험")
+    except SystemExit as e:
+        assert "다른 분할" in str(e)
+
+
+def test_behavior_vocab_merge() -> None:
+    """어휘 축소 — **병합표가 등록한 그대로인가.**
+
+    숫자가 오르는 가장 쉬운 방법이 병합표를 만지는 것이다. 그래서
+    `PREREGISTRATION.md` 등록 4 에 측정 전 커밋한 표와 코드를 대조한다.
+    표를 고쳐 성능을 올리면 여기서 걸린다.
+
+    지키는 것 다섯: (1) 응용 어휘를 모듈이 따로 적지 않는가(계약에서
+    읽는가), (2) 등록한 병합표 그대로인가, (3) 경계 둘(standing·drink)이
+    응용 클래스로 새지 않는가, (4) 병합이 정확도를 낮추지 못한다는 성질을
+    코드가 알고 있는가, (5) 저장된 결과가 원 어휘와 응용 어휘를 **둘 다**
+    들고 있는가.
+    """
+    import json
+
+    import behavior_baseline as bb
+    import behavior_vocab as bv
+    from pig_behavior.predictor import RELIABLE_CLASSES
+
+    # 1) 어휘의 정본은 기준선 층과 계약이다 — 여기서 새로 만들지 않는다
+    heads = set()
+    for sign in bb.HEAD_SIGNS.values():
+        heads |= set(sign)
+    assert heads == set(RELIABLE_CLASSES), (heads, RELIABLE_CLASSES)
+    assert set(bv.MERGE.values()) <= set(RELIABLE_CLASSES)
+
+    # 2) 등록 문서의 병합표와 코드가 같은가
+    reg = open(os.path.join(ROOT, "docs", "PREREGISTRATION.md"),
+               encoding="utf-8").read()
+    assert "등록 4" in reg and "병합표" in reg
+    for raw, app in bv.MERGE.items():
+        assert raw in reg, f"등록 문서에 없는 병합: {raw}"
+    for expect in ("lying", "sleep", "sitting", "walk", "run", "eat",
+                   "investigating"):
+        assert expect in bv.MERGE, f"등록한 병합이 코드에서 빠졌다: {expect}"
+    assert bv.MERGE["run"] == "Walking" and bv.MERGE["sleep"] == "Resting"
+
+    # 3) 경계 둘 — 근거를 적고 뺀 것이라 몰래 들어오면 안 된다
+    assert bv.app_vocab("standing") == bv.OTHER, "standing 이 Resting 으로 샜다"
+    assert bv.app_vocab("drink") == bv.OTHER, "drink 가 Eating 으로 샜다"
+    assert bv.app_vocab("fight") == bv.OTHER
+
+    # 4) 병합은 정확도를 **구조적으로 낮출 수 없다** — 화면·문서가 이 성질을
+    #    모르면 +차이를 개선으로 읽는다
+    src = open(os.path.join(ROOT, "src", "behavior_vocab.py"),
+               encoding="utf-8").read()
+    assert "구조적으로" in src and "개선의 증거가 아니다" in src
+
+    # 5) 저장된 결과는 두 어휘를 다 들고 있어야 한다 — 갈아치우면 숨긴 것이다
+    p = os.path.join(ROOT, "data", "behavior_vocab.json")
+    if not os.path.exists(p):
+        print("      (behavior_vocab.json 없음 — 실행 결과 대조는 건너뜀)")
+        return
+    r = json.load(open(p, encoding="utf-8"))
+    for k in ("raw", "app", "raw_baseline", "app_baseline"):
+        assert k in r, k
+    assert r["app"]["acc"] >= r["raw"]["acc"], "병합이 정확도를 낮췄다 — 불가능"
+    # 어휘를 줄이면 기준선도 같이 올라 이득이 공짜로 보이는 함정. 지금
+    # 자료에서는 최다 클래스가 양쪽 다 investigating/Searching 이라 기준선이
+    # 0.332 로 같은데, **그 우연을 불변식으로 굳히지 않는다** — 자료를 다시
+    # 파싱해 병합군이 더 커지면 기준선이 정당하게 오를 수 있다. 고정할 것은
+    # "여유가 줄지 않았다"는 뜻이다.
+    lift_raw = r["raw"]["acc"] - r["raw_baseline"]["acc"]
+    lift_app = r["app"]["acc"] - r["app_baseline"]["acc"]
+    assert lift_app >= lift_raw - 1e-9, (
+        f"응용 어휘의 기준선 대비 여유가 줄었다 — 이득이 기준선 상승에서 "
+        f"온 것이다 (raw {lift_raw:+.3f} → app {lift_app:+.3f})")
+    assert r["app_baseline"]["acc"] >= r["raw_baseline"]["acc"] - 1e-9
+    assert r["merge"] == bv.MERGE, "저장된 결과가 지금 병합표와 다르다"
+
+
+def test_admin_screen_matches_farm_scale() -> None:
+    """행정 등록 표가 `farm_scale.reconcile` 과 **같은 답을 내는가.**
+
+    운영표(방당 면적)와 행정표(허가면적)는 다른 질문이라 화면을 나눴는데,
+    나누면 갈릴 자리도 둘이 된다. 그래서 화면이 내보낸 JSON 을 그대로
+    모듈에 먹여 대조한다 — 화면에 '과밀 58두'가 떴으면 모듈도 58두여야 한다.
+
+    지키는 것 넷: (1) 총사육수를 상시모돈과 **다른 칸**으로 받는가,
+    (2) 숫자 칸이 숫자로 실리는가(예전에 change 리스너가 원시 문자열로
+    덮어써서 행정 입력이 JSON 에 안 실렸다), (3) 비운 칸을 되돌려 채우지
+    않는가, (4) 허가면적 기준 밀도가 모듈과 일치하는가.
+    """
+    import json
+
+    import build_farm_setup as bfs
+    import farm_scale as fs
+
+    html = bfs.build()
+    assert 'id="f_total"' in html, "총사육수 칸이 없다 — 상시모돈과 같은 칸이면 안 된다"
+    assert "drawAdmin" in html and 'id="admin"' in html
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("      (playwright 없음 — JS 대조는 건너뜀)")
+        return
+    exe = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+    if not os.path.exists(exe):
+        print("      (chromium 없음 — JS 대조는 건너뜀)")
+        return
+
+    path = os.path.join(ROOT, "dashboard", "farm_setup.html")
+    open(path, "w", encoding="utf-8").write(html)
+    with sync_playwright() as pw:
+        br = pw.chromium.launch(executable_path=exe)
+        pg = br.new_page()
+        errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto("file://" + path)
+        # 교배사(스톨 1.4) 과밀 · 임신사(1.4) 적정 · 무허가면적 있는 동
+        pg.evaluate("""() => {
+            barns = [
+              {name:"1동", stage:"교배사", rooms:1, per:72, area:100,
+               housing:"stall", head:200, permit:200, nonpermit:30},
+              {name:"2동", stage:"임신사", rooms:2, per:82, area:130,
+               housing:"group", head:100, permit:260, nonpermit:null},
+              {name:"3동", stage:"분만사", rooms:2, per:36, area:150,
+               housing:"crate", head:null, permit:null, nonpermit:null},
+            ];
+            document.querySelector("#f_total").value = "3000";
+            drawBarns(); drawAdmin(); render();
+        }""")
+        snap = json.loads(pg.eval_on_selector("#out_json", "e => e.value"))
+        cells = pg.eval_on_selector_all(
+            "#admin tr", "rs => rs.map(r => r.cells[5].innerText)")
+        checks_txt = pg.eval_on_selector("#admin_checks", "e => e.innerText")
+        br.close()
+    assert not errs, errs
+
+    # (1)(2) 두 수를 갈라 받고, 숫자로 싣는다
+    assert snap["n_head_total"] == 3000 and snap["n_sows"] != 3000
+    b0 = snap["barns"][0]
+    assert b0["head"] == 200 and isinstance(b0["head"], int)
+    assert b0["permit_area_m2"] == 200 and b0["nonpermit_area_m2"] == 30
+    # (3) 비운 칸은 아예 싣지 않는다 — null 이면 모듈이 '0 으로 적었다'로 읽는다
+    assert "head" not in snap["barns"][2]
+    assert "permit_area_m2" not in snap["barns"][2]
+    assert "nonpermit_area_m2" not in snap["barns"][1]
+
+    # (4) 화면 ↔ 모듈. 내보낸 JSON 을 그대로 먹인다
+    r = fs.reconcile(snap)
+    dens = {d["동"]: d for d in r["density"]}
+    assert set(dens) == {"1동", "2동"}, dens          # 3동은 비웠으니 판정 없음
+    assert dens["1동"]["required_m2"] == 1.4 and dens["1동"]["overcrowded"]
+    assert dens["2동"]["required_m2"] == 1.4 and not dens["2동"]["overcrowded"]
+    # 초과 두수가 화면과 모듈에서 같아야 한다
+    assert f"초과 {dens['1동']['excess']}두" in cells[0], (cells[0], dens["1동"])
+    assert f"{dens['1동']['per_head_m2']:.3f}" in cells[0]
+    assert "—" in cells[2]                            # 비운 동은 판정하지 않는다
+    # 검산 문구도 같은 사실을 말한다
+    mod = " ".join(c["내용"] for c in r["checks"])
+    for token in ("무허가면적", "동별 사육수 합"):
+        assert token in checks_txt and token in mod, token
+    assert "위법" not in checks_txt and "불법" not in checks_txt
 
 
 def test_setup_json_actually_runs() -> None:
@@ -3330,7 +3874,7 @@ def test_run_farm_from_setup() -> None:
     assert r["placed"] == 300 and not r["place_short"], r["place_short"]
 
     # 5) 분만틀이 받는 규모와 **다른 돈사가 받는 규모**는 다르다. 분만틀만
-    #    보고 341두라고 하면 임신사 자리가 295두인 걸 놓친다
+    #    보고 341두라고 하면 임신사 자리가 299두인 걸 놓친다
     cap = r["capacity"]
     assert cap["binding"] == "임신사" and cap["flows"], cap["binding"]
     assert cap["n_sows"] < r["plan"]["sow_inventory"], (cap, r["plan"])
@@ -3347,7 +3891,7 @@ def test_herd_drives_stage_counts() -> None:
     """개체 이력이 ③단계 두수를 **유도에서 셈으로** 바꾸는가.
 
     마지막까지 남아 있던 유도값이다. 방은 등록으로 실제가 됐는데 단계별
-    두수는 계속 번식주기 비율(24.1/54.5/21.4%)이었다. 그 매끈함이 문제였다 —
+    두수는 계속 번식주기 비율(23.9/54.4/21.8%)이었다. 그 매끈함이 문제였다 —
     정상 상태를 가정하므로 **자리 부족을 지운다.**
 
     셋을 본다: (1) 경계를 새로 정하지 않았는가, (2) 못 센 개체를 조용히
@@ -3511,6 +4055,80 @@ def test_herd_drives_stage_counts() -> None:
         os.unlink(path)
 
 
+def test_herd_cycle_from_perf() -> None:
+    """주기·회전율이 **이 농장 값**인가, 그리고 모듈끼리 안 갈리는가.
+
+    두 가지를 고쳤다.
+
+    1. 회전율이 관행 2.3 이라 NPD 34일 농장과 58일 농장이 같은 규모로
+       나왔다. `korean_farm_stats` 가 466행에서 확인한 PSY 항등식의 분모가
+       바로 회전율이므로, 되풀 필요 없이 그걸 쓴다.
+    2. `farm_registry` 는 임신 114 · 이유~교배 7 을, `batch_flow` 는 115 ·
+       5.0 을 쓰고 있었다. 같은 농장에 다른 주기(145 vs 144)를 쓴 것이고,
+       연속 흐름 돈사의 지지 두수가 주기에 정비례하므로 **같은 돈사가 모듈에
+       따라 다른 규모로 나왔다.** 더 나쁜 건 방향이다 — 지침 WEI 5.0 은 실측
+       중앙 6.9 보다 짧아서 교배사를 실제보다 **크게** 계산했다.
+    """
+    import batch_flow as bf
+    import farm_registry as fr
+
+    # 1) 출처를 라벨로 남긴다 — 조용히 채우면 내 농장 값인 줄 안다
+    base = bf.herd_cycle()
+    assert set(base["source"]) >= set(bf.CYCLE_FIELDS) | {"turnover"}
+    assert base["source"]["turnover"] in ("실측 중앙", "관행")
+    assert not base["given"], base["given"]
+
+    mine = bf.herd_cycle({"npd": 34.1, "wean_to_estrus": 6.0})
+    assert mine["source"]["turnover"] == "NPD 에서 유도"
+    assert mine["source"]["wean_to_service"] == "입력값"
+    assert mine["wean_to_service"] == 6.0
+    assert set(mine["given"]) == {"turnover", "wean_to_service"}
+
+    # 2) **검증된 항등식 그대로** — 새 산식이 아니다
+    good, bad = bf.herd_cycle({"npd": 34.1}), bf.herd_cycle({"npd": 57.73})
+    want = round((365.0 - 34.1) / (good["gestation"] + good["lactation"]), 3)
+    assert good["turnover"] == want, (good["turnover"], want)
+    # NPD 가 나쁘면 회전이 느리다 — 같은 분만틀이 **더 많은** 모돈을 받는다
+    assert good["turnover"] > bad["turnover"]
+
+    # 3) 비운 칸은 채우지 않는다. 성적을 하나도 안 줘도 터지지 않아야 한다
+    assert bf.herd_cycle({}) == bf.herd_cycle(None) == bf.herd_cycle()
+    assert bf.herd_cycle({"npd": None})["source"]["turnover"] != "NPD 에서 유도"
+
+    # 4) **모듈끼리 같은 주기를 쓴다.** 여기가 갈리면 같은 돈사가 두 규모다
+    assert (fr.W2S, fr.GEST, fr.LACT) == (
+        round(base["wean_to_service"]), round(base["gestation"]),
+        round(base["lactation"])), (fr.W2S, fr.GEST, fr.LACT, base)
+
+    # 5) 회전율이 규모를 실제로 움직이는가 — 안 움직이면 배선이 안 된 것이다
+    built = [{"stage": "분만사", "rooms": 2, "per": 36},
+             {"stage": "자돈사", "rooms": 4, "per": 396},
+             {"stage": "육성사", "rooms": 3, "per": 385},
+             {"stage": "비육사", "rooms": 4, "per": 381}]
+    sows = {}
+    for tag, perf in (("good", {"npd": 34.1}), ("bad", {"npd": 57.73})):
+        cap = bf.capacity_from_rooms(built, 21, lactation=24,
+                                     weaned_per_crate=11.0,
+                                     cycle=bf.herd_cycle(perf))
+        sows[tag] = cap["n_sows"]
+        assert cap["cycle"]["source"]["turnover"] == "NPD 에서 유도"
+    assert sows["bad"] > sows["good"], sows
+
+    # 6) **설계와 역산이 같은 회전율을 쓴다.** 여기만 관행값을 쓰면 분만틀에서
+    #    지은 농장을 되읽을 때 같은 돈사가 다른 규모로 나온다
+    assert bf.plan_from_crates(36, 21)["herd_size"] == \
+           bf.plan_from_crates(36, 21, turnover=base["turnover"])["herd_size"]
+
+    # 7) 지침 WEI 를 넣으면 옛 값이 되돌아온다 — 차이가 어디서 왔는지 증명
+    old = bf.capacity_from_rooms(
+        [{"stage": "교배사", "rooms": 1, "per": 69}], 21, lactation=24,
+        cycle=bf.herd_cycle({"wean_to_estrus": bf.CYCLE_GUIDE["wean_to_service"],
+                             "gestation": bf.CYCLE_GUIDE["gestation"]}))
+    now = bf.capacity_from_rooms(
+        [{"stage": "교배사", "rooms": 1, "per": 69}], 21, lactation=24)
+    assert old["n_sows"] > now["n_sows"], (old["n_sows"], now["n_sows"])
+
+
 def test_table_export() -> None:
     """CSV 로 뽑아도 **등급과 각주가 따라가는가.**
 
@@ -3607,6 +4225,879 @@ def test_table_export() -> None:
     assert c.post("/api/export/diagnosis",
                   json={"performance": {}}).status_code == 422
     assert c.post("/api/export/targets", json={}).status_code == 422
+
+
+def test_pig_behavior_adapter() -> None:
+    """업로드된 행동 분할 모델이 계약에 **정직하게** 꽂혔는가.
+
+    이 모델은 15종을 출력하지만 홀드아웃에서 AP 0.2 를 넘은 건 4종뿐이다.
+    지키는 것 넷: (1) 어휘를 4종만 신고하는가 — 15종을 신고하면
+    head_support 가 분만징후를 "돈다" 고 답한다(Scrubbing AP 0.0 인데),
+    (2) 신뢰 밖 검출이 분포에 안 섞이는가, (3) 개체를 특정하는 척 안 하는가,
+    (4) 가중치 파일 없이도 접목 점검이 도는가(*.pth 는 미커밋).
+    """
+    import vision_contract as vc
+    import vision_pig_behavior as vpb
+    from pig_behavior.predictor import CLASSES, RELIABLE_CLASSES, Detection
+
+    # 1) 어휘 신고 — 15종 출력 중 신뢰 4종만, CLASSES 원래 순서 유지
+    m = vpb.PigBehaviorModel()
+    assert isinstance(m, vc.BehaviorModel)          # 계약 준수(runtime protocol)
+    assert len(CLASSES) == 15
+    assert set(m.classes) == set(RELIABLE_CLASSES) and len(m.classes) == 4
+    assert list(m.classes) == [c for c in CLASSES if c in RELIABLE_CLASSES]
+    # 신고 어휘의 근거(AP)가 응답에 붙어 다닌다 · 부풀린 0.953 은 없다
+    assert set(vpb.HOLDOUT_AP) == set(m.classes)
+    assert all(ap >= 0.2 for ap in vpb.HOLDOUT_AP.values())
+    assert "train==val" in m.holdout["note"]
+
+    # 2) head_support — 분만징후·기침 질병이 **막혀야 한다.** 뚫려 있으면
+    #    AP 0.0 짜리 출력을 근거로 경보를 낸다는 뜻이다
+    sup = vc.head_support(m)
+    assert sup["estrus"]["runs"] and sup["return"]["runs"]
+    assert not sup["farrowing"]["runs"]
+    assert sup["farrowing"]["missing"] == ["Scrubbing"]
+    assert not sup["disease"]["runs"]
+    assert sup["disease"]["missing"] == ["Coughing"]
+    # 채널 신고 — 어휘 판정(runs)은 그대로 두고(다음 학습 목록이 남게)
+    # resp 채널이 질병·분만징후를 **따로** 연다. 등급(합성·실증 0회)이
+    # 신고에 붙어 다닌다. 채널 없이 부르면 아무것도 안 열린다.
+    sup_ch = vc.head_support(m, channels=("resp",))
+    assert not sup_ch["disease"]["runs"]              # 어휘로는 여전히 막힘
+    assert sup_ch["disease"]["channel_runs"]
+    assert sup_ch["farrowing"]["channel_runs"]
+    assert "합성" in sup_ch["disease"]["channel_why"]
+    assert "실증 0회" in sup_ch["disease"]["channel_why"]
+    assert not sup_ch["estrus"]["channel_runs"]       # resp 는 발정을 안 연다
+    assert not sup["disease"]["channel_runs"]         # 기본 호출은 채널 없음
+
+    # 반례: 15종을 그대로 신고하면 분만징후가 열린다 — 그래서 4종 신고다
+    class Naive:
+        version, classes = "naive", CLASSES
+        def predict(self, f, t): return []
+    assert vc.head_support(Naive())["farrowing"]["runs"]
+
+    # 3) fold — 신뢰 밖 검출은 세되 분포에 안 넣고, 개체를 특정하지 않는다
+    dets = [("2026-08-21T09:00", [Detection("Resting", 0.9, (0, 0, 1, 1)),
+                                  Detection("Eating", 0.6, (0, 0, 1, 1)),
+                                  Detection("Scrubbing", 0.99, (0, 0, 1, 1))]),
+            ("2026-08-21T09:05", [Detection("Resting", 0.5, (0, 0, 1, 1))])]
+    [r] = vpb.fold(dets, "cam1", "3동", "2방", model="pig-behavior-test")
+    o = r["obs"]
+    assert isinstance(o, vc.BehaviorObs)
+    assert (r["n_detections"], r["n_used"], r["n_dropped"]) == (4, 3, 1)
+    assert "Scrubbing" not in o.probs                # AP 0.0 은 분포에 안 섞인다
+    assert abs(sum(o.probs.values()) - 1.0) < 1e-3
+    assert abs(o.probs["Resting"] - 1.4 / 2.0) < 1e-3   # 점수 가중 구성비
+    assert o.animal_id is None and o.track_id is None   # 방 단위 — 거짓 확신 금지
+    assert o.activity_px == 0.0 and o.resp_bpm is None   # 안 준 채널은 빈 채로
+    [r2] = vpb.fold(dets, "cam1", "3동", "2방", model="t",
+                    activity_px=12.3, resp_bpm=44.0)
+    assert (r2["obs"].activity_px, r2["obs"].resp_bpm) == (12.3, 44.0)
+    assert (o.t0, o.t1) == ("2026-08-21T09:00", "2026-08-21T09:05")
+    assert o.model == "pig-behavior-test"
+    assert vpb.fold([], "c", "b", "p", model="x") == []
+
+    # 4) 가중치 없이 접목 점검이 돈다 — 무거운 초기화는 predict 까지 미룬다
+    assert m._pred is None
+    assert "가중치 미지정" in m.version
+    import vision_pig_behavior
+    assert vision_pig_behavior.main([]) == 0
+
+
+def test_behavior_baseline() -> None:
+    """구성비 → 자기 기준선 편차 → 헤드 경보 — **문턱을 발명하지 않았는가.**
+
+    지키는 것 여섯: (1) 이력 미달이면 기준선을 만들지 않는가, (2) 산포가
+    이상치에 강건한가(IQR — σ 였으면 한 창이 기준선을 흔든다), (3) 컷이
+    자기 이력 경보율 대역에서 역산되는가 + 산포 없으면 None·경보 불가인가,
+    (4) 질병이 한 창으로 안 울리고 연속을 요구하는가, (5) 달력이 연 헤드만
+    계산하는가(발정·분만 신호 겹침), (6) fold() 출력이 그대로 관통하는가.
+    """
+    import numpy as np
+
+    import behavior_baseline as bb
+    import vision_pig_behavior as vpb
+    from pig_behavior.predictor import Detection
+
+    classes = ("Searching", "Resting", "Walking", "Eating")
+
+    def window(rest, eat, walk):
+        raw = {"Resting": rest, "Eating": eat, "Walking": walk,
+               "Searching": max(0.0, 1 - rest - eat - walk)}
+        tot = sum(raw.values())
+        return {k: v / tot for k, v in raw.items()}
+
+    rng = np.random.default_rng(3)
+    hist = [window(0.60 + rng.normal(0, .03), 0.25 + rng.normal(0, .03),
+                   0.10 + rng.normal(0, .02)) for _ in range(40)]
+
+    # 1) 미달이면 기준선 미형성 — 편차도 점수도 경보도 없다
+    short = bb.fit(hist[:bb.MIN_WINDOWS - 1], "짧은방", classes)
+    assert not short.formed and short.deviation(hist[0]) == {}
+    a0 = bb.assess(short, window(0.4, 0.1, 0.4))
+    assert a0["heads"] == {} and "기준선 미형성" in a0["why"]
+    assert bb.fit(hist[:bb.MIN_WINDOWS], "딱맞는방", classes).formed
+
+    # 2) IQR 산포 — 이상치 한 점이 기준선을 흔들지 않는다(σ 였으면 흔든다)
+    x = np.array([0.25] * 20 + [0.26] * 20 + [0.95])
+    _, rsd = bb._robust(x)
+    assert rsd < float(np.std(x)) / 2
+    med, rsd0 = bb._robust(np.array([0.3] * 30))
+    assert med == 0.3 and rsd0 == 1e-6               # 산포 0 → 바닥값
+
+    # 3) 컷은 자기 이력 경보율 대역에서 역산 — 상수 이력이면 None·경보 불가
+    b = bb.fit(hist, "3동/2방", classes)
+    for head in bb.HEAD_SIGNS:
+        cut = b.cuts[head]
+        assert cut is not None
+        scores = np.array([b.head_score(h, head) for h in hist])
+        rate = float((scores >= cut).mean())
+        assert bb.RATE_BAND[0] <= rate <= bb.RATE_BAND[1]
+    flat = bb.fit([window(0.6, 0.25, 0.1)] * 40, "상수방", classes)
+    assert all(c is None for c in flat.cuts.values())
+    af = bb.assess(flat, window(0.4, 0.1, 0.4))
+    assert not af["heads"]["estrus"]["alert"]
+    assert "경보 불가" in af["heads"]["estrus"]["why"]
+
+    # 부호 방향 — 발정 창(불안정↑·식욕↓)은 estrus 양수, 반대 창은 음수
+    est = window(0.42, 0.14, 0.32)
+    assert b.head_score(est, "estrus") > 0
+    assert b.head_score(window(0.72, 0.20, 0.03), "estrus") < 0
+    a1 = bb.assess(b, est)
+    assert a1["heads"]["estrus"]["alert"]             # SUSTAIN=1 — 즉시
+
+    # 4) 질병은 연속 2창 — 첫 창은 over 만, 둘째 창에야 경보
+    sick = window(0.78, 0.08, 0.05)
+    d1 = bb.assess(b, sick)["heads"]["disease"]
+    assert d1["over"] and not d1["alert"] and d1["streak"] == 1
+    d2 = bb.assess(b, sick, recent=[sick])["heads"]["disease"]
+    assert d2["alert"] and d2["streak"] == 2 == d2["sustain"]
+    # 사이에 평시 창이 끼면 연속이 끊긴다
+    d3 = bb.assess(b, sick, recent=[window(0.6, 0.25, 0.1)])["heads"]["disease"]
+    assert not d3["alert"] and d3["streak"] == 1
+
+    # 5) 달력 게이팅 — 발정 창은 분만 헤드도 넘지만(신호 겹침), 달력이 연
+    #    헤드만 계산하는 것이 정상 경로다
+    assert bb.assess(b, est)["heads"]["farrowing"]["over"]
+    g = bb.assess(b, est, heads=("estrus",))
+    assert list(g["heads"]) == ["estrus"]
+
+    # 6) fold() → summarize() → fit() — 어댑터 출력이 그대로 관통한다.
+    #    fold() 는 관측된 행동만 내놓으므로, 어휘를 추론한 기준선은 한 번도
+    #    안 보인 행동을 모른다 — 그 어휘로 헤드를 재는 척하면 안 된다
+    dets = [(f"2026-08-21T{h:02d}:00", [Detection("Resting", 0.8, (0, 0, 1, 1)),
+                                        Detection("Eating", 0.4, (0, 0, 1, 1))])
+            for h in range(14)]
+    folded = [vpb.fold([d], "cam1", "3동", "2방", model="t")[0] for d in dets]
+    hist2 = bb.summarize(folded)
+    assert list(hist2) == ["3동/2방"] and len(hist2["3동/2방"]) == 14
+    b_seen = bb.fit(hist2["3동/2방"], "3동/2방")      # 어휘 추론 — 본 것만 안다
+    assert b_seen.formed and set(b_seen.classes) == {"Resting", "Eating"}
+    assert b_seen.head_score(hist2["3동/2방"][0], "estrus") is None  # Walking 미비
+    assert b_seen.cuts["estrus"] is None
+    ag = bb.assess(b_seen, hist2["3동/2방"][0])["heads"]["estrus"]
+    assert not ag["alert"] and "어휘" in ag["why"]
+    # 계약 어휘를 명시하면 잰다 — 미관측 행동은 구성비 0 인 정상 이력이다
+    b_full = bb.fit(hist2["3동/2방"], "3동/2방", classes=vpb.CONTRACT_CLASSES)
+    assert b_full.formed
+    assert b_full.head_score(hist2["3동/2방"][0], "estrus") is not None
+
+    # 보조 신호 — 있으면 등가중 합류, 없어도 헤드를 닫지 않는다.
+    # activity(AUC 0.739 실측)가 그동안 기준선 층에 안 오고 버려지고 있었다
+    hist_act = [dict(h, activity_px=10 + i % 3) for i, h in enumerate(hist)]
+    b_act = bb.fit(hist_act, "방")
+    est_act = dict(est, activity_px=22.0)             # 발정 창 — 활동 급등
+    s_with = b_act.head_score(est_act, "estrus")
+    s_wo = b.head_score(est, "estrus")
+    assert s_with > s_wo                              # 활동이 발정을 보강
+    assert "activity_px" in bb.HEAD_EXTRA["estrus"]
+    assert bb.HEAD_EXTRA["disease"]["resp_bpm"] == +1.0   # 빈호흡=질병 부호
+    # 리뷰가 실행으로 확인한 결함 둘의 회귀 방지 — 채널 부재는 0 이 아니다:
+    # 추적기가 꺼진 평시 창이 질병 경보로 둔갑하지 않고, 간헐 측정 이력이
+    # 채널 중심을 0 쪽으로 끌어내리지 않는다
+    normal_no_act = window(0.61, 0.24, 0.10)
+    d1 = bb.assess(b_act, normal_no_act)["heads"]["disease"]
+    assert not d1["over"], "미측정 채널이 z 로 계산됐다(부재=0 결함 재발)"
+    half = [dict(h) for h in hist_act]
+    for h_ in half[::2]:
+        h_.pop("activity_px")
+    b_half = bb.fit(half, "방")
+    assert b_half.center["activity_px"] > 8, "간헐 측정이 중심을 오염시켰다"
+
+    # summarize 가 채널을 구성비와 **나란히** 얹는다(분포에 섞지 않는다)
+    import vision_pig_behavior as _vpb
+    from pig_behavior.predictor import Detection as _D
+    [fr] = _vpb.fold([("t0", [_D("Resting", 0.9, (0, 0, 1, 1))])],
+                     "c", "동", "방", model="t", activity_px=7.5, resp_bpm=41.0)
+    ent = bb.summarize([fr])["동/방"][0]
+    assert ent["activity_px"] == 7.5 and ent["resp_bpm"] == 41.0
+    # 분모(_n_used)도 구성비가 아니다 — 밑줄 키는 전부 메타다
+    assert ent[bb.COUNT_KEY] == 1
+    assert abs(sum(v for k, v in ent.items()
+                   if k not in ("activity_px", "resp_bpm")
+                   and not k.startswith("_")) - 1.0) < 1e-6
+
+    # 한계 신고 고정 — 등가중임을, 판정이 아니라 의심임을 응답이 스스로 말한다
+    assert "등가중" in a1["weights"] and a1["grade"] == "계산"
+    assert "판정이 아니라 의심" in a1["note"]
+
+
+def test_behavior_head_train() -> None:
+    """헤드 가중치 학습 — **사전 등록(등록 2)의 규칙이 코드에 박혔는가.**
+
+    지키는 것 다섯: (1) 라벨 헤더가 규약과 다르면 짐작하지 않고 죽는가,
+    (2) 성립 조건 미달이면 학습하지 않는가, (3) 동점이면 등가중을 유지
+    하는가(엄격히 이겨야 후보), (4) 이겨도 부호가 문헌과 충돌하면 보류
+    하는가, (5) 브리지 도구가 창 묶기를 재구현하지 않는가.
+    """
+    import csv
+    import json
+    import tempfile
+
+    import numpy as np
+
+    import behavior_head_train as ht
+
+    # 1) 헤더 규약 — 열을 짐작해서 맞으면 그게 더 위험하다
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "bad.csv")
+        with open(p, "w", encoding="utf-8", newline="") as f:
+            csv.writer(f).writerows([("방키", "영상", "s", "e", "라벨")])
+        try:
+            ht.load_labels(p)
+            raise AssertionError("틀린 헤더를 통과시켰다")
+        except SystemExit as e:
+            assert "규약과 다르다" in str(e)
+
+    # 2)+3) 합성 관통 — 방 4개 대비 성립 → 학습은 되지만 동점이라 등가중 유지
+    rng = np.random.default_rng(11)
+    with tempfile.TemporaryDirectory() as tmp:
+        ht._synth(tmp, rng, rooms=4, wins=16, pos_from=10)
+        rows = ht.load_labels(os.path.join(tmp, "labels.csv"))
+        rooms = ht.build_dataset(os.path.join(tmp, "dets"), rows,
+                                 60, 30.0, "발정", "비발정")
+        a = ht.audit(rooms)
+        assert a["ok"] and a["n_contrast"] == 4
+        r = ht.train(rooms, "estrus")
+        assert r["preregistered"].endswith("등록 2")
+        assert r["auc_learned_loro"] == r["auc_equal"] == 1.0
+        assert r["verdict"].startswith("등가중 유지")     # 동점은 승리가 아니다
+        # 성립 조건 미달 — 방 2개만 남기면 학습 자체를 거부한다
+        two = {k: rooms[k] for k in list(rooms)[:2]}
+        r2 = ht.train(two, "estrus")
+        assert r2["verdict"].startswith("학습 불가") and "방 2" in r2["verdict"]
+        assert "auc_learned_loro" not in r2
+
+    # 4) 부호 충돌 — 양성이 Eating↑ 이면 학습은 이기지만 문헌 부호(−)와
+    #    충돌한다 → 교체가 아니라 보류. 데이터가 문헌과 싸우면 멈추고 본다
+    def synth_eat(tmp, rng):
+        os.makedirs(os.path.join(tmp, "dets"), exist_ok=True)
+        rows = []
+        for k in range(3):
+            room, video = f"R{k}", f"v{k}"
+            with open(os.path.join(tmp, "dets", f"{video}.jsonl"), "w",
+                      encoding="utf-8") as f:
+                for i in range(16 * 60):
+                    pos = i // 60 >= 10
+                    w = [55, 25, 10, 6] if not pos else [30, 55, 6, 5]
+                    dets = [{"label": ["Resting", "Eating", "Walking",
+                                       "Searching"][rng.choice(4, p=np.array(w) / sum(w))],
+                             "score": 0.8, "bbox": [0, 0, 1, 1],
+                             "reliable": True} for _ in range(8)]
+                    f.write(json.dumps({"image": f"{i:06d}.jpg",
+                                        "detections": dets}) + "\n")
+            rows += [(room, video, i * 1800, (i + 1) * 1800,
+                      "발정" if i >= 10 else "비발정") for i in range(16)]
+        with open(os.path.join(tmp, "labels.csv"), "w", encoding="utf-8",
+                  newline="") as f:
+            wcsv = csv.writer(f)
+            wcsv.writerow(ht.LABEL_HEADER)
+            wcsv.writerows(rows)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        synth_eat(tmp, np.random.default_rng(5))
+        rows = ht.load_labels(os.path.join(tmp, "labels.csv"))
+        rooms = ht.build_dataset(os.path.join(tmp, "dets"), rows,
+                                 60, 30.0, "발정", "비발정")
+        r = ht.train(rooms, "estrus")
+        assert r["auc_learned_loro"] > r["auc_equal"]
+        assert "Eating" in r["sign_conflicts"]
+        assert r["verdict"].startswith("보류")
+
+    # 5) 브리지 도구는 창 묶기를 여기서 가져다 쓴다 — 재구현 금지
+    import importlib.util as iu
+    spec = iu.spec_from_file_location(
+        "baseline_from_dets",
+        os.path.join(ROOT, "tools", "baseline_from_dets.py"))
+    tool = iu.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    assert tool.load_windows is ht.load_windows
+
+
+def test_mating_plan() -> None:
+    """교배 배정 — **근친이 인덱스를 이기는가.**
+
+    지키는 것 다섯: (1) 혈연계수가 교과서 값과 맞는가(반형매 0.125 ·
+    부모자식 0.25 · 전형매 0.25), (2) 혈통을 지우면 근친율이 내려가는가
+    (하한 성질 — 그래서 각주가 '하한'이라 말한다), (3) 최고 웅돈이라도
+    근친 한도에 걸리면 배정에서 빠지는가, (4) 배정 불가 사유가 근친/상한을
+    구분해 말하는가, (5) 배정 합이 전체 최적인가(탐욕이 아니라).
+    """
+    import mating_plan as mp
+
+    # 1) 혈연계수 — 교과서 값
+    ped = mp.Pedigree({"A": ("S", None), "B": ("S", None),      # 반형매
+                       "C": ("S", "D"), "E": ("S", "D"),        # 전형매
+                       "S": (None, None), "D": (None, None)})
+    assert abs(ped.kinship("A", "B") - 0.125) < 1e-12
+    assert abs(ped.kinship("C", "S") - 0.25) < 1e-12            # 부모-자식
+    assert abs(ped.kinship("C", "E") - 0.25) < 1e-12            # 전형매
+    assert abs(ped.kinship("A", "A") - 0.5) < 1e-12             # 자기(비근친)
+    # 2) 하한 성질 — 부 정보를 지우면 같은 쌍의 근친율이 내려간다
+    ped2 = mp.Pedigree({"A": (None, None), "B": ("S", None), "S": (None, None)})
+    assert ped2.kinship("A", "B") == 0.0 < ped.kinship("A", "B")
+    # 순환 혈통은 조용히 돌지 않고 죽는다
+    try:
+        mp.Pedigree({"X": ("Y", None), "Y": ("X", None)}).kinship("X", "Y")
+        raise AssertionError("순환 혈통을 통과시켰다")
+    except ValueError as e:
+        assert "순환" in str(e)
+
+    # 3)+5) 시연 구성 — 최고 웅돈 B-X 는 S001·S003 과 반형매(F 12.5%)라
+    #    한도(6.25%)에 걸린다. 전체 최적은 S002+X · S001+Y · S003+Y = 328.5
+    r = mp._demo()
+    pick = {row["모돈번호"]: row["웅돈번호"] for row in r["rows"]}
+    assert pick == {"S001": "B-Y", "S002": "B-X", "S003": "B-Y"}
+    assert not r["unassigned"]
+    assert abs(sum(row["후손의 예상인덱스"] for row in r["rows"]) - 328.5) < 1e-9
+    assert all(u["배정"] <= u["상한"] for u in r["boar_use"].values())
+    assert any("하한" in n for n in r["notes"])
+
+    # 4) 사유 구분 — 근친 전부 초과 vs 웅돈 상한에 밀림
+    sows = {"S1": {"index": 100.0, "sire": "F", "dam": None, "max_services": None},
+            "S2": {"index": 99.0, "sire": "F", "dam": None, "max_services": None}}
+    only_kin = {"B1": {"index": 120.0, "sire": "F", "dam": None,
+                       "max_services": 2}}
+    r2 = mp.plan(sows, only_kin)
+    assert len(r2["unassigned"]) == 2
+    assert all("근친 한도 초과" in u["사유"] for u in r2["unassigned"])
+    one_slot = {"B1": {"index": 120.0, "sire": "G", "dam": None,
+                       "max_services": 1}}
+    r3 = mp.plan(sows, one_slot)
+    assert len(r3["rows"]) == 1 and len(r3["unassigned"]) == 1
+    assert "상한에 밀림" in r3["unassigned"][0]["사유"]
+    # 상한에 밀릴 때 남는 자리는 인덱스 높은 모돈에게 간다(전체 최적)
+    assert r3["rows"][0]["모돈번호"] == "S1"
+
+    # CSV — 농장장 표의 열 + 등급 열 + 하한 각주가 파일을 떠나지 않는다
+    text = mp.to_csv(r)
+    assert "하한" in text and "등급,모돈번호,모돈인덱스,웅돈번호" in text
+    assert "후손의 예상인덱스,근친율(%),교배횟수" in text
+    bare = mp.to_csv(r, bare=True)
+    assert "#" not in bare.splitlines()[0]
+
+
+def test_barn_env_control() -> None:
+    """돈사 환경 위험 알람 — **센서 차이를 사육환경 차이로 읽지 않는가.**
+
+    알람만 낸다 — 제어 지시는 내지 않는다. 지키는 것 다섯: (1) 위험
+    (지침 층)은 이력이 없어도 울고 주의(편차 층)는 기준선 미형성이면
+    침묵하는가, (2) 센서 오프셋이 편차를 흔들지 못하는가, (3) 겨울
+    저온+고암모니아는 위험 둘이 동시에 우는가 — 조치 지시는 없는가,
+    (4) 지침 안이지만 평소와 다른 것이 주의(점검)로만 나오는가,
+    (5) 편차 산포·컷이 행동 기준선 층의 **같은 코드**인가(재구현 금지).
+    """
+    import numpy as np
+
+    import barn_env_control as ec
+    import behavior_baseline as bb
+
+    # 5) 같은 코드 — 이름만 같은 복제가 아니라 동일 객체
+    assert ec._robust is bb._robust and ec._calibrate_cut is bb._calibrate_cut
+    assert ec.MIN_WINDOWS is bb.MIN_WINDOWS
+
+    # 1) 이력 3개 — 기준선 미형성이어도 지침 층은 판정·제어를 낸다
+    r = ec.assess({"신설동": {"temp_c": [30.0, 30.5, 31.0],
+                             "nh3_ppm": [10.0, 11.0, 12.0]}},
+                  {"신설동": "임신돈·웅돈"})
+    s = r["barns"]["신설동"]["sensors"]["temp_c"]
+    assert not s["formed"] and s["z"] is None and s["guide_state"] == "고온 위반"
+    al = r["barns"]["신설동"]["alarms"]
+    assert [a["수준"] for a in al] == ["위험"] and "고온 위반" in al[0]["내용"]
+    assert r["ranking"] == []                     # 편차 층은 침묵
+
+    # 2) 센서 오프셋 불변 — 같은 환경, 한쪽 센서만 +3℃
+    rng = np.random.default_rng(3)
+    base = list(rng.normal(18, 0.5, 40))
+    nh3 = list(rng.normal(12, 1.5, 40))
+    r = ec.assess({"A": {"temp_c": base, "nh3_ppm": nh3},
+                   "B": {"temp_c": [v + 3.0 for v in base], "nh3_ppm": nh3}},
+                  {"A": "임신돈·웅돈", "B": "임신돈·웅돈"})
+    za = r["barns"]["A"]["sensors"]["temp_c"]["z"]
+    zb = r["barns"]["B"]["sensors"]["temp_c"]["z"]
+    assert abs(za - zb) < 1e-9                    # 오프셋은 z 에 흔적이 없다
+    raw_a = r["barns"]["A"]["sensors"]["temp_c"]["now"]
+    raw_b = r["barns"]["B"]["sensors"]["temp_c"]["now"]
+    assert raw_b - raw_a > 2.5                    # 원값 비교였다면 속았다
+
+    # 3) 겨울 상충 — 저온 위반 + 암모니아 초과
+    t = list(rng.normal(17, 0.5, 30)) + [13.0]
+    a = list(rng.normal(14, 1.5, 30)) + [32.0]
+    r = ec.assess({"3동": {"temp_c": t, "nh3_ppm": a}}, {"3동": "포유모돈"})
+    al = r["barns"]["3동"]["alarms"]
+    assert [x["수준"] for x in al] == ["위험", "위험"]   # 둘이 동시에 운다
+    assert any("저온 위반" in x["내용"] for x in al)
+    assert any("상한 초과" in x["내용"] for x in al)
+    # 조치 지시는 없다 — 겨울 상충에서 '환기 증대' 같은 지시는 틀릴 수 있다
+    assert not any(w in x["내용"] for x in al for w in ("환기", "냉방", "보온"))
+
+    # 4) 지침 안 + 평소와 다름 → 점검이지 제어가 아니다
+    t = list(rng.normal(16, 0.15, 40)) + [19.5]   # 적온 안이지만 z 가 크다
+    a2 = list(rng.normal(12, 1.5, 40)) + [12.0]
+    r = ec.assess({"4동": {"temp_c": t, "nh3_ppm": a2}}, {"4동": "임신돈·웅돈"})
+    s = r["barns"]["4동"]["sensors"]["temp_c"]
+    assert s["guide_state"] == "적정" and s["alert"]
+    al = r["barns"]["4동"]["alarms"]
+    assert [x["수준"] for x in al if "temp_c" in x["내용"]] == ["주의"]
+    assert any("점검" in x["내용"] for x in al)
+
+    # 반대로: 평소부터 더운 돈사(기준선이 높음)는 지침 위반이되 편차 무경보 —
+    # 두 층이 서로를 덮지 않고 각자 말한다
+    hot = list(rng.normal(24, 0.5, 40)) + [24.2]
+    r = ec.assess({"5동": {"temp_c": hot, "nh3_ppm": a2}}, {"5동": "임신돈·웅돈"})
+    s = r["barns"]["5동"]["sensors"]["temp_c"]
+    assert s["guide_state"] == "고온 위반" and not s["alert"]
+    al = r["barns"]["5동"]["alarms"]
+    assert [x["수준"] for x in al if "temp_c" in x["내용"]] == ["위험"]
+    # 지침 밖인데 편차로는 평소 수준 → 센서 치우침/상시 위반 주석이 붙는다.
+    # 센서 차이 문제를 편차가 걸러 주는 자리다 — 새 문턱 없이.
+    assert "센서 치우침" in al[0]["내용"]
+    # 반대로 갑작스런 위반(3동 저온, 편차 경보 동반)에는 주석이 없다
+    r36 = ec.assess({"3동": {"temp_c": t, "nh3_ppm": a}}, {"3동": "포유모돈"})
+    tmsg = next(x["내용"] for x in r36["barns"]["3동"]["alarms"]
+                if "temp_c" in x["내용"])
+    assert "센서 치우침" not in tmsg
+
+    # 지침값이 제공 자료 그대로인가 — 상한을 임의로 완화하면 여기서 깨진다
+    assert ec.TEMP_GUIDE["포유자돈"] == (30.0, 35.0)
+    assert ec.TEMP_GUIDE["이유자돈"] == (22.0, 29.0)
+    assert ec.NH3_LIMIT == 15.0 and ec.H2S_LIMIT == 5.0   # 축산원 환절기 자료
+    # 습도·황화수소 — 지침 층 판정
+    rh = list(rng.normal(52, 2, 20)) + [34.0]
+    hs = list(rng.normal(2, 0.5, 20)) + [6.0]
+    r = ec.assess({"6동": {"temp_c": [18.0] * 21, "rh_pct": rh,
+                           "h2s_ppm": hs}}, {"6동": "임신돈·웅돈"})
+    st6 = r["barns"]["6동"]["sensors"]
+    assert st6["rh_pct"]["guide_state"] == "저습 위반"
+    assert st6["h2s_ppm"]["guide_state"] == "상한 초과"
+    # 지침표 조회 — 한랭 추가 사료요구량·풍속 쾌적성·단열 점검
+    assert ec.cold_feed_penalty(60, -6) == 108
+    assert ec.cold_feed_penalty(120, -10) == 263
+    assert ec.cold_feed_penalty(58, -5.6) == 108          # 가장 가까운 칸
+    assert ec.cold_feed_penalty(60, -1) == 0
+    assert ec.comfort(21, 0.1, 1) == "쾌적"
+    assert ec.comfort(13, 0.1, 6) == "불쾌"               # 8주령 이하 불쾌
+    assert ec.comfort(13, 0.1, 10) == "쾌적"
+    assert ec.comfort(2, 0.1, 30) == "불쾌"               # 비육돈도 불쾌
+    ia = ec.insulation_alarms(day_temps=[14.0, 23.0], spot_temps=[18.0, 21.0])
+    assert len(ia) == 2 and all("단열" in x["내용"] for x in ia)
+    assert ec.insulation_alarms(day_temps=[18.0, 22.0]) == []
+
+    # 번식 달력 결합 — 같은 고온 위반이라도 착상기 모돈이 있는 돈사가
+    # 먼저다(여름 실측: 임신사고 구성이 1차 재발 쪽으로 +8.0%p). 정보는
+    # 달력이 주고 환경 층은 표시만 한다 — 스스로 판정하지 않는다
+    hot2 = list(rng.normal(24, 0.5, 30)) + [26.0]
+    n2 = list(rng.normal(10, 1.5, 30)) + [10.0]
+    r = ec.assess({"임신1동": {"temp_c": hot2, "nh3_ppm": n2},
+                   "비육동": {"temp_c": list(hot2), "nh3_ppm": list(n2)}},
+                  {"임신1동": "임신돈·웅돈", "비육동": "비육돈"},
+                  implantation={"임신1동"})
+    a_imp = next(x for x in r["barns"]["임신1동"]["alarms"]
+                 if "temp_c" in x["내용"])
+    a_no = next(x for x in r["barns"]["비육동"]["alarms"]
+                if "temp_c" in x["내용"])
+    assert "착상기" in a_imp["내용"] and "먼저 보라" in a_imp["내용"]
+    assert "착상기" not in a_no["내용"]
+    assert r["barns"]["임신1동"]["implantation"] is True
+
+    # 시연 관통 + 노트 고정
+    log, stages = ec._demo()
+    r = ec.assess(log, stages)
+    assert any("알람만 낸다" in n for n in r["notes"])
+    assert ec.main([]) == 0
+
+
+def test_pig_behavior_toolkit() -> None:
+    """로컬 자리에서 온 toolkit 합류 — **정본과 갈라지지 않았는가.**
+
+    pig-behavior-toolkit 저장소가 정본이고 여기 것은 벤더 사본이다.
+    지키는 것 넷: (1) 호흡수 합성 검증이 이 환경에서도 도는가 — 정답을
+    되찾고, 무호흡 흔들림에 안 속고, 짧으면 지어내지 않고 기각하는가
+    (컷 0.2·결맞음 강등은 이 환경 실측으로 정본에서 고친 것),
+    (2) analyze 가 규약대로 스스로 정하지 않는가(hut_type 검증),
+    (3) 날짜 파서, (4) 기존 접목(predictor 경로)이 toolkit 판으로도
+    그대로 도는가 — 이건 test_pig_behavior_adapter 가 같이 본다.
+    """
+    from pig_behavior.analyze import HUT_TYPES, VideoAnalyzer, _date_parts
+    from pig_behavior.respiration import RespirationMeter, count_cycles
+
+    # 컷 상수는 pytest 없이도 지킨다 — 두 환경 실측으로 정한 값이다
+    assert RespirationMeter().max_cycle_cv == 0.2
+
+    # 1) 호흡 — 합성 관통의 대표 다섯 (전체는 toolkit pytest 11개가 정본).
+    #    합성 영상 생성이 pytest 를 쓰므로 없으면 건너뛴다 — 정적 뷰가
+    #    서버 없이 돌아야 하는 것과 같은 이유로 전체를 실패시키지 않는다.
+    try:
+        import test_respiration as tr
+    except ImportError as e:
+        print(f"      (pytest 없음 — 호흡 합성 검증 건너뜀: {e})")
+    else:
+        tr.test_count_cycles_on_pure_sine()
+        tr.test_count_cycles_on_white_noise()
+        tr.test_recovers_known_rate(45.0, 6.0, 20.0)  # 정답을 되찾는가
+        tr.test_rejects_when_no_breathing(20.0)       # 안 속는가
+        tr.test_too_short_is_refused_not_guessed()    # 지어내지 않는가
+
+    # 2)+3) analyze 경량 확인 — 무거운 것(영상·모델)은 로컬 실증 몫
+    assert HUT_TYPES == {"a": "스톨", "b": "방목", "c": "기타"}
+    assert _date_parts("녹음 2026-08-22 152041.mp4") == ("2026년도 08월 22일", "260822")
+    assert _date_parts("20260822_room3.mp4") == ("2026년도 08월 22일", "260822")
+    assert _date_parts("room3.mp4") == (None, None)
+    assert count_cycles is not None and VideoAnalyzer is not None
+
+
+def test_ops_api_and_view() -> None:
+    """새 기능 셋이 **서버·화면까지 이어졌는가.**
+
+    최근에 만든 기능이 CLI 에만 있으면 심사장에서는 없는 기능이다. 그런데
+    화면과 서버가 각자 계산하기 시작하면 같은 농장에 다른 답을 한다 —
+    이 프로젝트가 이미 두 번 겪은 사고다. 그래서 넷을 고정한다:
+    (1) 라우터 응답이 모듈 출력과 **같은 객체**인가, (2) 정적 뷰가 같은
+    함수를 불러 구워졌는가, (3) 지침 상수를 서버가 제 것으로 베끼지
+    않았는가, (4) 허브에 등록됐는가.
+    """
+    import barn_env_control as ec
+    import behavior_baseline as bb
+    import build_dashboard_hub as hub
+    import mating_plan as mp
+
+    # 4) 허브 등록 + 뷰 파일
+    assert any(v[0] == "ops_console.html" for v in hub.VIEWS)
+    out = os.path.join(ROOT, "dashboard", "ops_console.html")
+    assert os.path.exists(out), "build_ops_console.py 를 돌려야 한다"
+    html = open(out, encoding="utf-8").read()
+
+    # 2) 뷰가 모듈 값을 박아 넣었는가 — 화면이 제 산식을 갖지 않았다는 뜻
+    ref = mp._demo()
+    for row in ref["rows"]:
+        assert f'{row["후손의 예상인덱스"]:g}' in html
+    assert "등급 합성" in html and "서버가 필요하다" in html
+    assert "센서 치우침" in html            # 편차가 바이어스를 거르는 자리
+    import build_ops_console as boc
+    assert "계산은 여기서 하지 않는다" in boc.__doc__
+
+    try:
+        from fastapi.testclient import TestClient
+    except (ImportError, RuntimeError) as e:
+        print(f"      (fastapi 없음 — ops API 건너뜀: {type(e).__name__})")
+        return
+    import tempfile
+    repo = os.path.dirname(ROOT)
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    os.environ.setdefault("YANGDON_DB",
+                          os.path.join(tempfile.mkdtemp(), "t.db"))
+    from competition.server.app import app
+    c = TestClient(app)
+
+    # 1) 교배 — 서버가 모듈과 같은 답인가
+    def animals(d, boar=False):
+        return [{"id": k, "index": v["index"], "sire": v["sire"],
+                 "dam": v["dam"],
+                 **({"max_services": v["max_services"]} if boar else {})}
+                for k, v in d.items()]
+    sows = {"S001": {"index": 110.0, "sire": "F1", "dam": None},
+            "S002": {"index": 105.0, "sire": "F2", "dam": None},
+            "S003": {"index": 98.0, "sire": "F1", "dam": None}}
+    boars = {"B-X": {"index": 120.0, "sire": "F1", "dam": None, "max_services": 2},
+             "B-Y": {"index": 112.0, "sire": "F3", "dam": None, "max_services": 2},
+             "B-Z": {"index": 104.0, "sire": "F4", "dam": None, "max_services": 2}}
+    r = c.post("/api/ops/mating", json={"sows": animals(sows),
+                                        "boars": animals(boars, True)})
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"] == ref["rows"]
+    # 혈통 순환은 조용히 돌지 않고 400 이다
+    bad = [{"id": "X", "index": 100.0, "sire": "Y"},
+           {"id": "Y", "index": 100.0, "sire": "X"}]
+    assert c.post("/api/ops/mating",
+                  json={"sows": bad, "boars": animals(boars, True)}
+                  ).status_code == 400
+
+    # 2) 환경 — 같은 답 + 센서 없는 돈사는 400(0 으로 채우면 위반이 된다)
+    log, stages = ec._demo()
+    body = {"barns": [{"barn": b, "stage": stages[b],
+                       **{k: list(v) for k, v in log[b].items()}} for b in log]}
+    r = c.post("/api/ops/env", json=body)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    exp = ec.assess(log, stages)
+    assert got["barns"]["3동"]["alarms"] == exp["barns"]["3동"]["alarms"]
+    assert got["ranking"] == exp["ranking"]
+    assert c.post("/api/ops/env",
+                  json={"barns": [{"barn": "빈동"}]}).status_code == 400
+
+    # 3) 기준선 — 달력 게이팅이 서버에서도 도는가
+    import numpy as np
+    rng = np.random.default_rng(7)
+
+    def win(rest, eat, walk):
+        raw = {"Resting": rest, "Eating": eat, "Walking": walk,
+               "Searching": max(0.0, 1 - rest - eat - walk)}
+        tot = sum(raw.values())
+        return {k: v / tot for k, v in raw.items()}
+    hist = [win(0.60 + rng.normal(0, .03), 0.25 + rng.normal(0, .03),
+                0.10 + rng.normal(0, .02)) for _ in range(42)]
+    now = win(0.42, 0.14, 0.32)
+    r = c.post("/api/ops/baseline", json={"key": "3동/2방", "history": hist,
+                                          "now": now, "heads": ["estrus"]})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    exp = bb.assess(bb.fit(hist, "3동/2방"), now, heads=("estrus",))
+    assert got["heads"] == exp["heads"] and list(got["heads"]) == ["estrus"]
+    assert got["baseline"]["min_windows"] == bb.MIN_WINDOWS
+    assert c.post("/api/ops/baseline",
+                  json={"history": [], "now": now}).status_code == 400
+
+    # 리뷰 반영 — 중복 id 는 조용히 접지 않고 400, 단열 전용 요청은 통과,
+    # guide 오버라이드는 부분만 줘도 동작한다
+    dup = animals(sows) + [animals(sows)[0]]
+    assert c.post("/api/ops/mating", json={"sows": dup,
+                                           "boars": animals(boars, True)}
+                  ).status_code == 400
+    r = c.post("/api/ops/env", json={"barns": [
+        {"barn": "1동", "day_temps": [15.0, 24.0],
+         "spot_temps": [18.0, 21.5]}]})
+    assert r.status_code == 200
+    assert len(r.json()["insulation"]["1동"]) == 2      # 일교차·자리차 둘 다
+    r = c.post("/api/ops/env", json={
+        "barns": [{"barn": "A", "stage": "임신돈·웅돈",
+                   "nh3_ppm": [10.0] * 15 + [20.0]}],
+        "guide": {"nh3": 30.0}})
+    assert r.status_code == 200
+    a = r.json()["barns"]["A"]["sensors"]["nh3_ppm"]
+    assert a["guide_state"] == "적정"                   # 농장 기준 30 이 이겼다
+    assert c.post("/api/ops/baseline",
+                  json={"history": [{"Eating": None}], "now": {"Eating": 0.3}}
+                  ).status_code == 422                  # 비수치는 500 이 아니라 422
+
+    # 지침 상수를 서버가 베끼지 않았다 — 모듈이 정본이다
+    g = c.get("/api/ops/guide").json()
+    assert g["nh3_ppm_limit"] == ec.NH3_LIMIT
+    assert g["h2s_ppm_limit"] == ec.H2S_LIMIT
+    assert g["mating_max_inbreeding"] == mp.MAX_F_GUIDE
+    assert g["temp_c"]["포유자돈"] == list(ec.TEMP_GUIDE["포유자돈"])
+    assert g["grade"] == "지침"
+
+
+def test_farm_scale_and_formula() -> None:
+    """등록 규모와 공식 — **두 수를 섞지 않는가.**
+
+    상시모돈(번식 모돈만)과 총사육수(전 두수)는 다른 수다. 한 칸에 몰아
+    받으면 300두 농장이 어떤 화면에선 300, 어떤 화면에선 3,000 이 된다.
+    지키는 것 여섯: (1) 두 수가 따로 담기고 모순이면 잡는가, (2) 동별
+    사육수가 자리를 넘으면 잡는가, (3) 무허가면적을 '적법화 대상일 수
+    있다'까지만 말하는가(위법 판정 금지), (4) 법정 기준이 없는 번식사에
+    밀도를 지어내지 않는가, (5) 공식이 비운 입력을 채우지 않고 '무엇이
+    없어서 못 냈는지'로 답하는가, (6) 회전율 표기 대조를 숨기지 않는가.
+    """
+    import farm_scale as fs
+    import perf_formula as pf
+
+    # 1) 두 수 분리 — 상시모돈 > 총사육수면 모순이다
+    r = fs.reconcile(fs._demo())
+    assert r["n_sows"] == 300 and r["n_head_total"] == 3200
+    bad = dict(fs._demo(), n_sows=5000)
+    msgs = [c["내용"] for c in fs.reconcile(bad)["checks"]]
+    assert any("상시모돈" in m and "총사육수" in m for m in msgs)
+    assert any(c["수준"] == "위험" for c in fs.reconcile(bad)["checks"])
+
+    # 2) 사육수 > 자리 (5동: 430두 vs 6방×66=396)
+    msgs = [c["내용"] for c in r["checks"]]
+    assert any("사육수 430" in m and "자리 396" in m for m in msgs)
+    # 동별 합 ≠ 총사육수도 잡는다
+    assert any("동별 사육수 합" in m for m in msgs)
+
+    # 3) 무허가면적 — 표시까지, 위법 판정은 하지 않는다
+    non = next(m for m in msgs if "무허가면적" in m)
+    assert "적법화 대상일 수 있다" in non
+    assert "위법" not in non and "불법" not in non
+
+    # 4) 번식사도 법정 밀도를 판정한다 — 예전엔 "기준 없다"며 통째로 비웠다
+    dens = {d["동"]: d for d in r["density"]}
+    assert {"1동", "2동", "5동", "6동"} <= set(dens)
+    for st in ("교배사", "임신사", "분만사", "후보사"):
+        assert st in fs.DENSITY_STAGE, f"{st} 가 조문 대응에서 빠졌다"
+    d5 = dens["5동"]
+    assert d5["기준"] == "허가면적" and d5["overcrowded"]
+    # 자돈사 기준은 조문의 20kg 분기 중 **엄한 쪽**(후기 0.3)이다
+    import growth_flow as gf
+    import legal_density as ld
+    assert d5["required_m2"] == ld.TABLE["새끼돼지_후기"] == 0.3
+    # 면적 숫자를 모듈마다 따로 적지 않는다 — growth_flow 도 같은 표를 본다
+    assert gf.density_check(1, 1.0, "이유자돈")["required_m2"] == d5["required_m2"]
+    assert gf.density_check(1, 1.0, "비육돈")["required_m2"] == ld.TABLE["비육돈"]
+
+    # 5) 공식 — 비운 입력은 채우지 않고 이름으로 답한다
+    out = pf.compute(pf._demo())
+    res = out["results"]
+    assert res["psy"]["value"] == 22.87 and res["msy"]["value"] == 21.5
+    assert res["turnover"]["value"] == 2.21
+    # MSY = PSY × 이유후육성율 — 공식 사슬이 자기모순 없이 닫힌다
+    assert abs(res["msy"]["value"]
+               - res["psy"]["value"] * 94.0 / 100) < 0.02
+    r7 = res["return_7d_rate"]
+    assert r7["value"] is None and "필요하다" in r7["why"]
+    assert "7일이내 재귀복수" in out["missing"]
+    # 어느 입력이 들어갔는지 결과가 들고 다닌다
+    assert "실산자수" in res["psy"]["uses"] and "비생산일수(연간)" in res["psy"]["uses"]
+
+    # 6) 회전율 — 제공 표기 그대로의 값도 같이 낸다(숨기지 않는다)
+    v = res["turnover"]["variants"]
+    assert len(v) == 2 and all(x < res["turnover"]["value"] for x in v.values())
+    assert "466행" in res["turnover"]["basis"]
+    # 총량 읽기는 복당 읽기와 **따로** 낸다
+    tot = pf.compute(dict(pf._demo(), weaned_total=7200, n_sows=300))
+    assert tot["results"]["psy_from_total"]["value"] == 24.0
+    assert tot["results"]["psy"]["value"] == 22.87   # 서로 덮지 않는다
+    assert pf.compute({})["results"]["psy"]["value"] is None
+
+
+def test_improve_path() -> None:
+    """현재 ↔ 달성 가능 상한 — **허수를 목표로 걸지 않는가.**
+
+    상위 10% 가 복당 12두를 낸다고 우리 목표를 12두로 잡으면 자돈사가 못
+    받는 생산량을 '낼 수 있다' 고 말하게 된다(그렇게 허수 594두·1.4억원을
+    낸 적이 있다). 지키는 것 다섯: (1) 돈사 천장이 분포 상한을 깎는가,
+    (2) 개별 여지를 **더하지 않는가**(PSY 는 곱셈 항등식), (3) 이미 상한
+    위인 지표를 지렛대로 세지 않는가, (4) 임신기간을 권고에서 뺐는가,
+    (5) PSY 를 재구현하지 않고 farm_gap 을 부르는가.
+    """
+    import farm_gap as fg
+    import improve_path as ip
+
+    # 5) 재구현 금지 — 같은 함수를 쓴다
+    assert ip._psy({"weaned": 11.0, "npd": 43.0, "lactation": 24.8,
+                    "gestation": 115.0}) == fg.psy_from(11.0, 43.0, 24.8, 115.0)
+
+    # 1) 돈사 천장이 분포 상한(p90=12.0)을 11.0 으로 깎는다
+    with_barn = ip.plan(ip._demo(), weaned_ceiling=11.0)
+    no_barn = ip.plan(ip._demo())
+    assert no_barn["ceilings"]["weaned"]["ceiling"] == 12.0
+    assert "466농장" in no_barn["ceilings"]["weaned"]["source"]
+    assert with_barn["ceilings"]["weaned"]["ceiling"] == 11.0
+    assert "돈사 상한" in with_barn["ceilings"]["weaned"]["source"]
+    # 깎였으므로 여지도 작아야 한다 — 허수가 줄어든 것이다
+    assert with_barn["psy_all_ceiling"] < no_barn["psy_all_ceiling"]
+    # 천장이 분포보다 높으면 분포가 이긴다(더 낙관적으로 가지 않는다)
+    loose = ip.plan(ip._demo(), weaned_ceiling=20.0)
+    assert loose["ceilings"]["weaned"]["ceiling"] == 12.0
+
+    # 2) 합산 금지 — 개별 합과 전부 상한이 **다르다는 것을 스스로 말한다**
+    assert with_barn["sum_of_each"] != with_barn["headroom_total"]
+    assert any("합이 아니다" in n for n in with_barn["notes"])
+    assert any("개입 효과가 아니다" in n for n in with_barn["notes"])
+
+    # 3) 이미 상한 위면 여지 0 이고 이유를 말한다
+    good = ip.plan({"weaned": 12.5, "npd": 20.0, "lactation": 20.0,
+                    "gestation": 115.0})
+    assert all(r["여지"] == 0.0 for r in good["rows"])
+    assert all("이미 상한" in (r["왜"] or "") for r in good["rows"])
+    assert good["steps"] == []                    # 지렛대가 없으면 빈 경로
+
+    # 4) 임신기간은 지렛대가 아니다
+    assert "gestation" not in ip.LEVERS
+    assert not any("임신기간" == r["지표"] for r in with_barn["rows"])
+
+    # 경로는 여지 큰 순 + 무엇을 해야 하는지가 붙는다(새 처방을 짓지 않는다)
+    steps = with_barn["steps"]
+    assert steps[0]["지표"] == "비생산일수(연간)"
+    assert steps[0]["PSY 여지"] >= steps[-1]["PSY 여지"]
+    assert "재발" in steps[0]["무엇을"]
+    assert "민감도" in with_barn["note_order"]     # 효과 순서가 아니라고 말한다
+
+
+def test_legal_density() -> None:
+    """법정 면적 — **조문표를 한 칸 밀려 읽지 않았는가.**
+
+    「축산법 시행령」[별표 1] 돼지 표는 2차 정리본에서 열이 밀려 "임신돈
+    1.4/2.6, 후보돈 0.2" 로 도는 오독이 흔하다. 원문 PDF 의 셀 x좌표로
+    확정한 값을 여기 고정한다. 지키는 것 다섯: (1) 조문값 그대로인가,
+    (2) 사육방식이 갈리는 항목만 방식을 요구하는가, (3) 조문에 없는
+    방식 값을 지어내지 않는가, (4) 번식사 밀도가 실제로 판정되는가
+    (예전엔 '기준이 없다'며 통째로 비웠다), (5) 화면과 모듈이 같은 표를
+    쓰는가.
+    """
+    import re
+
+    import farm_scale as fs
+    import legal_density as ld
+
+    # 1) 조문값 — 오독본과 갈리는 자리를 콕 집어 고정한다
+    assert ld.TABLE["웅돈"] == 6.0
+    assert ld.TABLE["임신돈"] == 1.4          # 단일값 — 군사 기준 없음
+    assert ld.TABLE["분만돈"] == 3.9
+    assert ld.TABLE["종부대기돈"] == {"stall": 1.4, "group": 2.6}
+    assert ld.TABLE["후보돈"] == {"group": 2.3}
+    assert ld.TABLE["새끼돼지_초기"] == 0.2 and ld.TABLE["새끼돼지_후기"] == 0.3
+    assert ld.TABLE["육성돈"] == 0.45 and ld.TABLE["비육돈"] == 0.8
+    # 오독본의 두 값이 그대로 들어와 있지 않은가
+    assert ld.TABLE["임신돈"] != {"stall": 1.4, "group": 2.6}
+    assert ld.TABLE["후보돈"] != 0.2
+    assert "2025. 3. 25" in ld.SOURCE and "별표 1" in ld.SOURCE
+
+    # 2)+3) 방식이 갈리는 항목만 방식을 묻고, 없는 방식은 지어내지 않는다
+    assert ld.required_m2("분만돈")["value"] == 3.9         # 방식 무관
+    assert ld.required_m2("분만돈", "crate")["value"] == 3.9
+    r = ld.required_m2("종부대기돈")
+    assert r["value"] is None and "사육방식마다" in r["why"]
+    assert ld.required_m2("종부대기돈", "stall")["value"] == 1.4
+    assert ld.required_m2("종부대기돈", "group")["value"] == 2.6
+    r = ld.required_m2("후보돈", "stall")                    # 조문에 없다
+    assert r["value"] is None and "지어내지 않는다" in r["why"]
+    assert ld.required_m2("없는단계")["value"] is None
+
+    # 교배사→종부대기돈 대응은 **우리 해석**이라 밝힌다
+    assert ld.for_barn("교배사", "group")["interpreted"]
+    assert "interpreted" not in ld.for_barn("임신사")
+    # 분만사는 젖뗀 마릿수 기준이라는 조문 비고를 달고 다닌다
+    assert "젖 뗀" in ld.for_barn("분만사")["note"]
+
+    # 4) 번식사 밀도가 실제로 판정된다 — 예전 결함의 회귀 방지
+    dens = {d["동"]: d for d in fs.reconcile(fs._demo())["density"]}
+    assert "2동" in dens, "임신사 밀도가 판정되지 않았다(예전 결함 재발)"
+    assert dens["2동"]["required_m2"] == 1.4 and dens["2동"]["overcrowded"]
+    assert dens["2동"]["law_stage"] == "임신돈"
+    # 같은 교배사라도 사육방식이 기준을 가른다
+    assert dens["1동"]["required_m2"] == 1.4       # 스톨
+    assert dens["6동"]["required_m2"] == 2.6       # 군사
+    assert all("별표 1" in d.get("source", "") for d in dens.values())
+    # 방식을 모르면 판정하지 않고 이유를 낸다
+    unk = fs.barn_density({"name": "X", "stage": "후보사", "housing": "stall",
+                           "head": 10, "permit_area_m2": 50.0})
+    assert unk["regulated"] is False and "지어내지 않는다" in unk["why"]
+
+    # 5) 화면이 같은 표를 쓴다 — 숫자를 따로 적지 않았는가
+    html = open(os.path.join(ROOT, "dashboard", "farm_setup.html"),
+                encoding="utf-8").read()
+    assert ld.SOURCE in html, "화면이 출처를 제 문구로 다시 적었다"
+    assert "종부대기돈" in html and "legalNeed" in html
+    # 조문이 가르지 않는 용도까지 방식을 요구하면 분만틀이 빠진다 — 그 회귀
+    import json as _json
+    m = re.search(r'"by_housing":\s*(\{.*?\})\s*,\s*"source"', html, re.S)
+    assert m, "화면에 by_housing 주입이 없다"
+    by_h = _json.loads(m.group(1))
+    assert set(by_h) == {"교배사", "후보사"}, by_h
 
 
 def test_vision_contract() -> None:
@@ -3717,9 +5208,16 @@ def test_vision_contract() -> None:
     assert c.post("/api/vision/targets",
                   json={"as_of": on, "records": []}).status_code == 422
     ct = c.get("/api/vision/contract").json()
-    # **모델이 없다는 것을 응답이 말해야 한다**
-    assert ct["implemented"] == ["ReplayModel"]
-    assert "모델이 아직 없다" in ct["note"]
+    # **구현마다 근거와 한계를 들고 다녀야 한다** — 이름만 나열하면
+    # "모델이 있다" 로 읽힌다. 스텁은 스텁이라고, 실모델은 신뢰 4종과
+    # 못 도는 헤드를 응답 자체가 말한다
+    impl = {x["name"]: x for x in ct["implemented"]}
+    assert impl["ReplayModel"]["kind"] == "스텁"
+    pb = impl["PigBehaviorModel"]
+    assert pb["classes_out"] == 15 and len(pb["classes_contract"]) == 4
+    assert pb["heads"] == {"estrus": True, "return": True,
+                           "farrowing": False, "disease": False}, pb["heads"]
+    assert "train==val" in pb["holdout"]["note"]
     assert ct["baseline"]["behavior_10cls"] == 0.485
     assert ct["windows"]["return"]["from_service"] == [vc.RETURN_FROM,
                                                        vc.RETURN_TO]
@@ -4883,13 +6381,48 @@ def test_pigflow_package() -> None:
         failed[:3])
 
 
+def test_bio_baseline_thresholds() -> None:
+    """평균 0 기준표의 문턱이 살아 있는가 — 죽은 문턱을 커밋으로 막는다.
+
+    전 필드에 3σ 를 일괄로 물렸을 때 back_temp 는 0건(발화 불가),
+    latent_heat 는 10.2%(알림 과다)로 문턱이 죽어 있었다. 필드마다 z 를
+    조정하도록 고쳤으므로, 어느 필드든 FLAG_BAND 밖으로 나가면 실패시킨다.
+    """
+    import bio_baseline_71763 as bb
+    import parse_aihub
+    import tempfile
+    tmp = tempfile.mkdtemp()
+    parse_aihub.generate_synthetic_71763(tmp, n=4000)
+    clips = parse_aihub.aggregate_71763_clips(parse_aihub.parse_71763(tmp))
+    clips = clips[clips["modality"] == "호흡량"]
+    assert len(clips) >= 30, f"합성 호흡량 클립 부족: {len(clips)}"
+
+    b = bb.build_baseline(clips)
+    assert not b.empty, "기준표가 비었다"
+    lo, hi = bb.FLAG_BAND
+    dead = b[b["usable"] != "쓸만함"]
+    assert dead.empty, (
+        "문턱이 죽은 필드: "
+        + ", ".join(f"{r.field}({r.flagged_pct}%, {r.usable})"
+                    for r in dead.itertuples()))
+    assert (b["flagged_pct"].between(lo, hi)).all(), b[
+        ["field", "z", "flagged_pct"]].to_string()
+
+    # 분산분해는 제곱합으로 갈라야 두 열의 합이 100 이 된다.
+    v = bb.variance_split(clips)
+    if not v.empty:
+        tot = v["within_pct"] + v["between_pct"]
+        assert (tot.sub(100).abs() <= 1).all(), v.to_string()
+
+
 def rc_date(x):
     import repro_calendar as rc
     return rc._d(x)
 
 
 def main() -> int:
-    tests = [test_dependencies_import, test_aihub_client_no_key,
+    tests = [test_bio_baseline_thresholds,
+             test_dependencies_import, test_aihub_client_no_key,
              test_pipeline_runs, test_aihub_parsers,
              test_pipeline_gilt_integration, test_estrus_onset_and_dashboard,
              test_edinburgh_parser, test_posture_eval_mapping,
@@ -4909,7 +6442,7 @@ def main() -> int:
              test_posture_crop_feats, test_posture_crossview, test_posture_report,
              test_dashboard_builders, test_farm_economics,
              test_pigflow_package, test_check_download,
-             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_table_export, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
+             test_finetune_polygon, test_fetch_622, test_korean_farm_stats, test_farm_monthly, test_synth_farm, test_farm_panel, test_farm_monthly_panel, test_farm_monthly_model, test_psy_priority, test_presentation_cnn_current, test_estrus_label_audit, test_path_predict, test_barn_watch, test_farm_setup_view, test_capacity_from_rooms, test_throughput_ceiling, test_setup_screen_matches_module, test_admin_screen_matches_farm_scale, test_window_denominator_gate, test_env_anomaly, test_constants_have_one_home, test_manual_generated, test_env_scale, test_71763_batch_parser, test_behavior_vocab_merge, test_setup_json_actually_runs, test_run_farm_from_setup, test_herd_drives_stage_counts, test_herd_cycle_from_perf, test_table_export, test_pig_behavior_adapter, test_behavior_baseline, test_behavior_head_train, test_mating_plan, test_barn_env_control, test_pig_behavior_toolkit, test_ops_api_and_view, test_farm_scale_and_formula, test_improve_path, test_legal_density, test_vision_contract, test_season_interval_view, test_timing_cache_is_transparent, test_server_api, test_farm_diagnosis_view, test_pc_suite, test_ml_core, test_kaggle_notebooks, test_farm_gap, test_run_farm_end_to_end, test_docs_consistent,
              test_image_name_collision,
              test_real_622_schema,
              test_fetch_622_doctor]

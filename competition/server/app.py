@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse                     # noqa: E402
 from fastapi.staticfiles import StaticFiles                    # noqa: E402
 
 from .routers import (breeding, capacity, diagnosis, farms,     # noqa: E402
-                      export, season, vision)
+                      export, ops, season, vision)
 
 WEB = os.path.join(COMP, "web")
 DASH = os.path.join(COMP, "dashboard")
@@ -51,6 +51,7 @@ app.include_router(diagnosis.router)
 app.include_router(season.router)
 app.include_router(vision.router)
 app.include_router(export.router)
+app.include_router(ops.router)
 
 
 @app.get("/api/health", tags=["meta"], summary="살아 있는가 + 무엇을 물고 있는가")
@@ -70,7 +71,7 @@ def health() -> dict:
             "sow_turnover": bf.SOW_TURNOVER,
             "weaned_per_crate": bf.WEANED_PER_CRATE,
             "grow_survival": bf.GROW_SURVIVAL,
-            "ceiling": bf.CEILING,
+            "ceiling": bf.PRODUCTION_CEILING,
             "downstream_days": bf.DOWNSTREAM_DAYS,
             "margin_per_pig": fe.margin_per_pig()["margin"],
         },

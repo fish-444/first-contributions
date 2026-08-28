@@ -1,0 +1,94 @@
+<!doctype html><html lang="ko"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>교배 배정 · 환경 알람</title><style>
+:root{color-scheme:light;--page:#f9f9f7;--surface:#fcfcfb;--surface2:#f2f2ee;
+--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--border:rgba(11,11,11,.12);
+--acc:#2a78d6;--accs:rgba(42,120,214,.10);--stop:#d03b3b;
+--stops:rgba(208,59,59,.12);--good:#1baf7a;--goods:rgba(27,175,122,.14);
+--warn:#e8a33d;--warns:rgba(232,163,61,.14)}
+@media(prefers-color-scheme:dark){:root:where(:not([data-theme=light])){
+--page:#0d0d0d;--surface:#1a1a19;--surface2:#242422;--ink:#fff;--ink2:#c3c2b7;
+--muted:#898781;--border:rgba(255,255,255,.14);--acc:#5fa8f0;
+--accs:rgba(95,168,240,.14);--stop:#f07070;--stops:rgba(240,112,112,.15);
+--good:#4fd6a0;--goods:rgba(79,214,160,.16);--warn:#e8b45e;
+--warns:rgba(232,180,94,.16)}}
+:root[data-theme=dark]{--page:#0d0d0d;--surface:#1a1a19;--surface2:#242422;
+--ink:#fff;--ink2:#c3c2b7;--muted:#898781;--border:rgba(255,255,255,.14);
+--acc:#5fa8f0;--accs:rgba(95,168,240,.14);--stop:#f07070;
+--stops:rgba(240,112,112,.15);--good:#4fd6a0;--goods:rgba(79,214,160,.16);
+--warn:#e8b45e;--warns:rgba(232,180,94,.16)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif;
+background:var(--page);color:var(--ink);line-height:1.55;padding:22px}
+.wrap{max-width:860px;margin:0 auto}
+h1{font-size:1.55rem;letter-spacing:-.02em}
+.sub{color:var(--ink2);font-size:.92rem;margin:6px 0}
+.demo{font-size:.82rem;color:var(--ink2);background:var(--surface2);
+border:1px solid var(--border);border-radius:9px;padding:9px 12px;
+margin:12px 0 18px}
+.card{background:var(--surface);border:1px solid var(--border);
+border-radius:13px;padding:17px 18px;margin-bottom:15px}
+.ch{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.cn{font-size:.72rem;font-weight:700;color:var(--page);background:var(--ink);
+border-radius:5px;padding:2px 7px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:.9rem}
+th,td{padding:7px 9px;border-bottom:1px solid var(--border);text-align:left}
+th{font-size:.78rem;color:var(--ink2);font-weight:600}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+td.hi{color:var(--acc);font-weight:700}
+.warn{background:var(--warns);border-radius:8px;padding:7px 10px;
+font-size:.86rem;margin-top:6px}
+.lead{margin-top:11px;font-size:.9rem;color:var(--ink2);
+background:var(--accs);border-radius:9px;padding:10px 12px}
+.notes{margin:11px 0 0 18px;font-size:.82rem;color:var(--muted)}
+.notes li{margin-top:4px}
+.barns{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+margin-top:12px}
+.barn{border:1px solid var(--border);border-radius:10px;padding:11px 12px;
+background:var(--surface2)}
+.bh{font-weight:700;display:flex;justify-content:space-between;
+align-items:baseline;margin-bottom:6px}
+.stg{font-size:.74rem;color:var(--muted);font-weight:400}
+.sv{display:flex;gap:7px;align-items:baseline;font-size:.84rem;
+padding:2px 0;flex-wrap:wrap}
+.sk{color:var(--ink2);min-width:66px}
+.svv{font-variant-numeric:tabular-nums;font-weight:600}
+.sz{font-size:.76rem;color:var(--muted)}
+.sz.bad{color:var(--stop);font-weight:600}
+.al{margin-top:7px;border-radius:8px;padding:7px 9px;font-size:.82rem}
+.al.lv1{background:var(--stops);color:var(--stop)}
+.al.lv2{background:var(--warns)}
+.ok{margin-top:7px;font-size:.8rem;color:var(--good)}
+</style><div class="wrap">
+<h1>교배 배정 · 환경 알람</h1>
+<p class="sub">근친 한도 아래 전체 최적 배정 · 지침 위반과 자기 기준선
+편차를 겹으로 본 알람</p>
+<div class="demo"><b>등급 합성</b> — 예시 구성으로 구운 화면이다. 실제
+농장 성적이 아니고, <b>입력을 바꾸려면 서버가 필요하다</b>
+(<code>POST /api/ops/mating</code> · <code>/api/ops/env</code>).
+계산은 <code>mating_plan</code> · <code>barn_env_control</code> 이 하고
+이 파일은 값을 받아 그리기만 한다.</div>
+<div class="card">
+<div class="ch"><span class="cn">교배 배정</span>
+<b>근친 한도 6.25% 아래에서 예상인덱스 합 최대화</b></div>
+<p class="sub">평균 예상인덱스 <b>109.5</b> ·
+웅돈 사용 B-X 1/2 · B-Y 2/2 · B-Z 0/2</p>
+<table><thead><tr><th>모돈번호</th><th>모돈인덱스</th><th>웅돈번호</th>
+<th>웅돈인덱스</th><th>후손 예상인덱스</th><th>근친율</th><th>교배횟수</th>
+</tr></thead><tbody><tr><td>S001</td><td class=n>110</td><td>B-Y</td><td class=n>112</td><td class='n hi'>111</td><td class=n>0%</td><td class=n>2</td></tr><tr><td>S002</td><td class=n>105</td><td>B-X</td><td class=n>120</td><td class='n hi'>112.5</td><td class=n>0%</td><td class=n>1</td></tr><tr><td>S003</td><td class=n>98</td><td>B-Y</td><td class=n>112</td><td class='n hi'>105</td><td class=n>0%</td><td class=n>2</td></tr></tbody></table>
+<p class="lead">인덱스가 가장 높은 웅돈이 반형매 모돈에게는 근친
+한도에 걸려 차선으로 비켜갔다 — 모돈별 최고가 아니라 <b>농장 전체
+최적</b>이다. 수치는 위 표가 정본이다.</p>
+<ul class="notes"><li>근친율은 입력한 혈통에서의 <b>하한</b>이다 — 혈통표에 없는 조상은 무관으로 치므로, 기록이 얕을수록 실제보다 낮게 나온다.</li><li>후손의 예상인덱스는 중간부모 기대값이다 — 인덱스(유전평가) 자체의 정확도는 입력의 질을 따라간다.</li><li>근친 한도 6.25% 는 지침값(사촌 교배 수준)이다.</li><li>배정은 모돈별 최고가 아니라 농장 전체 최적이다(헝가리안).</li></ul></div>
+<div class="card">
+<div class="ch"><span class="cn">환경 알람</span>
+<b>위험은 지침 위반 · 주의는 평소와 다름 — 제어 지시는 내지 않는다</b></div>
+<p class="sub">지침 NH₃ 15ppm · H₂S 5ppm ·
+편차 순위(|z|) 3동/nh3_ppm +8.4 · 3동/temp_c -7.9 · 3동/rh_pct -4.8</p>
+<div class="barns"><div class="barn"><div class="bh">1동<span class="stg">임신돈·웅돈</span></div><div class="sv"><span class="sk">temp_c</span><span class="svv">18.2</span><span class="sz ">적정 · z -0.3</span></div><div class="sv"><span class="sk">nh3_ppm</span><span class="svv">10.3</span><span class="sz ">적정 · z -1.2</span></div><div class=ok>알람 없음</div></div><div class="barn"><div class="bh">2동<span class="stg">임신돈·웅돈</span></div><div class="sv"><span class="sk">temp_c</span><span class="svv">21.5</span><span class="sz bad">고온 위반 · z -0.4</span></div><div class="sv"><span class="sk">nh3_ppm</span><span class="svv">11.4</span><span class="sz ">적정 · z +0.2</span></div><div class="al lv1">[위험] temp_c 고온 위반 — 지금 21.5, 적온 16~21℃ · 평소와 같은 수준(z -0.4) — 상시 위반이거나 센서 치우침, 교정 확인</div></div><div class="barn"><div class="bh">3동<span class="stg">포유모돈</span></div><div class="sv"><span class="sk">temp_c</span><span class="svv">13.8</span><span class="sz bad">저온 위반 · z -7.9</span></div><div class="sv"><span class="sk">nh3_ppm</span><span class="svv">22.0</span><span class="sz bad">상한 초과 · z +8.4</span></div><div class="sv"><span class="sk">rh_pct</span><span class="svv">34.0</span><span class="sz bad">저습 위반 · z -4.8</span></div><div class="al lv1">[위험] temp_c 저온 위반 — 지금 13.8, 적온 18~21℃</div><div class="al lv1">[위험] nh3_ppm 상한 초과 — 지금 22.0, 상한 15ppm</div><div class="al lv1">[위험] rh_pct 저습 위반 — 지금 34.0, 권장 40~60%</div></div></div>
+<p class="lead">2동은 1동과 <b>같은 환경</b>인데 센서만 치우쳐 있다.
+원값으로 비교하면 더워 보이지만 자기 기준선 편차(z)에는 흔적이 없고,
+알람에 <b>“센서 치우침, 교정 확인”</b> 이 붙는다 — 센서 차이를 사육환경
+차이로 읽지 않는 자리다. 수치는 위 돈사 칸이 정본이다.</p>
+<ul class="notes"><li>알람만 낸다 — 제어 지시는 장비 구성에 달려 있어 로그만 보는 쪽이 정하면 틀린다(겨울 저온+고NH3 가 대표).</li><li>위험=지침 위반(절대), 주의=평소와 다름(자기 기준선 편차) — 두 층은 서로를 덮지 않는다.</li><li>돈사 간 비교는 |z| 로만 한다 — 센서가 돈사마다 달라 원값 비교는 센서 차이를 사육환경 차이로 읽는다.</li><li>적온·습도 대역, NH3 15ppm·H2S 5ppm 상한은 지침값이다(국립축산과학원 자료·사용자 제공 표). 농장 기준이 다르면 guide= 로 통째로 바꾼다.</li><li>출처끼리 갈리는 값은 갈린 채로 적었다 — 습도(50~60 vs 60~70 vs 표1 단계별)·일교차(5 vs 8.3 vs 외기 10℃).</li><li>편차 컷은 자기 이력 경보율 0.5~5% 역산이다 — 행동 기준선 층과 같은 방법, 같은 코드다.</li></ul></div>
+</div></html>

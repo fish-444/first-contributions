@@ -31,7 +31,23 @@ DOCS = [os.path.join(COMP, "README.md"),
         # 기능 목록도 모듈·뷰·테스트 수와 실측 성능을 인용한다.
         os.path.join(COMP, "docs", "CAPABILITIES.md"),
         # 인계 문서는 **다른 대화로 퍼 나르라고 만든 것**이라 특히 낡기 쉽다.
-        os.path.join(COMP, "docs", "HANDOFF.md")]
+        os.path.join(COMP, "docs", "HANDOFF.md"),
+        # 제안서 골격 — 제출본으로 옮겨질 수치라 낡으면 심사장까지 간다.
+        os.path.join(COMP, "docs", "PROPOSAL.md"),
+        # 두 기둥 근거표 — 별첨 자료출처의 뼈대라 같은 이유로 감시한다.
+        os.path.join(COMP, "docs", "PILLARS.md"),
+        # 보고서 작성 팩 — 채팅에 통째로 올려 쓰는 파일이라 낡으면 그대로
+        # 제출본에 들어간다. 여기가 가장 위험하다.
+        os.path.join(COMP, "docs", "REPORT_PACK.md"),
+        # 보고서 입력 자료 — 같은 이유로 감시한다. 이쪽은 "무엇을 주는가 ·
+        # 무엇을 했는가 · 무엇으로 했는가" 세 축으로 다시 묶은 판이다.
+        os.path.join(COMP, "docs", "REPORT_INPUT.md"),
+        # 요약본 — 한 장짜리라 더 잘 퍼 날라진다. 그만큼 더 잘 낡는다.
+        os.path.join(COMP, "docs", "SUMMARY.md")]
+# MANUAL.md 는 **여기 안 넣는다.** 생성된 모듈 색인이라 본문 주장을 담지
+# 않는데, 이 목록에 넣으면 "재발 66.9% 를 인용해야 한다" 같은 내용 검사가
+# 색인에까지 걸린다. 신선도는 `test_manual_generated` 가 지킨다 — 저장된
+# 파일이 지금 생성 결과와 다르면 테스트가 깨진다.
 
 
 # -- 실제값 수집 -----------------------------------------------------------
@@ -103,7 +119,15 @@ def check_counts(report: list) -> None:
         if not os.path.exists(path):
             continue
         t = open(path, encoding="utf-8").read()
+        # 강조 표시를 걷어내고 센다. `모듈 **75개**` 처럼 굵게 쓰면 `\s*` 가
+        # `**` 를 못 넘어 검사에서 빠져나갔다 — 실제로 REPORT_PACK 의 규모
+        # 한 줄이 모듈 75 · 테스트 91 로 낡은 채 통과하고 있었다. 별을 같은
+        # 길이의 공백으로 바꿔 **줄·열 위치를 그대로 둔 채** 본다.
+        t = re.sub(r"\*+", lambda mo: " " * len(mo.group(0)), t)
         name = os.path.basename(path)
+        # "쓰면 안 되는 수치" 절의 옛 개수는 **주장이 아니라 금지 목록**이다.
+        # 여기까지 고치라고 하면 금지 목록이 현재값을 금지하게 된다.
+        skip = blacklist_lines(t)
         # 뷰 수는 **대시보드 문맥에서만** 센다. "뷰 8개 중 2개만 held-out" 은
         # 카메라 뷰 얘기라서 그냥 잡으면 오탐이다(실제로 두 건 났다).
         for pat, key, label, need in (
@@ -119,6 +143,8 @@ def check_counts(report: list) -> None:
                 le = t.find("\n", mobj.end())
                 line_txt = t[ls:le if le > 0 else len(t)]
                 if need and need not in line_txt:
+                    continue
+                if t[:mobj.start()].count("\n") + 1 in skip:
                     continue
                 got = int(mobj.group(1))
                 if got != a[key]:
@@ -230,8 +256,9 @@ def check_survival(report: list) -> None:
         # 오류를 싣는 게 이 프로젝트의 방식이라 그 문장을 지우면 안 된다.
         # 슬라이드 12(스스로 잡은 오류) 행처럼 고친 내역을 적은 줄은 통과시킨다.
         EXCUSE = ("틀렸", "처음엔", "잘못", "옛 ", "나왔는데", "폐기", "재계산")
+        skip = blacklist_lines(t)
         for ln, line in enumerate(t.splitlines(), 1):
-            if any(x in line for x in EXCUSE):
+            if ln in skip or any(x in line for x in EXCUSE):
                 continue
             for s in stale:
                 if s in line:
@@ -269,8 +296,9 @@ def check_season(report: list) -> None:
         if "교배" not in t or "여름" not in t:
             continue
         name = os.path.basename(path)
+        skip = blacklist_lines(t)
         for ln, line in enumerate(t.splitlines(), 1):
-            if any(x in line for x in EXCUSE):
+            if ln in skip or any(x in line for x in EXCUSE):
                 continue
             for s in stale:
                 if s in line:
@@ -352,6 +380,27 @@ KEYLIKE = [
 ]
 KEY_SKIP_DIRS = {".git", "__pycache__", "node_modules", "dashboard", "data",
                  "outputs", "models"}
+
+
+def blacklist_lines(text: str) -> set:
+    """"쓰면 안 되는 수치" 절의 줄 번호. 그 안의 옛 값은 **주장이 아니라
+    금지 목록**이라 낡음 검사에서 빼야 한다.
+
+    문맥 단어(EXCUSE)로 거르는 방법은 표의 칸마다 변명을 적게 만든다.
+    절 단위로 보면 표가 자연스럽게 쓰인다 — 다음 같은 급 제목까지가 절이다.
+    """
+    out, cur_level = set(), None
+    for ln, line in enumerate(text.splitlines(), 1):
+        if line.startswith("#"):
+            level = len(line) - len(line.lstrip("#"))
+            if cur_level is not None and level <= cur_level:
+                cur_level = None
+            if any(k in line for k in ("쓰면 안 되는", "쓰지 말", "금지 수치",
+                                       "낡은 수치")):
+                cur_level = level
+        if cur_level is not None:
+            out.add(ln)
+    return out
 
 
 def check_secrets(report: list) -> None:

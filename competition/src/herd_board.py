@@ -47,7 +47,10 @@ MAX_RETURNS = 2               # 연속 재발정 허용 횟수
 LOW_LITTER = 9.0              # 총산자수 저조 기준(두)
 MAX_NPD = 30                  # 비생산일수 상한(일)
 
-STAGES = ["후보", "공태", "교배", "임신", "포유"]
+# 모돈의 **번식 상태**다. 사육단계(growth_flow) · 축사 용도
+# (farm_registry) 와 뜻이 전혀 달라 이름을 가른다 — 셋이 같은
+# 이름이던 시절엔 어느 어휘인지 코드를 읽어야 알았다.
+REPRO_STATES = ["후보", "공태", "교배", "임신", "포유"]
 
 
 def _d(x) -> date:
@@ -260,7 +263,7 @@ def service_target(herd: pd.DataFrame, conception_rate: float = 0.85,
 
 def stage_counts(herd: pd.DataFrame) -> dict:
     c = herd["stage"].value_counts().to_dict()
-    return {s: int(c.get(s, 0)) for s in STAGES}
+    return {s: int(c.get(s, 0)) for s in REPRO_STATES}
 
 
 # --------------------------------------------------------------------------

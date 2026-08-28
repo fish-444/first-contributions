@@ -133,9 +133,94 @@ FARROW_RATE_AVG = 0.88        # 성적 추정용(평균)
 GILT_SHARE = 0.20             # 교배 배치 중 후보돈 비율(순종 종돈장은 0.30)
 GILT_PIPELINE_WEEKS = 7       # 후보돈 준비 주기(순치~초교배 대기)
 WEANED_PER_CRATE = 12.0       # 분만틀당 이유두수 목표
-SOW_TURNOVER = 2.3            # 모돈 연간 회전율(복/두/년)
+SOW_TURNOVER = 2.3            # 모돈 연간 회전율(복/두/년) — 관행. 아래 참조
 GROW_SURVIVAL = 0.95          # 이유~출하 육성률
 MARKET_WEIGHT_KG = 110.0
+
+
+# --------------------------------------------------------------------------
+# 용량 계산이 쓰는 번식주기 — **농장 성적이 있으면 그 농장 값으로.**
+#
+# 위 상수들은 설계 관행값이고, 그대로 쓰면 모든 농장이 같은 주기로 계산된다.
+# 그런데 연속 흐름 돈사의 지지 두수는 주기에 정비례하고, 분만틀→모돈 환산은
+# 회전율에 반비례한다 — 즉 **농장마다 다른 값이 규모를 바꾼다.**
+#
+# 회전율은 특히 그렇다. 관행 2.3 을 쓰면 NPD 가 34일인 농장과 58일인 농장이
+# 같은 규모로 나오는데, 실제로는 ±5% 갈린다. 그리고 되풀 필요도 없다 —
+# `korean_farm_stats` 가 466행에서 확인한 PSY 항등식의 분모가 바로 그것이다:
+#
+#     PSY = 이유두수 × (365 − NPD) / (임신 + 포유)
+#                      └────── 회전율 ──────┘        466행 중 86.2% 오차 0.05 이내
+#
+# 그래서 새 산식이 아니라 **이미 검증된 항등식을 여기서도 쓰는 것**이다.
+#
+# 값의 출처를 셋으로 갈라 라벨과 함께 돌려준다. 섞으면 어느 농장 값인지
+# 알 수 없게 된다:
+#     입력값     이 농장이 넣은 성적
+#     실측 중앙   466농장 중앙값 (korean_farm_stats)
+#     지침       breeding_timing 의 목표값 — 실측이 없을 때의 마지막 기댓값
+CYCLE_FIELDS = ("gestation", "lactation", "wean_to_service")
+# 지침 기본값. WEI 는 **일정 예측용 기대치**(3-3-3)라 실측 중앙 6.9 와 다르다 —
+# 다른 수를 쓰는 게 아니라 다른 질문에 답하는 수다. 점유·용량은 "실제로 며칠
+# 걸리나" 이므로 실측을 먼저 쓰고, 일정 예측은 repro_calendar 가 지침을 쓴다.
+CYCLE_GUIDE = {"gestation": float(GESTATION), "lactation": float(LACTATION),
+               "wean_to_service": float(rc.WEI_BY_PARITY["sow"])}
+_STAT_KEY = {"gestation": "gestation", "lactation": "lactation",
+             "wean_to_service": "wean_to_estrus"}
+
+
+def _measured() -> dict:
+    """466농장 실측 중앙. 통계 파일이 없으면 빈 dict — 지침으로 떨어진다."""
+    try:
+        import farm_gap as fg
+
+        q = fg.load_stats().get("quantiles", {})
+    except (SystemExit, Exception):        # noqa: BLE001 — 없으면 없는 대로
+        return {}
+    return {k: float(q[s]["p50"]) for k, s in _STAT_KEY.items()
+            if s in q and "p50" in q[s]}
+
+
+def herd_cycle(perf: dict | None = None) -> dict:
+    """용량 계산이 쓸 번식주기와 회전율 — **출처 라벨과 함께.**
+
+    `perf` 는 등록 성적(`gestation` · `lactation` · `wean_to_estrus` · `npd`).
+    비운 칸은 채우지 않고 실측 중앙 → 지침 순으로 떨어지며, 어느 쪽을 썼는지
+    `source` 에 남는다. 조용히 채우면 그게 내 농장 값인 줄 안다.
+    """
+    p = {k: v for k, v in (perf or {}).items() if v is not None}
+    med = _measured()
+    out: dict = {"source": {}}
+    for f in CYCLE_FIELDS:
+        key = _STAT_KEY[f]
+        if p.get(key) is not None or p.get(f) is not None:
+            out[f], out["source"][f] = float(p.get(key, p.get(f))), "입력값"
+        elif f in med:
+            out[f], out["source"][f] = med[f], "실측 중앙"
+        else:
+            out[f], out["source"][f] = CYCLE_GUIDE[f], "지침"
+    out["cycle_days"] = round(sum(out[f] for f in CYCLE_FIELDS), 1)
+
+    # 회전율 — NPD 가 있으면 **항등식으로 유도**한다. 없으면 실측 중앙.
+    npd = p.get("npd")
+    prod = out["gestation"] + out["lactation"]
+    if npd is not None and prod > 0:
+        out["turnover"] = round((365.0 - float(npd)) / prod, 3)
+        out["source"]["turnover"] = "NPD 에서 유도"
+        out["npd"] = float(npd)
+    else:
+        try:
+            import farm_gap as fg
+
+            out["turnover"] = float(
+                fg.load_stats()["quantiles"]["turnover"]["p50"])
+            out["source"]["turnover"] = "실측 중앙"
+        except Exception:                  # noqa: BLE001
+            out["turnover"] = SOW_TURNOVER
+            out["source"]["turnover"] = "관행"
+    out["given"] = [f for f, s in out["source"].items() if s in
+                    ("입력값", "NPD 에서 유도")]
+    return out
 
 # 벤치마크 임계치 — 넘으면 분만사 AIAO 전환의 이득이 크다
 PRE_WEAN_MORT_LIMIT = 0.12
@@ -144,7 +229,7 @@ MARKET_AGE_LIMIT = 180
 
 
 def plan_from_crates(n_crates: int, interval_days: float,
-                     turnover: float = SOW_TURNOVER,
+                     turnover: float | None = None,
                      farrow_rate: float = FARROW_RATE_P10,
                      gilt_share: float = GILT_SHARE,
                      weaned_per_crate: float = WEANED_PER_CRATE) -> dict:
@@ -158,6 +243,11 @@ def plan_from_crates(n_crates: int, interval_days: float,
       출하        = 이유두수 × 육성률
     """
     iv_weeks = float(interval_days) / 7.0
+    # **설계와 역산이 같은 회전율을 써야 한다.** 여기만 관행 2.3 을 쓰고
+    # capacity_from_rooms 가 실측 2.31 을 쓰면, 분만틀에서 지은 농장을 되읽을
+    # 때 같은 돈사가 다른 규모로 나온다.
+    if turnover is None:
+        turnover = herd_cycle()["turnover"]
     services = int(np.ceil(n_crates / max(0.05, farrow_rate)))
     gilts = int(np.ceil(services * gilt_share))
     breeding = n_crates * (52.0 / iv_weeks) / max(0.1, turnover)
@@ -189,7 +279,8 @@ def capacity_from_rooms(barns: list, interval_days: float,
                         pre_farrow: int = MOVE_IN,
                         washdown: int = WASHDOWN,
                         extra_rooms: dict | None = None,
-                        weaned_per_crate: float = WEANED_PER_CRATE) -> dict:
+                        weaned_per_crate: float = WEANED_PER_CRATE,
+                        cycle: dict | None = None) -> dict:
     """**지어 놓은 방 → 넣을 수 있는 개체 수.** `plan()` 의 반대 방향이다.
 
     기존 농장은 모돈 두수를 정하고 짓는 게 아니라 **이미 지어진 돈사에 두수를
@@ -215,7 +306,15 @@ def capacity_from_rooms(barns: list, interval_days: float,
     """
     iv = float(interval_days)
     extra = extra_rooms or {}
-    cycle = GESTATION + int(lactation) + rc.WEI_BY_PARITY["sow"]
+    # 주기와 회전율은 **농장 성적이 있으면 그 농장 값**이다(`herd_cycle`).
+    # 안 주면 실측 중앙으로 떨어지고, 어느 쪽인지 응답의 `cycle.source` 가
+    # 말한다. 포유기간만은 등록 화면이 인자로 직접 주므로 그쪽이 이긴다 —
+    # 지어 놓은 운영값이라 실측 중앙보다 이 농장에 맞다.
+    cyc = dict(cycle or herd_cycle())
+    cyc["lactation"] = float(lactation)
+    cyc.setdefault("source", {})["lactation"] = "등록값"
+    cycle_days = cyc["gestation"] + cyc["lactation"] + cyc["wean_to_service"]
+    gest, w2s = cyc["gestation"], cyc["wean_to_service"]
 
     have: dict = {}
     for b in barns:
@@ -262,20 +361,21 @@ def capacity_from_rooms(barns: list, interval_days: float,
 
     # 번식 축사 — 연속 흐름이라 방 수가 아니라 자리 총합이 제약이다.
     # 지지 모돈 = 자리 × 번식주기 ÷ 그 축사에 머무는 일수.
-    for st, hold in (("교배사", rc.WEI_BY_PARITY["sow"] + SERVICE_HOLD_DAYS),
-                     ("임신사", GESTATION - SERVICE_HOLD_DAYS - pre_farrow)):
+    for st, hold in (("교배사", w2s + SERVICE_HOLD_DAYS),
+                     ("임신사", gest - SERVICE_HOLD_DAYS - pre_farrow)):
         h = have.get(st)
         if not h or hold <= 0:
             continue
         rows.append({"stage": st, "kind": "연속", "rooms": h["rooms"],
                      "need_rooms": None, "per": h["places"],
-                     "sows": int(h["places"] * cycle / hold), "why": None})
+                     "sows": int(h["places"] * cycle_days / hold),
+                     "why": None})
 
     # 분만틀 → 모돈으로 환산해 한 자에 올린다. 여기서 비교가 성립한다.
     for r in rows:
         if "sows" not in r:
             r["sows"] = (plan_from_crates(
-                r["crates"], iv,
+                r["crates"], iv, turnover=cyc["turnover"],
                 weaned_per_crate=weaned_per_crate)["herd_size"]
                 if r["crates"] > 0 else 0)
 
@@ -307,9 +407,10 @@ def capacity_from_rooms(barns: list, interval_days: float,
         "rows": rows, "blocked": blocked, "binding": binding,
         "n_sows": n_sows, "crates": crates,
         "weaned_per_crate": float(weaned_per_crate),
-        "plan": (plan_from_crates(crates, iv,
+        "plan": (plan_from_crates(crates, iv, turnover=cyc["turnover"],
                                   weaned_per_crate=weaned_per_crate)
                  if crates else None),
+        "cycle": cyc,
         "flows": not blocked,
     }
 
@@ -319,7 +420,10 @@ def capacity_from_rooms(barns: list, interval_days: float,
 # 복당 이유두수만은 **방이 다시 깎는다.** 자돈사 396자리에 분만틀 36개면
 # 복당 11.0두까지고, 12.0 을 그냥 상한으로 쓰면 방이 넘치는 생산량을 "낼 수
 # 있다" 고 말하게 된다 — 지어 놓은 것을 무시한 수다.
-CEILING = {"fill": 1.0, "weaned": WEANED_PER_CRATE, "survival": GROW_SURVIVAL}
+# **생산** 상한이다(자세 상한 `train_posture_cnn.POSTURE_CEILING` 과
+# 뜻도 자료형도 다르다 — 저쪽은 스칼라, 이쪽은 항등식 항별 dict).
+PRODUCTION_CEILING = {"fill": 1.0, "weaned": WEANED_PER_CRATE,
+                      "survival": GROW_SURVIVAL}
 
 
 def throughput(cap: dict, farrow_rate: float | None = None,
@@ -355,15 +459,15 @@ def throughput(cap: dict, farrow_rate: float | None = None,
 
     # 복당 이유두수 상한은 **설계 목표와 방 중 작은 쪽**이다
     room_cap = cap.get("weaned_ceiling")
-    top_weaned = (min(CEILING["weaned"], float(room_cap))
-                  if room_cap else CEILING["weaned"])
-    room_bound = bool(room_cap) and float(room_cap) < CEILING["weaned"]
+    top_weaned = (min(PRODUCTION_CEILING["weaned"], float(room_cap))
+                  if room_cap else PRODUCTION_CEILING["weaned"])
+    room_bound = bool(room_cap) and float(room_cap) < PRODUCTION_CEILING["weaned"]
 
     def out(f, w, s):
         return crates * f * w * s * per_year
 
     now = out(fill, wl, gs)
-    top = out(CEILING["fill"], top_weaned, CEILING["survival"])
+    top = out(PRODUCTION_CEILING["fill"], top_weaned, PRODUCTION_CEILING["survival"])
 
     # 상한까지 가는 길 셋. **하나씩만** 올린다 — 합치지 않는다.
     ways = [
@@ -371,17 +475,17 @@ def throughput(cap: dict, farrow_rate: float | None = None,
          "now": round(fill * 100, 1), "target": 100.0,
          "how": f"분만율 {fr * 100:.1f}% → {FARROW_RATE_P10 * 100:.0f}% "
                 f"(설계 기준). 발정 탐지·적기 교배",
-         "gain": out(CEILING["fill"], wl, gs) - now},
+         "gain": out(PRODUCTION_CEILING["fill"], wl, gs) - now},
         {"key": "weaned", "name": "복당 이유두수", "unit": "두",
          "now": round(wl, 1), "target": round(top_weaned, 1),
          "how": ("포유 폐사 감소 · 포유능력 · 양자보내기"
                  + (f" — 방이 {top_weaned:.1f}두에서 막는다"
-                    f"(목표 {CEILING['weaned']:.0f}두)" if room_bound else "")),
+                    f"(목표 {PRODUCTION_CEILING['weaned']:.0f}두)" if room_bound else "")),
          "gain": out(fill, top_weaned, gs) - now},
         {"key": "survival", "name": "이유후 육성률", "unit": "%",
-         "now": round(gs * 100, 1), "target": CEILING["survival"] * 100,
+         "now": round(gs * 100, 1), "target": PRODUCTION_CEILING["survival"] * 100,
          "how": "AIAO · 밀도 · 환경 — 자돈사 이행항체 최저점 구간",
-         "gain": out(fill, wl, CEILING["survival"]) - now},
+         "gain": out(fill, wl, PRODUCTION_CEILING["survival"]) - now},
     ]
     for w in ways:
         w["gain"] = int(round(max(0.0, w["gain"])))
@@ -828,7 +932,7 @@ def main() -> int:
     print(f"  지금 {tp['now_year']:,}두/년 — 상한의 {tp['achieved']:.0%} "
           f"· 남은 몫 {tp['gap_year']:,}두")
     if tp["weaned_room_bound"]:
-        print(f"  ※ 복당 이유두수 상한이 목표 {CEILING['weaned']:.0f}두가 아니라 "
+        print(f"  ※ 복당 이유두수 상한이 목표 {PRODUCTION_CEILING['weaned']:.0f}두가 아니라 "
               f"{tp['top_weaned']}두다 — **방이 먼저 막는다**")
     for w in sorted(tp["ways"], key=lambda x: -x["gain"]):
         print(f"    {w['name']:<12}{w['now']}{w['unit']} → "

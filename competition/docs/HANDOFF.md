@@ -5,12 +5,12 @@
 > 깨진다 — 코드가 바뀌면 이 문서도 같이 갱신하거나 지워야 한다.
 
 **마감 2026-08-31** · 저장소 `fish-444/first-contributions` ·
-브랜치 `claude/yangdon-ai-competition-3x2ukm` · 최신 커밋 `95176d0`
+브랜치 `claude/yangdon-ai-competition-3x2ukm` · 최신 커밋은 `git log` 가 정본
 
 **한 줄**: 발정을 놓치면 번식이 무너진다. 그런데 번식만 잡아도 농장은 안 산다 —
 발정 탐지에서 출하까지 한 줄로 잇는다.
 
-**규모**: 모듈 70개 · 대시보드 뷰 23개 · 테스트 83개 · 외부 연결 0
+**규모**: 모듈 84개 · 대시보드 뷰 25개 · 테스트 103개 · 외부 연결 0
 
 ---
 
@@ -73,7 +73,7 @@ AI Hub · 케글 키가 이전 대화 기록에 노출됐다. **커밋 이력 �
 ## 1. 지금 상태
 
 ```bash
-python competition/tests/smoke_test.py      # 83/83 통과
+python competition/tests/smoke_test.py      # 103/103 통과
 python competition/tools/check_docs.py      # 불일치 0
 git status                                  # clean
 ```
@@ -121,7 +121,7 @@ git status                                  # clean
 자세한 발견은 `STATUS.md` 의 **⑧′ ⑧″ ⑧‴ ⑨ ⑨′** 절에 있다. 요지 넷:
 
 - **답은 두수가 아니라 병목의 이름이다.** 300두로 설계한 구성이 실제로는
-  295두이고, 붙잡고 있는 건 임신사다. 임신사를 넓히기 전엔 다른 돈사를 키워도
+  299두이고, 붙잡고 있는 건 임신사다. 임신사를 넓히기 전엔 다른 돈사를 키워도
   두수가 안 늘어난다.
 - **방이 상한을 다시 깎는다.** 복당 이유두수 목표가 12두라도 자돈사 396자리에
   분만틀 36개면 11.0두가 천장이다. 목표를 그냥 상한으로 쓰면 **방이 못 받는
@@ -229,17 +229,154 @@ git status                                  # clean
 - **개입 효과를 주장하지 않는다** — 격차의 분해까지만. 실농장 개입 실험은 없다
 - **빈 칸을 중앙값으로 채우지 않는다** — 격차가 늘 0 으로 찍혔던 버그
 - **부정 결과를 앞에 놓는다** — 뒤에서 철회하지 않는다
-- **원자료·가중치 미커밋** — `*.xlsx` · `*.pt` 차단
+- **원자료·가중치 미커밋** — `*.xlsx` · `*.pt` · `*.pth` · `*.onnx` · `data/cctv/` 차단
 - **외부 영상은 제출물·앱에 넣지 않는다** (저작권)
 - **수치는 코드가 정본이다** — `check_docs.py` 가 문서와 대조한다
 
 ## 7. 바로 돌려 보기
 
 ```bash
-python competition/tests/smoke_test.py                       # 83/83
+python competition/tests/smoke_test.py                       # 93/93
 python competition/tools/check_docs.py                       # 불일치 0
 python competition/src/build_farm_setup.py                   # 등록 화면 생성
 python competition/src/run_farm.py --setup my_farm.json      # 여섯 단계 전체
 python competition/src/barn_watch.py --setup my_farm.json --sweep
 python competition/src/psy_priority.py --sows 300            # 처방 순서
+```
+
+---
+
+## 7.5 pig-behavior-toolkit 정본 관계
+
+`fish-444/pig-behavior-toolkit` 저장소가 **개발 정본**이고, 여기
+`competition/src/pig_behavior/` 는 벤더 사본이다(바이트 동일 유지 —
+동기화는 `diff -r`). 이 세션이 정본에 `fix/cv-cut-and-coherence-gate`
+브랜치를 올렸다(호흡 CV 컷 0.35→0.2 재도출 · 결맞음 게이트 강등,
+pytest 11/11) — **로컬 자리에서 이 브랜치를 main 에 머지할 것.**
+사본은 이미 그 수정본(b15a2b4) 기준이다. 사본을 직접 고치지 말고
+정본에서 고친 뒤 다시 벤더링한다.
+
+## 8. 로컬 실증 — 유튜브 CCTV 로 기준선 층 돌리기
+
+가중치(`*.pth`)와 영상·라벨은 커밋이 안 되므로 **이 실증은 로컬에서만
+돈다.** 파일 배치와 붙여넣을 프롬프트를 여기 둔다.
+
+### 파일 정리 — 전부 `competition/data/cctv/` 아래 (`.gitignore` 로 차단됨)
+
+```
+competition/data/cctv/
+  weights/pig_polygon_epoch12.pth   # 업로드받은 체크포인트 (또는 end2end.onnx)
+  video/<영상ID>.mp4                # 유튜브 원본 — 영상ID는 유튜브 ID처럼 중립키
+  frames/<영상ID>/%06d.jpg          # ffmpeg 추출 프레임
+  labels/labels.csv                 # 방키,영상ID,시작초,끝초,라벨(발정/비발정/분만/섭식…)
+  dets/<영상ID>.jsonl               # pig_behavior.cli 출력
+  summary/<영상ID>.json             # 브리지 요약 — 유일한 커밋 후보(사용자 확인 후)
+```
+
+가중치·영상·프레임·라벨·검출 JSONL 은 **절대 커밋하지 않는다**(저장소 공개
++ 저작권 + 방 식별). `.gitignore` 가 `*.pth`·`*.onnx`·`data/cctv/` 를 막고
+있지만, 커밋 전 `git status` 로 눈으로도 확인할 것.
+
+### 로컬 CLI 세션에 붙여넣을 프롬프트
+
+```
+유튜브 양돈 CCTV로 행동 기준선 층 실증을 돌린다.
+
+0) 시작: git fetch origin 후 origin/claude/yangdon-ai-competition-3x2ukm 에
+   rebase (HANDOFF.md 0절 — 로컬 yangdon-work 는 갈라져 있다). 그다음
+   python competition/tests/smoke_test.py 전부 통과 확인.
+
+1) 규율 — 계산을 다시 구현하지 않는다. 쓰는 것은 셋뿐이다:
+   검출     python -m pig_behavior.cli
+   구성비   vision_pig_behavior.fold()
+   기준선   behavior_baseline.fit()/assess()
+   묶는 배선은 competition/tools/baseline_from_dets.py 가 이미 있다 —
+   스니펫을 새로 짜지 말고 이 파일을 쓴다. 새 문턱·가중치·판정식 금지.
+   없으면 "없다"고 보고한다.
+
+2) 자료는 전부 competition/data/cctv/ 아래(배치는 HANDOFF 8절). 가중치·
+   영상·프레임·라벨·검출은 절대 커밋하지 않는다.
+
+3) 프레임 추출(30초 1장):
+   ffmpeg -i data/cctv/video/<ID>.mp4 -vf fps=1/30 data/cctv/frames/<ID>/%06d.jpg
+
+4) 검출 (competition/src 에서, GPU 있으면 --device cuda:0):
+   python -m pig_behavior.cli \
+     --checkpoint ../data/cctv/weights/pig_polygon_epoch12.pth \
+     --out ../data/cctv/dets/<ID>.jsonl ../data/cctv/frames/<ID>/
+
+5) 창 묶기 → 기준선 (60프레임 = 30분 창):
+   python competition/tools/baseline_from_dets.py data/cctv/dets/<ID>.jsonl \
+     --barn <동키> --pen <방키> --per 60 --out data/cctv/summary/<ID>.json
+   컷이 서려면 창 20개 이상이 필요하다(경보율 0.5~5% 대역은 1/n≤5% 여야
+   표현 가능). 20개 미만이면 컷 None 이 정상이고, 억지로 낮추지 말 것.
+
+6) 라벨 감사 — 관건은 within-room contrast: 같은 방에 발정 라벨 창과
+   비발정 창이 둘 다 있는가. 있으면 --heads estrus 로 다시 돌려 발정
+   라벨 창의 estrus 점수와 평시 창 점수의 분리(순위/AUC)를 보고한다.
+   없으면 "이 라벨로는 방 간 비교만 가능하다"고 못박는다.
+
+7) 보고: 방키별 창 수·기준선 형성 여부·컷·라벨별 점수 분포. 커밋은
+   summary JSON 만 후보이고, 그것도 내(사용자) 확인 후에만.
+
+8) 헤드 가중치 학습(라벨이 있으면) — 규약은 PREREGISTRATION.md 등록 2 에
+   이미 못박혀 있다. 라벨 CSV 헤더는 room,video,start_sec,end_sec,label 고정:
+   python competition/src/behavior_head_train.py \
+     --dets-dir data/cctv/dets --labels data/cctv/labels/labels.csv \
+     --per 60 --sec-per-frame 30 --head estrus \
+     --positive 발정 --negative 비발정 --out data/cctv/summary/head_estrus.json
+   판정은 코드가 낸다(채택 후보/보류/등가중 유지/학습 불가) — 판정을
+   손보지 말고 그대로 보고한다. 등가중 교체는 사용자 확인 후에만.
+```
+
+---
+
+## 9. 자세 CNN 재학습 — 로컬 CLI 에 붙여넣을 프롬프트
+
+학습은 케글 GPU 에서 돈다(로컬 CPU 는 LOVO 7폴드에 50분). 규약은
+`PREREGISTRATION.md` **등록 3** 에 이미 못박혀 있다 — 아래 프롬프트는
+그 등록의 실행이지 새 재량이 아니다.
+
+```
+자세 CNN 을 재학습한다. 규약은 PREREGISTRATION.md 등록 3 이 정본이고
+거기 적힌 것만 바꾼다.
+
+0) 시작: git fetch origin 후 origin/claude/yangdon-ai-competition-3x2ukm
+   에 rebase (HANDOFF 0절). python competition/tests/smoke_test.py 통과 확인.
+   그리고 등록 3 을 먼저 읽는다 — 목표는 0.861 이 아니다(폐기된 전제 위의
+   수다). 겨냥은 횡와↔복와↔기립 혼동이다.
+
+1) 노트북 생성: python competition/src/build_kaggle_notebooks.py
+   → posture_cnn_kaggle 을 케글 New Notebook 에 통째로 붙여넣는다.
+   Add Input: Competition multi-view-pig-posture-recognition ·
+   Accelerator GPU(T4) · Internet On(resnet18/34 가중치를 받는다).
+
+2) 등록 3 의 네 가지만 고친다:
+   A CROP 96 → 160          (PAD 0.12 은 그대로)
+   B 좌우 뒤집기 + 라벨 교환  — 지금 코드는 뒤집기를 금지한다. 뒤집을 때
+     Lateral_lying_left ↔ Lateral_lying_right 라벨을 함께 바꾸면 올바른
+     증강이다. cls3 라벨에는 영향이 없어야 한다(둘 다 '횡와'로 접힌다) —
+     접는 코드를 먼저 읽고 확인할 것.
+   C make_net: resnet18 → resnet34
+   D train_fold: epochs 12 → 25   (bs 는 160px 에서 OOM 나면 128→64 로만 줄인다)
+   그 밖은 손대지 않는다. **특히 LOVO 폴드 구성·클래스 가중·MIN_FOLD·
+   저장 JSON 스키마는 그대로** — 평가 규약을 건드리면 비교가 무효다.
+
+3) 시드 3개(0·1·2)로 돌려 평균과 표준편차를 낸다. 한 번만 돌리고
+   "올랐다"고 하지 말 것 — 등록 1 이 세운 규칙이 시드 SD 안쪽 개선은
+   승리가 아니라는 것이다.
+
+4) 결과 JSON(/kaggle/working/posture_cnn.json)을 받아
+   competition/data/posture_cnn.json 을 덮어쓴다. 그다음:
+   python competition/tools/check_docs.py     # 문서 수치가 자동으로 걸린다
+   python competition/tests/smoke_test.py
+   check_docs 가 잡아주는 문서 수치를 전부 새 값으로 고친다.
+
+5) 보고: cls3/cls5/좌우한정 각각의 시드 평균±SD, 기준선 대비, 그리고
+   혼동행렬에서 횡와↔복와↔기립 누수가 줄었는지. **안 올랐으면 안 올랐다고
+   그대로 적고 0.732 를 유지한다** — PREREGISTRATION 등록 3 의 '결과' 절에
+   기록하는 것까지가 이 작업이다.
+
+6) 커밋: 등록 3 결과 절 + posture_cnn.json + 문서 수치. 가중치는
+   커밋하지 않는다(.gitignore).
 ```

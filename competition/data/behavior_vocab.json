@@ -1,0 +1,122 @@
+{
+ "basis": "Edinburgh 12,646행·96개체 · 개체 GroupKFold(5) · 기하+모션+롤링 20피처 RF · **같은 예측을 두 어휘로 채점**",
+ "raw": {
+  "acc": 0.484,
+  "mf1": 0.348,
+  "n_classes": 12
+ },
+ "app": {
+  "acc": 0.576,
+  "mf1": 0.622,
+  "n_classes": 5
+ },
+ "raw_baseline": {
+  "acc": 0.332,
+  "mf1": 0.042,
+  "n_classes": 12
+ },
+ "app_baseline": {
+  "acc": 0.332,
+  "mf1": 0.1,
+  "n_classes": 5
+ },
+ "lift_raw": 0.152,
+ "lift_app": 0.244,
+ "merge": {
+  "lying": "Resting",
+  "sleep": "Resting",
+  "sitting": "Resting",
+  "walk": "Walking",
+  "run": "Walking",
+  "eat": "Eating",
+  "investigating": "Searching"
+ },
+ "app_classes": [
+  "Eating",
+  "Resting",
+  "Searching",
+  "Walking"
+ ],
+ "other_label": "기타",
+ "per_class": {
+  "Eating": {
+   "n": 980,
+   "recall": 0.891
+  },
+  "Resting": {
+   "n": 1275,
+   "recall": 0.641
+  },
+  "Searching": {
+   "n": 4203,
+   "recall": 0.525
+  },
+  "Walking": {
+   "n": 2842,
+   "recall": 0.662
+  },
+  "기타": {
+   "n": 3346,
+   "recall": 0.449
+  }
+ },
+ "confusion_top": [
+  {
+   "rate": 0.528,
+   "true": "run",
+   "pred": "walk",
+   "absorbed": true
+  },
+  {
+   "rate": 0.353,
+   "true": "standing",
+   "pred": "investigating",
+   "absorbed": false
+  },
+  {
+   "rate": 0.306,
+   "true": "fight",
+   "pred": "walk",
+   "absorbed": false
+  },
+  {
+   "rate": 0.301,
+   "true": "lying",
+   "pred": "sleep",
+   "absorbed": true
+  },
+  {
+   "rate": 0.294,
+   "true": "drink",
+   "pred": "standing",
+   "absorbed": true
+  },
+  {
+   "rate": 0.271,
+   "true": "nose-to-nose",
+   "pred": "fight",
+   "absorbed": true
+  },
+  {
+   "rate": 0.264,
+   "true": "sitting",
+   "pred": "fight",
+   "absorbed": false
+  },
+  {
+   "rate": 0.25,
+   "true": "sitting",
+   "pred": "investigating",
+   "absorbed": false
+  }
+ ],
+ "survived_pairs": 4,
+ "absorbed_pairs": 4,
+ "grade": "실측",
+ "notes": [
+  "재학습이 아니다 — 가중치·분할·피처가 같고 라벨 매핑만 다르다.",
+  "여기서 재는 것은 **프레임 라벨 정확도**이지 의심 순위의 적중률이 아니다. 적중률은 정답 라벨이 없어 여전히 미측정이다.",
+  "0.516 은 외형 40차원을 포함한 값이라 영상 캐시가 있어야 재현된다. 비교는 재현 가능한 20피처 위에서 했다.",
+  "Edinburgh 공개셋이고 국내 농장이 아니다."
+ ]
+}

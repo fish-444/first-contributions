@@ -193,7 +193,7 @@ def run(n_sows: int, system: str = "WEEKLY", days: int = 400,
     p(f"   번식주기 {plan['cycle_days']}일 · 출하일령 {plan['market_age_days']}일")
 
     # 분만틀이 받는 규모와 **다른 돈사가 받는 규모**는 다르다. 분만틀만 보고
-    # 341두라고 하면 임신사 자리가 295두인 걸 놓친다 — 돈방은 돈사를 건너뛰어
+    # 341두라고 하면 임신사 자리가 299두인 걸 놓친다 — 돈방은 돈사를 건너뛰어
     # 쓸 수 없으므로 가장 작은 쪽이 실제 규모다.
     if setup and (setup.get("barns") or []):
         import batch_flow as bf

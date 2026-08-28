@@ -26,10 +26,14 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(ROOT))         # competition.server 용
 
+import psy_priority as pp  # noqa: E402
+
 OUT = os.path.join(ROOT, "dashboard", "season_interval.html")
 
 # 예시 농장 — 300두 기본 구성. **실제 농장이 아니다.**
-DEMO_SOWS = 300
+# 시연 규모의 정본은 `psy_priority.DEMO_SOWS` 다 — 화면마다 다른 두수를
+# 보이면 같은 농장을 보는 것처럼 읽히지 않는다.
+DEMO_SOWS = pp.DEMO_SOWS
 DEMO_PERF = {"weaned": 11.0, "farrowing_rate": 85.0, "survival": 94.0}
 
 C_ACC, C_BAD, C_GOOD, C_WARN = "#2a78d6", "#d03b3b", "#1baf7a", "#e8a33d"

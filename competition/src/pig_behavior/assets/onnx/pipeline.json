@@ -1,0 +1,132 @@
+{
+    "pipeline": {
+        "input": [
+            "img"
+        ],
+        "output": [
+            "post_output"
+        ],
+        "tasks": [
+            {
+                "type": "Task",
+                "module": "Transform",
+                "name": "Preprocess",
+                "input": [
+                    "img"
+                ],
+                "output": [
+                    "prep_output"
+                ],
+                "transforms": [
+                    {
+                        "backend_args": null,
+                        "type": "LoadImageFromFile"
+                    },
+                    {
+                        "keep_ratio": true,
+                        "type": "Resize",
+                        "size": [
+                            1333,
+                            800
+                        ]
+                    },
+                    {
+                        "type": "Normalize",
+                        "to_rgb": true,
+                        "mean": [
+                            123.675,
+                            116.28,
+                            103.53
+                        ],
+                        "std": [
+                            58.395,
+                            57.12,
+                            57.375
+                        ]
+                    },
+                    {
+                        "type": "Pad",
+                        "size_divisor": 32
+                    },
+                    {
+                        "type": "DefaultFormatBundle"
+                    },
+                    {
+                        "meta_keys": [
+                            "flip_direction",
+                            "ori_shape",
+                            "ori_filename",
+                            "pad_shape",
+                            "scale_factor",
+                            "img_path",
+                            "pad_param",
+                            "img_shape",
+                            "img_id",
+                            "img_norm_cfg",
+                            "filename",
+                            "flip",
+                            "valid_ratio"
+                        ],
+                        "type": "Collect",
+                        "keys": [
+                            "img"
+                        ]
+                    }
+                ]
+            },
+            {
+                "name": "maskrcnn",
+                "type": "Task",
+                "module": "Net",
+                "is_batched": true,
+                "input": [
+                    "prep_output"
+                ],
+                "output": [
+                    "infer_output"
+                ],
+                "input_map": {
+                    "img": "input"
+                },
+                "output_map": {}
+            },
+            {
+                "type": "Task",
+                "module": "mmdet",
+                "name": "postprocess",
+                "component": "ResizeInstanceMask",
+                "params": {
+                    "rcnn": {
+                        "mask_thr_binary": 0.5,
+                        "max_per_img": 100,
+                        "nms": {
+                            "iou_threshold": 0.5,
+                            "type": "nms"
+                        },
+                        "score_thr": 0.05
+                    },
+                    "rpn": {
+                        "max_per_img": 1000,
+                        "min_bbox_size": 0,
+                        "nms": {
+                            "iou_threshold": 0.7,
+                            "type": "nms"
+                        },
+                        "nms_pre": 1000
+                    },
+                    "min_bbox_size": 0,
+                    "score_thr": 0.05,
+                    "mask_thr_binary": 0.5,
+                    "is_resize_mask": true
+                },
+                "output": [
+                    "post_output"
+                ],
+                "input": [
+                    "prep_output",
+                    "infer_output"
+                ]
+            }
+        ]
+    }
+}
