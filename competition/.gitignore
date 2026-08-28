@@ -45,3 +45,12 @@ data/work_log.csv
 # 같은 이유로 커밋하지 않는다.
 data/farms.db
 data/*.db
+
+# 외부 영상 — **제3자 저작물이라 재배포 금지.** 저작권 허락은 분석용이고
+# 저장소에 올리는 것은 별개다. 영상·프레임은 빼고, 산출물(검출 JSONL·
+# 구성비·대조 결과)만 커밋한다.
+data/external/**/*.mp4
+data/external/**/*.mov
+data/external/**/*.avi
+data/external/**/*.mkv
+data/external/**/frames/
