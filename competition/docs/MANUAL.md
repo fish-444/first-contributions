@@ -374,6 +374,7 @@ python competition/src/build_season_interval.py
 | 도구 | 하는 일 |
 |---|---|
 | `baseline_from_dets` | CLI 검출 JSONL → 시간창 → 행동 기준선 — **로컬 실증용 브리지.** |
+| `build_breeding_board` | 농장 화이트보드 교배표 → HTML 대시보드. |
 | `build_manual` | 전체 파이썬 모듈 설명서를 **코드에서 생성**한다 |
 | `check_docs` | 문서에 박힌 숫자가 실제와 맞는지 검사한다. |
 | `check_download` | 내려받은 파일이 왜 tar 가 아닌지 진단한다. |
