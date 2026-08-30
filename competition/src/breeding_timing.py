@@ -57,26 +57,39 @@ def estrus_duration(parity: str = "sow", wei_days: float = NORMAL_WEI) -> float:
     return float(max(24.0, min(84.0, base + adj)))
 
 
-def ovulation_time(parity: str = "sow", wei_days: float = NORMAL_WEI) -> float:
-    """발정 시작 후 배란까지 시간(h)."""
-    return estrus_duration(parity, wei_days) * OVULATION_FRAC
+# 하계 배란 지연 — Belstra et al.(2002) 상용농장 실측: 봄은 2/3 규칙과 오차
+# 2.7h 이나 하절기는 발정이 길어지고 배란이 8.0h 뒤로 밀리며 편의 방향이
+# 일정하다. 그래서 배수 대신 상수 보정을 둔다. month 를 주지 않으면 보정하지
+# 않는다 — 기존 호출과 산출은 그대로다.
+SEASON_OVULATION_LAG_H = 8.0     # 하절기(7~9월, farm_monthly.SUMMER) [지침]
+
+
+def ovulation_time(parity: str = "sow", wei_days: float = NORMAL_WEI,
+                   month: int | None = None) -> float:
+    """발정 시작 후 배란까지 시간(h). month(교배월)를 주면 하계 지연을 더한다."""
+    ov = estrus_duration(parity, wei_days) * OVULATION_FRAC
+    if month is not None:
+        import farm_monthly as fm      # 계절 정의의 정본 — 값 복제 금지
+        if month in fm.SUMMER:
+            ov += SEASON_OVULATION_LAG_H
+    return ov
 
 
 @lru_cache(maxsize=256)
 def insemination_window(parity: str = "sow", wei_days: float = NORMAL_WEI,
-                        frac: float = 0.5) -> dict:
+                        frac: float = 0.5, month: int | None = None) -> dict:
     """발정 시작 기준 최적 수정 창(h)과 권장 2회 수정 시각.
 
     창을 상수식(배란-24h ~ 배란+5h)으로 박아두면 유효도 모델과 어긋난다.
     **유효도가 정점의 frac 이상인 구간**을 창으로 삼아 모델과 항상 일치시킨다.
     """
-    ov = ovulation_time(parity, wei_days)
+    ov = ovulation_time(parity, wei_days, month)
     grid = [i * 0.5 for i in range(0, int((ov + OVUM_VIABLE_H) / 0.5) + 1)]
-    effs = [(t, ai_efficacy(t, parity, wei_days)) for t in grid]
+    effs = [(t, ai_efficacy(t, parity, wei_days, month=month)) for t in grid]
     peak_t, peak_e = max(effs, key=lambda x: x[1])
     ok = [t for t, e in effs if e >= frac * peak_e and e > 0]
     start, end = (min(ok), max(ok)) if ok else (peak_t, peak_t)
-    ai1, ai2 = optimal_ai_times(parity, wei_days)
+    ai1, ai2 = optimal_ai_times(parity, wei_days, month=month)
     return {"parity": parity, "wei_days": float(wei_days),
             "estrus_duration_h": round(estrus_duration(parity, wei_days), 1),
             "ovulation_h": round(ov, 1),
@@ -131,7 +144,8 @@ def check_against_field_guide(parity: str = "sow",
 # 하고, 그걸 테스트가 확인한다.
 @lru_cache(maxsize=256)
 def optimal_ai_times(parity: str = "sow", wei_days: float = NORMAL_WEI,
-                     n_ai: int = 2, min_gap_h: float = 8.0) -> list:
+                     n_ai: int = 2, min_gap_h: float = 8.0,
+                     month: int | None = None) -> list:
     """수태율을 **최대화하는** 수정 시각을 탐색해 반환(h, 발정 시작 기준).
 
     초기 구현은 '창의 1/3·2/3 지점'이라는 임의 규칙을 썼는데, 그 값이 관행
@@ -139,26 +153,28 @@ def optimal_ai_times(parity: str = "sow", wei_days: float = NORMAL_WEI,
     argmax** 여야 하므로 격자 탐색으로 정한다. 현장 운용을 고려해 두 수정 사이
     최소 간격(min_gap_h)을 둔다.
     """
-    ov = ovulation_time(parity, wei_days)
+    ov = ovulation_time(parity, wei_days, month)
     lo = max(0.0, ov - SPERM_VIABLE_H - 4.0)
     hi = ov + OVUM_VIABLE_H
     grid = [round(lo + i * 0.5, 1) for i in range(int((hi - lo) / 0.5) + 1)]
     if n_ai == 1:
-        best = max(grid, key=lambda t: conception_prob([t], parity, wei_days))
+        best = max(grid, key=lambda t: conception_prob([t], parity, wei_days,
+                                                       month=month))
         return [best]
     best, best_p = [grid[0], grid[-1]], -1.0
     for i, a in enumerate(grid):
         for b in grid[i:]:
             if b - a < min_gap_h:
                 continue
-            p = conception_prob([a, b], parity, wei_days)
+            p = conception_prob([a, b], parity, wei_days, month=month)
             if p > best_p:
                 best_p, best = p, [a, b]
     return best
 
 
 def ai_efficacy(ai_h: float, parity: str = "sow",
-                wei_days: float = NORMAL_WEI, steps: int = 200) -> float:
+                wei_days: float = NORMAL_WEI, steps: int = 200,
+                month: int | None = None) -> float:
     """수정 1회의 유효도 0~1 — 정자 가용 구간과 난자 유효 구간의 겹침으로 계산.
 
     이전 구현은 "배란 직전일수록 좋다"고 보아 **배란 시각 정각을 최적(1.0)** 으로
@@ -175,7 +191,7 @@ def ai_efficacy(ai_h: float, parity: str = "sow",
     이 형태는 '배란 4~12h 전 주입이 최적'이라는 보고와 일치하며, 배란 직전·직후
     주입이 나쁜 이유도 같은 식에서 자동으로 나온다.
     """
-    ov = ovulation_time(parity, wei_days)
+    ov = ovulation_time(parity, wei_days, month)
     s0, s1 = float(ai_h) + CAPACITATION_H, float(ai_h) + SPERM_VIABLE_H
     o0, o1 = ov, ov + OVUM_VIABLE_H
     lo, hi = max(s0, o0), min(s1, o1)
@@ -194,14 +210,15 @@ def ai_efficacy(ai_h: float, parity: str = "sow",
 
 
 def conception_prob(ai_hours: list, parity: str = "sow",
-                    wei_days: float = NORMAL_WEI, base: float = 1.55) -> float:
+                    wei_days: float = NORMAL_WEI, base: float = 1.55,
+                    month: int | None = None) -> float:
     """수정 시각(발정 시작 후 h) 목록 → 기대 수태율.
 
     여러 번 수정하면 실패 확률이 곱으로 줄어든다(독립 근사).
     base 는 유효도를 수태율로 환산하는 계수 — 적기 2회 수정 시 85~90% 대가
     나오도록 잡았다(관리·정액 품질 등 다른 요인이 이미 반영된 상한).
     """
-    eff = [ai_efficacy(t, parity, wei_days) for t in ai_hours]
+    eff = [ai_efficacy(t, parity, wei_days, month=month) for t in ai_hours]
     if not eff:
         return 0.0
     fail = 1.0
