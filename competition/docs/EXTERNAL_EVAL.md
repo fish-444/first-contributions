@@ -59,6 +59,17 @@ conf 0.25 · imgsz 512 · 3프레임 간격(10fps) · max_age 40 · IoU 0.25 ·
 onnxruntime CPU 로 실행. **1fps 로 15클립 전부 1,812프레임**, score_thr 0.30.
 프레임은 모델 입력 크기(1333×750, keep-ratio)로 미리 추출해 리사이즈가 항등이다.
 
+**이 모델도 자체 학습이다** — AI Hub 622 폴리곤 라벨로 학습한 Mask R-CNN
+인스턴스 분할기(mmdet 3.3.0 · `pig_polygon_epoch12.pth`)를 ONNX 로 변환한
+것이다. 즉 이 관통 확인에 쓴 모델 둘(탐지 `pig_yolo.pt` · 행동 `end2end.onnx`)이
+**전부 본 과제에서 학습한 것**이고, 외부 사전학습 모델을 빌려 쓴 구간이 없다.
+
+성능은 **처음 보는 200장(622 ts06, 2026-08-21)** 에서 잰 값을 쓴다 —
+bbox mAP 0.205 / segm mAP 0.192. 클래스별로는 Resting 0.633 · Eating 0.631 이
+쓸 만하고 Walking 0.261 · Searching 0.242 는 약하며 나머지는 못 쓴다.
+**원 학습이 보고한 0.953 은 train==val 상태의 값이라 인용하지 않는다.**
+4절의 "신뢰 클래스 넷"이 바로 이 감사에서 나온 것이다.
+
 속도 실측 **6.7~7.5초/프레임 (CPU, 16코어)**. 기존 기준선(CPU 5.52초/장)과
 정합적이며 1080p 라 소폭 느리다.
 
@@ -273,12 +284,14 @@ hit_rate         : null
 것**이다 — 무엇을 어떤 설정으로 돌렸는지 검증할 수 있게 한다.
 
 ```
-탐지 가중치   models/pig_yolo.pt (YOLOv8n, ultralytics 8.4.116, 2026-08-09 학습)
+탐지 가중치   models/pig_yolo.pt — 본 과제 자체 학습
+              (YOLOv8n, ultralytics 8.4.116, 2026-08-09, 45,611 bbox)
               SHA256 e4ab78032da3249a897656cffc35fee93822ec7182eef2a68a634cfafe47cdd2
               24,441,447 바이트
-행동 가중치   pig_behavior/assets/onnx/end2end.onnx (mmdeploy 1.3.1, FP32)
-              ⚠ 외부 모델 — 제공처·라이선스 확인 전에는 제출물에 이 모델의
-              산출을 근거로 쓰지 않는다
+행동 가중치   pig_behavior/assets/onnx/end2end.onnx — 본 과제 자체 학습
+              (Mask R-CNN 15클래스, mmdet 3.3.0 → mmdeploy 1.3.1 FP32 변환,
+               원본 pig_polygon_epoch12.pth, AI Hub 622 폴리곤 라벨로 학습)
+              기준선 bbox mAP 0.205 / segm mAP 0.192 (처음 보는 200장, 622 ts06)
 클립 선택     시드 20260828, random.Random(SEED).sample(sorted(clips), 5)
 실행 환경     Python 3.13.3 · torch 2.13.0+cpu · onnxruntime 1.27.0 ·
               ultralytics 8.4.131 · CPU 16코어 · GPU 없음
