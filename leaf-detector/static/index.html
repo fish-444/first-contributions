@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>잎 탐지 웹앱 🌿</title>
+  <style>
+    :root {
+      --green: #2e7d32;
+      --green-dark: #1b5e20;
+      --bg: #f4f7f4;
+      --card: #ffffff;
+      --border: #d7e0d7;
+      --text: #1f2a1f;
+      --muted: #5c6b5c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic",
+        "Apple SD Gothic Neo", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+    header { text-align: center; margin-bottom: 24px; }
+    header h1 { font-size: 1.7rem; margin: 0 0 6px; color: var(--green-dark); }
+    header p { margin: 0; color: var(--muted); }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+
+    .drop {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 32px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .drop:hover, .drop.drag { background: #eef4ee; border-color: var(--green); }
+    .drop .icon { font-size: 2.4rem; }
+    .drop p { margin: 8px 0 0; color: var(--muted); }
+    input[type="file"] { display: none; }
+
+    button {
+      display: block;
+      width: 100%;
+      margin-top: 16px;
+      padding: 14px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #fff;
+      background: var(--green);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover:not(:disabled) { background: var(--green-dark); }
+    button:disabled { background: #9db69d; cursor: not-allowed; }
+
+    .preview-row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .preview-col { flex: 1; min-width: 240px; }
+    .preview-col h3 { margin: 0 0 8px; font-size: 0.95rem; color: var(--muted); }
+    .preview-col img {
+      width: 100%; border-radius: 10px; border: 1px solid var(--border);
+      display: block;
+    }
+
+    .status { text-align: center; color: var(--muted); margin-top: 12px; min-height: 1.4em; }
+    .status.error { color: #c62828; }
+
+    .result-summary {
+      background: #eef4ee; border-radius: 10px; padding: 12px 16px; margin-bottom: 12px;
+      font-weight: 600; color: var(--green-dark);
+    }
+    ul.det-list { margin: 0; padding-left: 20px; color: var(--text); }
+    .hidden { display: none; }
+
+    .spinner {
+      width: 22px; height: 22px; border: 3px solid #fff; border-top-color: transparent;
+      border-radius: 50%; display: inline-block; vertical-align: middle;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🌿 잎 탐지 웹앱</h1>
+      <p>사진을 올리면 YOLO 모델이 잎을 찾아 박스로 표시해 드려요.</p>
+    </header>
+
+    <div class="card">
+      <label class="drop" id="drop">
+        <div class="icon">📷</div>
+        <p><strong>여기를 눌러 사진을 선택</strong>하거나 이미지를 끌어다 놓으세요.</p>
+        <input type="file" id="fileInput" accept="image/*" />
+      </label>
+
+      <button id="detectBtn" disabled>탐지하기</button>
+      <div class="status" id="status"></div>
+    </div>
+
+    <div class="card hidden" id="resultCard">
+      <div class="result-summary" id="summary"></div>
+      <ul class="det-list hidden" id="detList"></ul>
+      <div class="preview-row">
+        <div class="preview-col">
+          <h3>원본 사진</h3>
+          <img id="originalImg" alt="원본" />
+        </div>
+        <div class="preview-col">
+          <h3>탐지 결과</h3>
+          <img id="resultImg" alt="결과" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const drop = document.getElementById("drop");
+    const fileInput = document.getElementById("fileInput");
+    const detectBtn = document.getElementById("detectBtn");
+    const statusEl = document.getElementById("status");
+    const resultCard = document.getElementById("resultCard");
+    const summary = document.getElementById("summary");
+    const detList = document.getElementById("detList");
+    const originalImg = document.getElementById("originalImg");
+    const resultImg = document.getElementById("resultImg");
+
+    let selectedFile = null;
+
+    function setStatus(msg, isError = false) {
+      statusEl.textContent = msg;
+      statusEl.classList.toggle("error", isError);
+    }
+
+    function chooseFile(file) {
+      if (!file) return;
+      if (!file.type.startsWith("image/")) {
+        setStatus("이미지 파일만 올릴 수 있어요.", true);
+        return;
+      }
+      selectedFile = file;
+      detectBtn.disabled = false;
+      setStatus("선택됨: " + file.name);
+      // 원본 미리보기
+      originalImg.src = URL.createObjectURL(file);
+      resultCard.classList.remove("hidden");
+      resultImg.src = "";
+      summary.textContent = "‘탐지하기’ 버튼을 눌러 주세요.";
+      detList.classList.add("hidden");
+    }
+
+    fileInput.addEventListener("change", (e) => chooseFile(e.target.files[0]));
+
+    // 드래그 앤 드롭
+    ["dragenter", "dragover"].forEach((ev) =>
+      drop.addEventListener(ev, (e) => {
+        e.preventDefault();
+        drop.classList.add("drag");
+      })
+    );
+    ["dragleave", "drop"].forEach((ev) =>
+      drop.addEventListener(ev, (e) => {
+        e.preventDefault();
+        drop.classList.remove("drag");
+      })
+    );
+    drop.addEventListener("drop", (e) => {
+      const file = e.dataTransfer.files[0];
+      chooseFile(file);
+    });
+
+    // 탐지 실행
+    detectBtn.addEventListener("click", async () => {
+      if (!selectedFile) return;
+      detectBtn.disabled = true;
+      setStatus("");
+      summary.innerHTML = '<span class="spinner"></span> 탐지 중입니다...';
+      resultCard.classList.remove("hidden");
+      detList.classList.add("hidden");
+
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      try {
+        const res = await fetch("/detect", { method: "POST", body: formData });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || "서버 오류가 발생했어요.");
+        }
+        const data = await res.json();
+        resultImg.src = data.image;
+        summary.textContent = `총 ${data.count}개를 찾았어요.`;
+
+        if (data.detections.length > 0) {
+          detList.innerHTML = data.detections
+            .map(
+              (d) =>
+                `<li>${d.label} — 신뢰도 ${(d.confidence * 100).toFixed(1)}%</li>`
+            )
+            .join("");
+          detList.classList.remove("hidden");
+        } else {
+          detList.classList.add("hidden");
+        }
+      } catch (e) {
+        summary.textContent = "";
+        setStatus(e.message, true);
+      } finally {
+        detectBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
