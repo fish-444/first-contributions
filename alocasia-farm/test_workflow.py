@@ -184,20 +184,71 @@ def test_no_warning_ever_carries_the_key_itself():
             assert secret[:4] not in w, w          # 앞자리만 흘리는 것도 안 된다
 
 
-def test_the_startup_line_does_not_print_any_of_the_key(capsys, monkeypatch):
-    """'앱이 어떤 키를 들고 있나' 를 알려 주되, 키 글자는 한 자도 찍지 않는다."""
+def test_the_startup_line_does_not_print_any_of_the_key():
+    """'앱이 어떤 키를 들고 있나' 를 알려 주되, 키 글자는 한 자도 찍지 않는다.
+
+    pytest 의 capsys·monkeypatch 를 쓰지 않는다. 이 저장소는 `python3 test_xxx.py`
+    로 돌리는 게 관례이고, 그 러너는 인자를 못 넘겨서 픽스처를 받는 시험은
+    호출 자체가 TypeError 로 터진다 — 실제로 이 시험이 그렇게 죽어 있었다.
+    표준 라이브러리만으로 같은 걸 잰다.
+    """
+    import contextlib
+    import io
+    import os
+
     secret = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"
-    monkeypatch.setenv("ROBOFLOW_API_KEY", secret)
-    for name in ("ROBOFLOW_WORKSPACE", "ROBOFLOW_WORKFLOW_ID", "ROBOFLOW_WORKFLOW_URL"):
-        monkeypatch.delenv(name, raising=False)
+    names = ("ROBOFLOW_API_KEY", "ROBOFLOW_WORKSPACE",
+             "ROBOFLOW_WORKFLOW_ID", "ROBOFLOW_WORKFLOW_URL")
+    before = {n: os.environ.get(n) for n in names}
+    try:
+        os.environ["ROBOFLOW_API_KEY"] = secret
+        for name in names[1:]:
+            os.environ.pop(name, None)
 
-    import providers
-    providers.select()
+        import providers
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            providers.select()
+        out = buf.getvalue()
+    finally:
+        for name, value in before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
-    out = capsys.readouterr().out
     assert f"({len(secret)}자)" in out, out       # 길이는 알려 준다 (따옴표·잘림 진단)
     assert secret[:4] not in out, out             # 앞자리는 안 된다
     assert secret not in out, out
+
+
+
+def test_no_test_in_this_folder_needs_a_pytest_fixture():
+    """인자를 받는 시험은 `python3 test_xxx.py` 로 돌면 TypeError 로 죽는다.
+
+    바로 위 시험이 실제로 그렇게 죽어 있었다. pytest 로 돌리면 통과하니
+    눈에 안 띈다 — 이 저장소의 러너는 인자를 못 넘긴다. 한 번 당했으면
+    다시 안 당하게 막아 둔다. pytest 를 정말 써야 하면 그 파일에 pytest 를
+    부르는 __main__ 블록을 두고, 여기 예외 목록에 적으면 된다.
+    """
+    import ast
+    import pathlib
+
+    allowed = set()                      # pytest 로 돌리기로 정한 파일이 생기면 여기에
+    bad = []
+    for path in sorted(pathlib.Path(__file__).parent.glob("test_*.py")):
+        if path.name in allowed:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+            a = node.args
+            if a.args or a.posonlyargs or a.kwonlyargs or a.vararg or a.kwarg:
+                bad.append(f"{path.name}::{node.name}")
+    assert not bad, "인자를 받는 시험: " + ", ".join(bad)
 
 
 # ── 설정 파일 읽기 ────────────────────────────────────────────────────────

@@ -205,12 +205,17 @@
         summary.textContent = `총 ${data.count}개를 찾았어요.`;
 
         if (data.detections.length > 0) {
-          detList.innerHTML = data.detections
-            .map(
-              (d) =>
-                `<li>${d.label} — 신뢰도 ${(d.confidence * 100).toFixed(1)}%</li>`
-            )
-            .join("");
+          // 라벨은 모델이 준 문자열이라 HTML 로 붙이면 안 된다. 클래스 이름에
+          // 태그가 섞여 있으면 그대로 실행된다 — textContent 로 넣으면 글자로만
+          // 들어간다. 보이는 결과는 똑같다.
+          detList.replaceChildren(
+            ...data.detections.map((d) => {
+              const li = document.createElement("li");
+              li.textContent =
+                `${d.label} — 신뢰도 ${(d.confidence * 100).toFixed(1)}%`;
+              return li;
+            })
+          );
           detList.classList.remove("hidden");
         } else {
           detList.classList.add("hidden");

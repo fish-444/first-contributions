@@ -227,9 +227,18 @@
         drawBoxes(preds);
         summary.textContent = "총 " + preds.length + "개를 찾았어요.";
         if (preds.length > 0) {
-          detList.innerHTML = preds.map((p) =>
-            "<li>" + (p.class || "object") + " — 신뢰도 " + ((p.confidence || 0) * 100).toFixed(1) + "%</li>"
-          ).join("");
+          // p.class 는 로보플로우 응답이 준 문자열이다. 이 페이지는 엔드포인트와
+          // 모델 이름을 사용자가 직접 넣게 돼 있어서, 응답을 통째로 믿을 수 없다.
+          // HTML 로 붙이면 클래스 이름에 섞인 태그가 이 페이지 안에서 실행된다 —
+          // 바로 옆에 API 키가 들어 있는 페이지다. textContent 로 넣는다.
+          detList.replaceChildren(
+            ...preds.map((p) => {
+              const li = document.createElement("li");
+              li.textContent = (p.class || "object") + " — 신뢰도 "
+                + ((p.confidence || 0) * 100).toFixed(1) + "%";
+              return li;
+            })
+          );
           detList.classList.remove("hidden");
         }
       } catch (e) {
