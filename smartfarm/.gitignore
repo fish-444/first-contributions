@@ -1,0 +1,7 @@
+# YOLO weight
+*.pt
+# Python 캐시
+__pycache__/
+*.pyc
+# 환경변수(비밀키) 파일
+.env
